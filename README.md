@@ -4,7 +4,7 @@ Research handoff and a small native Linux test application for the OBSBOT Tiny 2
 
 ## Application
 
-The first test-bench implementation is in [app/](app/README.md). It detects the Lite by USB ID `3564:fef9`, reads the camera's live V4L2 control metadata, and exposes supported numeric, boolean, and menu controls. Pan/tilt nudges are limited to one degree and require a confirmation dialog.
+The first test-bench implementation is in [app/](app/README.md). It detects the Lite by USB ID `3564:fef9`, reads the camera's live V4L2 control metadata, and exposes supported numeric, boolean, and menu controls. Numeric sliders apply live, show the camera-reported default, and include a reset button. Binary 0/1 controls are instant toggles. Pan/tilt nudges move one degree immediately.
 
 The app does not yet send vendor UVC Extension Unit commands, sleep/wake, or preset mutations. Those need further protocol/source verification and explicit hardware testing.
 
