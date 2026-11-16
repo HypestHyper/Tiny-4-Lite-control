@@ -257,7 +257,7 @@ const UVC_SET_CUR: u8 = 0x01;
 const UVC_GET_CUR: u8 = 0x81;
 static XU_SEQUENCE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0x30);
 
-unsafe extern "C" {
+extern "C" {
     fn ioctl(fd: std::os::raw::c_int, request: std::os::raw::c_ulong, ...) -> std::os::raw::c_int;
 }
 
@@ -301,16 +301,19 @@ fn obsbot_frame(function_group: [u8; 6], command: [u8; 6]) -> [u8; 60] {
     frame[1] = 0x25;
     frame[2..4].copy_from_slice(&sequence.to_le_bytes());
     frame[4..6].copy_from_slice(&12u16.to_le_bytes());
-    frame[8..14].copy_from_slice(&function_group);
+    // The six-byte captured function block is four command bytes plus
+    // the two-byte payload length. Only the first four bytes belong in
+    // the 12-byte header.
+    frame[8..12].copy_from_slice(&function_group[..4]);
     let header_crc = crc16_usb(&frame[..12]);
     frame[6..8].copy_from_slice(&header_crc.to_le_bytes());
 
-    // Selector 0x02 payload block: length, CRC, then six command bytes.
-    let payload_len = 6u16;
-    frame[12..14].copy_from_slice(&payload_len.to_le_bytes());
+    let payload_len = u16::from_le_bytes([function_group[4], function_group[5]]) as usize;
+    let payload_len = payload_len.min(4);
+    frame[12..14].copy_from_slice(&(payload_len as u16).to_le_bytes());
     frame[14..16].fill(0);
-    frame[16..22].copy_from_slice(&command);
-    let payload_crc = crc16_usb(&frame[12..22]);
+    frame[16..16 + payload_len].copy_from_slice(&command[2..2 + payload_len]);
+    let payload_crc = crc16_usb(&frame[12..16 + payload_len]);
     frame[14..16].copy_from_slice(&payload_crc.to_le_bytes());
     frame
 }
@@ -700,6 +703,37 @@ fn build_ui(app: &gtk::Application) {
         status.set_text("Tiny 2 Lite not found. Connect it and press Refresh. Expected USB ID: 3564:fef9.");
     }
     window.present();
+}
+
+
+#[cfg(test)]
+mod xu_protocol_tests {
+    use super::*;
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn crc_and_tracking_frame_match_lite_capture() {
+        let frame = obsbot_frame(
+            [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00],
+            [0xab, 0xcb, 0xe6, 0x3f, 0x00, 0x00],
+        );
+        assert_eq!(&frame[..17], hex("aa2530000c00abcb0a04c40c0100e63f").as_slice());
+    }
+
+    #[test]
+    fn ai_mode_wire_payload_is_four_bytes() {
+        let mut payload = [0u8; 4];
+        payload[0] = 0x16;
+        payload[1] = 0x02;
+        payload[2] = 0x02;
+        payload[3] = 0x01;
+        assert_eq!(payload, [0x16, 0x02, 0x02, 0x01]);
+    }
 }
 
 fn main() {
