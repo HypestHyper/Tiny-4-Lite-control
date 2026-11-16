@@ -1,0 +1,63 @@
+name: Build AppImage
+
+on:
+  push:
+    branches: [test-app-v0.1]
+    paths:
+      - "app/**"
+      - ".github/workflows/appimage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libv4l-dev v4l-utils file wget patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build application
+        working-directory: app
+        run: cargo build --release
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
+          install -Dm755 app/target/release/tiny4lite-control AppDir/usr/bin/tiny4lite-control
+          install -Dm755 "$(command -v v4l2-ctl)" AppDir/usr/bin/v4l2-ctl
+          install -Dm644 app/assets/tiny4lite-control.desktop AppDir/usr/share/applications/tiny4lite-control.desktop
+          install -Dm644 app/assets/tiny4lite-control.svg AppDir/usr/share/icons/hicolor/scalable/apps/tiny4lite-control.svg
+
+      - name: Download linuxdeploy and GTK plugin
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage -O linuxdeploy-plugin-gtk
+          chmod +x linuxdeploy linuxdeploy-plugin-gtk
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          OUTPUT: Tiny4LiteControl-x86_64.AppImage
+        run: |
+          export PATH="$PWD:$PATH"
+          ./linuxdeploy --appdir AppDir --plugin gtk --output appimage
+          test -s "$OUTPUT"
+          chmod +x "$OUTPUT"
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tiny4LiteControl-x86_64
+          path: Tiny4LiteControl-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 30
