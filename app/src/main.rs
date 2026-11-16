@@ -265,7 +265,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         title.set_hexpand(true);
         row.append(&title);
 
-        if control.kind == "bool" || (control.min == 0 && control.max == 1) {
+        if control.kind == "bool" || (!control.kind.contains("menu") && control.min == 0 && control.max == 1) {
             let toggle = gtk::CheckButton::new();
             toggle.set_active(control.value != 0);
             let dev = device.to_string();
