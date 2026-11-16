@@ -132,7 +132,7 @@ fn add_move_button(row: &gtk::Box, window: &gtk::ApplicationWindow, device: &str
 fn joystick_axis(position: f64, min: i64, max: i64) -> i64 {
     // V4L2 pan/tilt speed controls are signed: zero is neutral.
     if position < 0.0 {
-        ((-position * min.abs() as f64).round() as i64).clamp(min, 0)
+        ((position * min.abs() as f64).round() as i64).clamp(min, 0)
     } else {
         ((position * max as f64).round() as i64).clamp(0, max)
     }
