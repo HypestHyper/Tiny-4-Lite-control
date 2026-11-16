@@ -727,6 +727,15 @@ mod xu_protocol_tests {
     }
 
     #[test]
+    fn gesture_frames_match_lite_captures() {
+        let group = [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00];
+        let off = obsbot_frame(0x0008, group, [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]);
+        let on = obsbot_frame(0x0009, group, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f00").as_slice());
+        assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff01").as_slice());
+    }
+
+    #[test]
     fn ai_mode_wire_payload_is_four_bytes() {
         let mut payload = [0u8; 4];
         payload[0] = 0x16;
