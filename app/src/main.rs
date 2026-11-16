@@ -255,7 +255,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     let total = controls.len();
     for control in controls {
-        if control.disabled || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if (control.disabled && control.name != "zoom_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(3);
         row.set_margin_bottom(3);
