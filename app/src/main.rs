@@ -348,7 +348,8 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
                 Some(&format!("Default: {}", control.default_value)));
 
             let reset = gtk::Button::with_label("Reset");
-            reset.set_sensitive(control.value != control.default_value);
+            reset.set_sensitive(control.value != control.default_value
+                && !(control.name == "focus_absolute" && autofocus_enabled));
             let reset_scale = scale.clone();
             reset.connect_clicked(move |_| {
                 reset_scale.set_value(control.default_value as f64);
