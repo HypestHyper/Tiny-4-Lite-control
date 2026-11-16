@@ -129,6 +129,27 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     hint.add_css_class("dim-label");
     layout.append(&hint);
 
+    let sensitivity = Rc::new(RefCell::new(1.0_f64));
+    let sensitivity_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let sensitivity_label = gtk::Label::new(Some("Sensitivity"));
+    let sensitivity_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 10.0, 200.0, 5.0);
+    sensitivity_scale.set_value(100.0);
+    sensitivity_scale.set_digits(0);
+    sensitivity_scale.set_draw_value(true);
+    sensitivity_scale.set_hexpand(true);
+    let sensitivity_value = gtk::Label::new(Some("100%"));
+    let sensitivity_state = sensitivity.clone();
+    let sensitivity_value_label = sensitivity_value.clone();
+    sensitivity_scale.connect_value_changed(move |scale| {
+        let percent = scale.value().round();
+        *sensitivity_state.borrow_mut() = percent / 100.0;
+        sensitivity_value_label.set_text(&format!("{percent:.0}%"));
+    });
+    sensitivity_row.append(&sensitivity_label);
+    sensitivity_row.append(&sensitivity_scale);
+    sensitivity_row.append(&sensitivity_value);
+    layout.append(&sensitivity_row);
+
     let pad = gtk::DrawingArea::new();
     pad.set_content_width(240);
     pad.set_content_height(190);
@@ -170,6 +191,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
         *start_capture.borrow_mut() = (x, y);
     });
     let start_update = drag_start.clone();
+    let sensitivity_drag = sensitivity.clone();
     let pad_update = pad.clone();
     drag.connect_drag_update(move |_, dx, dy| {
         let width = pad_update.width() as f64;
@@ -178,8 +200,9 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
         let cy = height / 2.0;
         let radius = 70.0_f64.min(cx - 8.0).min(cy - 8.0).max(1.0);
         let (start_x, start_y) = *start_update.borrow();
-        let x = ((start_x + dx - cx) / radius).clamp(-1.0, 1.0);
-        let y = (-(start_y + dy - cy) / radius).clamp(-1.0, 1.0);
+        let sensitivity_factor = *sensitivity_drag.borrow();
+        let x = (((start_x + dx - cx) / radius) * sensitivity_factor).clamp(-1.0, 1.0);
+        let y = (((-(start_y + dy - cy) / radius)) * sensitivity_factor).clamp(-1.0, 1.0);
         *drag_position.borrow_mut() = (x, y);
         pad_update.queue_draw();
         let pan_value = joystick_axis(x, pan_min, pan_max);
@@ -253,9 +276,13 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         container.append(&frame);
     }
 
+    let autofocus_enabled = controls.iter()
+        .find(|c| c.name == "focus_automatic_continuous")
+        .map(|c| c.value != 0)
+        .unwrap_or(false);
     let total = controls.len();
     for control in controls {
-        if (control.disabled && control.name != "zoom_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if (control.disabled && control.name != "zoom_absolute" && control.name != "focus_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(3);
         row.set_margin_bottom(3);
@@ -271,11 +298,18 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
+            let controls_refresh = container.clone();
+            let window_refresh = window.clone();
+            let refresh_device = dev.clone();
             toggle.connect_toggled(move |button| {
                 let value = if button.is_active() { 1 } else { 0 };
                 let result = set_control(&dev, &name, value);
+                let succeeded = result.is_ok();
                 status_label.set_text(&result.map(|_| format!("{name}: {value}"))
                     .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
+                if succeeded && name == "focus_automatic_continuous" {
+                    populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+                }
             });
             row.append(&toggle);
         } else if control.kind.contains("menu") && !control.menu.is_empty() {
@@ -307,6 +341,9 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             scale.set_draw_value(true);
             scale.set_digits(0);
             scale.set_hexpand(true);
+            if control.name == "focus_absolute" {
+                scale.set_sensitive(!autofocus_enabled);
+            }
             scale.add_mark(control.default_value as f64, gtk::PositionType::Bottom,
                 Some(&format!("Default: {}", control.default_value)));
 
