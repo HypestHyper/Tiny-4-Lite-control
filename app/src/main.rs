@@ -236,6 +236,264 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     container.append(&frame);
 }
 
+
+
+// OBSBOT vendor UVC Extension Unit transport. This is deliberately separate
+// from V4L2 controls: Tiny 2 Lite exposes its AI features through XU unit 2.
+#[repr(C)]
+struct UvcXuControlQuery {
+    unit: u8,
+    selector: u8,
+    query: u8,
+    _pad: u8,
+    size: u16,
+    _pad2: u16,
+    data: *mut u8,
+}
+
+const UVCIOC_CTRL_QUERY: std::os::raw::c_ulong = 0xc010_7521;
+const XU_UNIT: u8 = 2;
+const UVC_SET_CUR: u8 = 0x01;
+const UVC_GET_CUR: u8 = 0x81;
+static XU_SEQUENCE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0x30);
+
+unsafe extern "C" {
+    fn ioctl(fd: std::os::raw::c_int, request: std::os::raw::c_ulong, ...) -> std::os::raw::c_int;
+}
+
+fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
+        .map_err(|e| format!("Cannot open {device} for OBSBOT controls: {e}"))?;
+    let mut query = UvcXuControlQuery {
+        unit: XU_UNIT, selector, query: request, _pad: 0,
+        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
+    };
+    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
+    if result < 0 {
+        return Err(format!("OBSBOT XU selector 0x{selector:02x} request 0x{request:02x}: {}",
+            std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+fn xu_status(device: &str) -> Result<[u8; 60], String> {
+    let mut data = [0u8; 60];
+    xu_query(device, 0x06, UVC_GET_CUR, &mut data)?;
+    Ok(data)
+}
+
+fn crc16_usb(bytes: &[u8]) -> u16 {
+    let mut crc = 0xffffu16;
+    for byte in bytes {
+        crc ^= *byte as u16;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xa001 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+fn obsbot_frame(function_group: [u8; 6], command: [u8; 6]) -> [u8; 60] {
+    let sequence = XU_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut frame = [0u8; 60];
+    frame[0] = 0xaa;
+    frame[1] = 0x25;
+    frame[2..4].copy_from_slice(&sequence.to_le_bytes());
+    frame[4..6].copy_from_slice(&12u16.to_le_bytes());
+    frame[8..14].copy_from_slice(&function_group);
+    let header_crc = crc16_usb(&frame[..12]);
+    frame[6..8].copy_from_slice(&header_crc.to_le_bytes());
+
+    // Selector 0x02 payload block: length, CRC, then six command bytes.
+    let payload_len = 6u16;
+    frame[12..14].copy_from_slice(&payload_len.to_le_bytes());
+    frame[14..16].fill(0);
+    frame[16..22].copy_from_slice(&command);
+    let payload_crc = crc16_usb(&frame[12..22]);
+    frame[14..16].copy_from_slice(&payload_crc.to_le_bytes());
+    frame
+}
+
+fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
+    let mut frame = obsbot_frame(function_group, command);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
+}
+
+fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
+    // Selector 0x06 uses [opcode, payload length, m, n].
+    let mut data = [0u8; 60];
+    data[0] = 0x16;
+    data[1] = 0x02;
+    data[2] = mode.0;
+    data[3] = mode.1;
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
+    let group = [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00];
+    let command = if sport {
+        [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00]
+    } else {
+        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
+    };
+    xu_send_frame(device, group, command)
+}
+
+fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
+    let command = if enabled {
+        [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]
+    } else {
+        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
+    };
+    xu_send_frame(device, group, command)
+}
+
+fn ai_mode_label(status: &[u8; 60]) -> &'static str {
+    match (status[0x18], status[0x1c]) {
+        (0x00, 0x00) => "Off",
+        (0x02, 0x00) => "Normal tracking",
+        (0x02, 0x01) => "Upper body",
+        (0x02, 0x02) => "Close-up",
+        (0x02, 0x03) => "Headless",
+        (0x02, 0x04) => "Lower body",
+        (0x05, 0x00) => "Desk mode",
+        (0x04, 0x00) => "Whiteboard",
+        (0x03, 0x00) | (0x06, 0x00) => "Hand",
+        (0x01, 0x00) => "Group",
+        _ => "Unknown mode",
+    }
+}
+
+fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("AI tracking and gestures"));
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let mode_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let mode_label = gtk::Label::new(Some("Tracking mode"));
+    mode_label.set_width_chars(22);
+    mode_label.set_xalign(0.0);
+    let mode = gtk::ComboBoxText::new();
+    mode.set_hexpand(true);
+    let modes: [(&str, &str, u8, u8); 10] = [
+        ("off", "Off", 0x00, 0x00),
+        ("normal", "Normal tracking", 0x02, 0x00),
+        ("upper", "Upper body", 0x02, 0x01),
+        ("close", "Close-up", 0x02, 0x02),
+        ("headless", "Headless", 0x02, 0x03),
+        ("lower", "Lower body", 0x02, 0x04),
+        ("group", "Group", 0x01, 0x00),
+        ("desk", "Desk mode", 0x05, 0x00),
+        ("whiteboard", "Whiteboard", 0x04, 0x00),
+        ("hand", "Hand", 0x03, 0x00),
+    ];
+    for (id, label, _, _) in modes { mode.append(Some(id), label); }
+    if let Ok(current) = xu_status(device) {
+        let current_id = modes.iter().find(|(_, _, m, n)| *m == current[0x18] && *n == current[0x1c])
+            .map(|(id, _, _, _)| *id);
+        if let Some(id) = current_id { mode.set_active_id(Some(id)); }
+        status.set_text(&format!("AI status: {} · tracking speed: {}",
+            ai_mode_label(&current),
+            match current[0x24] { 0x00 => "Standard", 0x02 => "Sport", 0x21 => "Sport (legacy)", _ => "Unknown" }));
+    } else {
+        status.set_text("AI controls shown, but XU status could not be read. Check camera node permissions.");
+    }
+    let apply_mode = gtk::Button::with_label("Apply");
+    let mode_apply = mode.clone();
+    let dev = device.to_string();
+    let status_mode = status.clone();
+    apply_mode.connect_clicked(move |_| {
+        let result = mode_apply.active_id().and_then(|id| modes.iter().find(|m| m.0 == id.as_str()))
+            .ok_or_else(|| "Select an AI tracking mode.".to_string())
+            .and_then(|entry| set_ai_mode(&dev, (entry.2, entry.3)));
+        status_mode.set_text(&result.map(|_| "AI tracking mode command sent. Refresh status to confirm.".to_string())
+            .unwrap_or_else(|e| format!("AI mode failed: {e}")));
+    });
+    mode_row.append(&mode_label);
+    mode_row.append(&mode);
+    mode_row.append(&apply_mode);
+    layout.append(&mode_row);
+
+    let speed_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let speed_label = gtk::Label::new(Some("Tracking speed"));
+    speed_label.set_width_chars(22);
+    speed_label.set_xalign(0.0);
+    let speed = gtk::ComboBoxText::new();
+    speed.append(Some("standard"), "Standard");
+    speed.append(Some("sport"), "Sport");
+    if let Ok(current) = xu_status(device) {
+        speed.set_active_id(Some(if current[0x24] == 0 { "standard" } else { "sport" }));
+    } else {
+        speed.set_active_id(Some("standard"));
+    }
+    let apply_speed = gtk::Button::with_label("Apply");
+    let speed_apply = speed.clone();
+    let dev = device.to_string();
+    let status_speed = status.clone();
+    apply_speed.connect_clicked(move |_| {
+        let sport = speed_apply.active_id().as_deref() == Some("sport");
+        let result = set_tracking_speed(&dev, sport);
+        status_speed.set_text(&result.map(|_| "Tracking speed command sent. Refresh status to confirm. Sport encoding is documented for firmware 6.2.5.x.".to_string())
+            .unwrap_or_else(|e| format!("Tracking speed failed: {e}")));
+    });
+    speed_row.append(&speed_label);
+    speed_row.append(&speed);
+    speed_row.append(&apply_speed);
+    layout.append(&speed_row);
+
+    let gestures: [(&str, [u8; 6]); 4] = [
+        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00]),
+        ("Zoom (L-pose) gesture", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00]),
+        ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00]),
+        ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00]),
+    ];
+    for (label, group) in gestures {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let name = gtk::Label::new(Some(label));
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        row.append(&name);
+        for (caption, enabled) in [("Enable", true), ("Disable", false)] {
+            let button = gtk::Button::with_label(caption);
+            let dev = device.to_string();
+            let status_gesture = status.clone();
+            button.connect_clicked(move |_| {
+                let result = set_gesture(&dev, group, enabled);
+                status_gesture.set_text(&result.map(|_| format!("{label}: {} command sent.", if enabled { "enable" } else { "disable" }))
+                    .unwrap_or_else(|e| format!("{label} failed: {e}")));
+            });
+            row.append(&button);
+        }
+        layout.append(&row);
+    }
+
+    let refresh_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let refresh = gtk::Button::with_label("Read AI status");
+    let dev = device.to_string();
+    let status_refresh = status.clone();
+    refresh.connect_clicked(move |_| {
+        status_refresh.set_text(&match xu_status(&dev) {
+            Ok(data) => format!("AI status: {} · speed byte: 0x{:02x} · raw mode: {:02x}/{:02x}",
+                ai_mode_label(&data), data[0x24], data[0x18], data[0x1c]),
+            Err(e) => format!("Could not read AI status: {e}"),
+        });
+    });
+    refresh_row.append(&refresh);
+    layout.append(&refresh_row);
+
+    let note = gtk::Label::new(Some("AI commands use OBSBOT's vendor XU. Sport's legacy firmware value is not auto-selected; Hand mode uses the Lite-tested 0x03 tuple. Gesture buttons send explicit enable/disable commands."));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
@@ -248,6 +506,8 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     heading.add_css_class("title-3");
     heading.set_halign(gtk::Align::Start);
     container.append(&heading);
+
+    add_ai_controls(container, device, status);
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
     let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
