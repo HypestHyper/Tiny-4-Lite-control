@@ -723,7 +723,7 @@ mod xu_protocol_tests {
             [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00],
             [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00],
         );
-        assert_eq!(&frame[..17], hex("aa2520000c00abcb0a04c40c0100e63f").as_slice());
+        assert_eq!(&frame[..18], hex("aa2520000c00abcb0a04c40c0100e63f00").as_slice());
     }
 
     #[test]
