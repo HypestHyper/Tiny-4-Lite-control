@@ -180,11 +180,18 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     let status_drag = status.clone();
     let drag = gtk::GestureDrag::new();
     let drag_position = position.clone();
+    let drag_start = Rc::new(RefCell::new((120.0_f64, 95.0_f64)));
+    let start_capture = drag_start.clone();
+    drag.connect_drag_begin(move |_, x, y| {
+        *start_capture.borrow_mut() = (x, y);
+    });
+    let start_update = drag_start.clone();
     let pad_update = pad.clone();
     drag.connect_drag_update(move |_, dx, dy| {
         let radius = 70.0_f64;
-        let x = (dx / radius).clamp(-1.0, 1.0);
-        let y = (-dy / radius).clamp(-1.0, 1.0);
+        let (start_x, start_y) = *start_update.borrow();
+        let x = ((start_x + dx - 120.0) / radius).clamp(-1.0, 1.0);
+        let y = (-(start_y + dy - 95.0) / radius).clamp(-1.0, 1.0);
         *drag_position.borrow_mut() = (x, y);
         pad_update.queue_draw();
         let pan_value = joystick_axis(x, pan_min, pan_max);
