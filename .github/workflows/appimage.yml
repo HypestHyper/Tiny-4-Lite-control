@@ -1,3 +1,4 @@
+# Builds the self-contained x86_64 AppImage for the Tiny 2 Lite test bench.
 name: Build AppImage
 
 on:
@@ -19,19 +20,15 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libgtk-4-dev libv4l-dev v4l-utils file wget patchelf
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
       - name: Build application
         working-directory: app
         run: cargo build --release
-
       - name: Assemble AppDir
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
@@ -39,13 +36,11 @@ jobs:
           install -Dm755 "$(command -v v4l2-ctl)" AppDir/usr/bin/v4l2-ctl
           install -Dm644 app/assets/tiny4lite-control.desktop AppDir/usr/share/applications/tiny4lite-control.desktop
           install -Dm644 app/assets/tiny4lite-control.svg AppDir/usr/share/icons/hicolor/scalable/apps/tiny4lite-control.svg
-
       - name: Download linuxdeploy and GTK plugin
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage -O linuxdeploy-plugin-gtk
           chmod +x linuxdeploy linuxdeploy-plugin-gtk
-
       - name: Build AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -55,7 +50,6 @@ jobs:
           ./linuxdeploy --appdir AppDir --plugin gtk --output appimage
           test -s "$OUTPUT"
           chmod +x "$OUTPUT"
-
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
