@@ -9,7 +9,7 @@ use std::process::Command;
 #[derive(Clone, Debug)]
 struct Control {
     name: String, kind: String, min: i64, max: i64, step: i64,
-    value: i64, disabled: bool, menu: Vec<(i64, String)>,
+    value: i64, default_value: i64, disabled: bool, menu: Vec<(i64, String)>,
 }
 
 fn run_v4l2(device: &str, option: &str) -> Result<String, String> {
@@ -83,6 +83,7 @@ fn parse_controls(text: &str) -> Vec<Control> {
         controls.push(Control {
             name, kind, min: number("min", 0), max: number("max", 1),
             step: number("step", 1).max(1), value: number("value", number("default", 0)),
+            default_value: number("default", number("value", 0)),
             disabled: flags.contains("inactive") || flags.contains("disabled") || flags.contains("read-only"),
             menu: Vec::new(),
         });
@@ -94,40 +95,23 @@ fn clear_box(container: &gtk::Box) {
     while let Some(child) = container.first_child() { container.remove(&child); }
 }
 
-fn add_move_button(row: &gtk::Box, window: &gtk::ApplicationWindow, device: &str,
+fn add_move_button(row: &gtk::Box, device: &str,
                    control: &str, delta: i64, label: &str, status: &gtk::Label) {
     let button = gtk::Button::with_label(label);
     let dev = device.to_string();
     let ctrl = control.to_string();
-    let win = window.clone();
     let status_label = status.clone();
     button.connect_clicked(move |_| {
-        let dialog = gtk::MessageDialog::builder()
-            .transient_for(&win).modal(true).message_type(gtk::MessageType::Warning)
-            .buttons(gtk::ButtonsType::YesNo)
-            .text(format!("Move camera {ctrl} by {} degree?", delta.abs() / 3600))
-            .secondary_text("This physically moves the gimbal. Make sure its movement area is clear.")
-            .build();
-        let dev2 = dev.clone();
-        let ctrl2 = ctrl.clone();
-        let status2 = status_label.clone();
-        dialog.connect_response(move |dialog, response| {
-            if response == gtk::ResponseType::Yes {
-                let result = get_control(&dev2, &ctrl2).and_then(|current| {
-                    let (min, max) = if ctrl2 == "tilt_absolute" { (-324000, 324000) } else { (-468000, 468000) };
-                    let target = (current + delta).clamp(min, max);
-                    set_control(&dev2, &ctrl2, target)?;
-                    Ok(format!("{ctrl2} set to {target} (one-degree step)"))
-                });
-                status2.set_text(&result.unwrap_or_else(|e| format!("Movement failed: {e}")));
-            }
-            dialog.close();
+        let result = get_control(&dev, &ctrl).and_then(|current| {
+            let (min, max) = if ctrl == "tilt_absolute" { (-324000, 324000) } else { (-468000, 468000) };
+            let target = (current + delta).clamp(min, max);
+            set_control(&dev, &ctrl, target)?;
+            Ok(format!("{ctrl} set to {target} (one-degree step)"))
         });
-        dialog.present();
+        status_label.set_text(&result.unwrap_or_else(|e| format!("Movement failed: {e}")));
     });
     row.append(&button);
 }
-
 
 fn joystick_axis(position: f64, min: i64, max: i64) -> i64 {
     // V4L2 pan/tilt speed controls are signed: zero is neutral.
@@ -188,10 +172,14 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     let start_update = drag_start.clone();
     let pad_update = pad.clone();
     drag.connect_drag_update(move |_, dx, dy| {
-        let radius = 70.0_f64;
+        let width = pad_update.width() as f64;
+        let height = pad_update.height() as f64;
+        let cx = width / 2.0;
+        let cy = height / 2.0;
+        let radius = 70.0_f64.min(cx - 8.0).min(cy - 8.0).max(1.0);
         let (start_x, start_y) = *start_update.borrow();
-        let x = ((start_x + dx - 120.0) / radius).clamp(-1.0, 1.0);
-        let y = (-(start_y + dy - 95.0) / radius).clamp(-1.0, 1.0);
+        let x = ((start_x + dx - cx) / radius).clamp(-1.0, 1.0);
+        let y = (-(start_y + dy - cy) / radius).clamp(-1.0, 1.0);
         *drag_position.borrow_mut() = (x, y);
         pad_update.queue_draw();
         let pan_value = joystick_axis(x, pan_min, pan_max);
@@ -254,12 +242,12 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         let frame = gtk::Frame::new(Some("Gimbal movement"));
         let movement = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         if has_pan {
-            add_move_button(&movement, window, device, "pan_absolute", -3600, "Pan −1°", status);
-            add_move_button(&movement, window, device, "pan_absolute", 3600, "Pan +1°", status);
+            add_move_button(&movement, device, "pan_absolute", -3600, "Pan −1°", status);
+            add_move_button(&movement, device, "pan_absolute", 3600, "Pan +1°", status);
         }
         if has_tilt {
-            add_move_button(&movement, window, device, "tilt_absolute", -3600, "Tilt −1°", status);
-            add_move_button(&movement, window, device, "tilt_absolute", 3600, "Tilt +1°", status);
+            add_move_button(&movement, device, "tilt_absolute", -3600, "Tilt −1°", status);
+            add_move_button(&movement, device, "tilt_absolute", 3600, "Tilt +1°", status);
         }
         frame.set_child(Some(&movement));
         container.append(&frame);
@@ -267,7 +255,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     let total = controls.len();
     for control in controls {
-        if control.disabled || control.kind == "button" || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if control.disabled || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(3);
         row.set_margin_bottom(3);
@@ -277,21 +265,19 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         title.set_hexpand(true);
         row.append(&title);
 
-        if control.kind == "bool" {
+        if control.kind == "bool" || (control.min == 0 && control.max == 1) {
             let toggle = gtk::CheckButton::new();
             toggle.set_active(control.value != 0);
-            let toggle_apply = toggle.clone();
-            let apply = gtk::Button::with_label("Apply");
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
-            apply.connect_clicked(move |_| {
-                let value = if toggle_apply.is_active() { 1 } else { 0 };
+            toggle.connect_toggled(move |button| {
+                let value = if button.is_active() { 1 } else { 0 };
                 let result = set_control(&dev, &name, value);
-                status_label.set_text(&result.map(|_| format!("{name} updated")).unwrap_or_else(|e| e));
+                status_label.set_text(&result.map(|_| format!("{name}: {value}"))
+                    .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
             });
             row.append(&toggle);
-            row.append(&apply);
         } else if control.kind.contains("menu") && !control.menu.is_empty() {
             let combo = gtk::ComboBoxText::new();
             for (value, label) in &control.menu { combo.append(Some(&value.to_string()), label); }
@@ -314,23 +300,38 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             let scale = gtk::Scale::with_range(
                 gtk::Orientation::Horizontal,
                 control.min as f64,
-                control.max as f64,
+                control.max.max(control.min + control.step) as f64,
                 control.step as f64,
             );
-            scale.set_value(control.value as f64);
+            scale.set_value(control.value.clamp(control.min, control.max.max(control.min)) as f64);
             scale.set_draw_value(true);
             scale.set_digits(0);
             scale.set_hexpand(true);
+            scale.add_mark(control.default_value as f64, gtk::PositionType::Bottom,
+                Some(&format!("Default: {}", control.default_value)));
+
+            let reset = gtk::Button::with_label("Reset");
+            reset.set_sensitive(control.value != control.default_value);
+            let reset_scale = scale.clone();
+            reset.connect_clicked(move |_| {
+                reset_scale.set_value(control.default_value as f64);
+            });
+
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
+            let reset_button = reset.clone();
+            let default_value = control.default_value;
             scale.connect_value_changed(move |slider| {
                 let requested = slider.value().round() as i64;
                 let result = set_control(&dev, &name, requested);
+                let success = result.is_ok();
                 status_label.set_text(&result.map(|_| format!("{name}: {requested}"))
                     .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
+                reset_button.set_sensitive(success && requested != default_value);
             });
             row.append(&scale);
+            row.append(&reset);
         }
         container.append(&row);
         container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -363,7 +364,7 @@ fn build_ui(app: &gtk::Application) {
         .hscrollbar_policy(gtk::PolicyType::Never).build();
     let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     scroll.set_child(Some(&controls_box)); root.append(&scroll);
-    let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° and always require confirmation."));
+    let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° immediately."));
     footer.set_xalign(0.0); footer.set_wrap(true); footer.add_css_class("dim-label");
     root.append(&footer);
     window.set_child(Some(&root));
