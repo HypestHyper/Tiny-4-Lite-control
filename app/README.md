@@ -4,8 +4,8 @@ A small GTK4 test bench for the OBSBOT Tiny 2 Lite.
 
 - Detects video nodes by walking sysfs to the USB parent and matching **3564:fef9**. It does not match regular Tiny 2 (3564:fef8).
 - Reads V4L2 control metadata from the camera at runtime.
-- Exposes supported boolean, menu, and numeric controls. Numeric sliders apply changes immediately, mark the camera-reported default value, and include a Reset button. Binary 0/1 controls are instant toggles.
-- Provides a drag joystick for signed pan/tilt speed controls, mapped against the widget's actual size. Releasing the joystick sends zero speed to stop the gimbal.
+- Exposes supported boolean, menu, and numeric controls. Numeric sliders apply changes immediately, mark the camera-reported default value, and include a Reset button. Binary 0/1 controls are instant toggles. Manual focus remains visible and becomes adjustable when continuous autofocus is switched off; the controls are refreshed after changing autofocus.
+- Provides a drag joystick for signed pan/tilt speed controls, mapped against the widget's actual size, with an adjustable 10–200% sensitivity slider. Releasing the joystick sends zero speed to stop the gimbal.
 - Provides one-degree absolute pan/tilt buttons when available. These buttons move immediately without a confirmation dialog.
 - Does not send vendor XU commands, sleep/wake, preset mutations, or undocumented state changes in this first build.
 
