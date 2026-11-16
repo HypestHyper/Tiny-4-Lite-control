@@ -6,6 +6,8 @@ on:
     paths:
       - "app/**"
       - ".github/workflows/appimage.yml"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
