@@ -1,5 +1,7 @@
 use gtk::prelude::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -126,6 +128,96 @@ fn add_move_button(row: &gtk::Box, window: &gtk::ApplicationWindow, device: &str
     row.append(&button);
 }
 
+
+fn joystick_axis(position: f64, min: i64, max: i64) -> i64 {
+    // V4L2 pan/tilt speed controls are signed: zero is neutral.
+    if position < 0.0 {
+        ((-position * min.abs() as f64).round() as i64).clamp(min, 0)
+    } else {
+        ((position * max as f64).round() as i64).clamp(0, max)
+    }
+}
+
+fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &Control, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Pan / tilt speed"));
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let hint = gtk::Label::new(Some("Drag the stick to move. Release to stop."));
+    hint.add_css_class("dim-label");
+    layout.append(&hint);
+
+    let pad = gtk::DrawingArea::new();
+    pad.set_content_width(240);
+    pad.set_content_height(190);
+    pad.set_hexpand(true);
+    let position = Rc::new(RefCell::new((0.0_f64, 0.0_f64)));
+    let draw_position = position.clone();
+    pad.set_draw_func(move |_, cr, width, height| {
+        let cx = width as f64 / 2.0;
+        let cy = height as f64 / 2.0;
+        let radius = 70.0_f64.min(cx - 8.0).min(cy - 8.0);
+        let (x, y) = *draw_position.borrow();
+        cr.set_line_width(2.0);
+        cr.set_source_rgba(0.45, 0.48, 0.54, 0.55);
+        cr.arc(cx, cy, radius, 0.0, std::f64::consts::TAU);
+        let _ = cr.stroke();
+        cr.move_to(cx - radius, cy);
+        cr.line_to(cx + radius, cy);
+        cr.move_to(cx, cy - radius);
+        cr.line_to(cx, cy + radius);
+        let _ = cr.stroke();
+        cr.set_source_rgba(0.25, 0.48, 0.78, 0.9);
+        cr.arc(cx + x * radius, cy - y * radius, 13.0, 0.0, std::f64::consts::TAU);
+        let _ = cr.fill();
+    });
+
+    let pan_name = pan.name.clone();
+    let tilt_name = tilt.name.clone();
+    let pan_min = pan.min;
+    let pan_max = pan.max;
+    let tilt_min = tilt.min;
+    let tilt_max = tilt.max;
+    let dev = device.to_string();
+    let status_drag = status.clone();
+    let drag = gtk::GestureDrag::new();
+    let drag_position = position.clone();
+    let pad_update = pad.clone();
+    drag.connect_drag_update(move |_, dx, dy| {
+        let radius = 70.0_f64;
+        let x = (dx / radius).clamp(-1.0, 1.0);
+        let y = (-dy / radius).clamp(-1.0, 1.0);
+        *drag_position.borrow_mut() = (x, y);
+        pad_update.queue_draw();
+        let pan_value = joystick_axis(x, pan_min, pan_max);
+        let tilt_value = joystick_axis(y, tilt_min, tilt_max);
+        let result = set_control(&dev, &pan_name, pan_value)
+            .and_then(|_| set_control(&dev, &tilt_name, tilt_value));
+        if let Err(error) = result {
+            status_drag.set_text(&format!("Joystick update failed: {error}"));
+        } else {
+            status_drag.set_text(&format!("Pan speed: {pan_value} · Tilt speed: {tilt_value}"));
+        }
+    });
+
+    let dev_end = device.to_string();
+    let pan_end = pan.name.clone();
+    let tilt_end = tilt.name.clone();
+    let status_end = status.clone();
+    let end_position = position.clone();
+    let pad_end = pad.clone();
+    drag.connect_drag_end(move |_, _, _| {
+        *end_position.borrow_mut() = (0.0, 0.0);
+        pad_end.queue_draw();
+        let result = set_control(&dev_end, &pan_end, 0)
+            .and_then(|_| set_control(&dev_end, &tilt_end, 0));
+        status_end.set_text(&result.map(|_| "Gimbal stopped.".to_string())
+            .unwrap_or_else(|e| format!("Could not stop gimbal: {e}")));
+    });
+    pad.add_controller(drag);
+    layout.append(&pad);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
@@ -138,6 +230,16 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     heading.add_css_class("title-3");
     heading.set_halign(gtk::Align::Start);
     container.append(&heading);
+
+    let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
+    let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
+    if let (Some(pan), Some(tilt)) = (pan_speed.as_ref(), tilt_speed.as_ref()) {
+        if pan.min <= 0 && pan.max >= 0 && tilt.min <= 0 && tilt.max >= 0 {
+            add_speed_joystick(container, device, pan, tilt, status);
+        } else {
+            status.set_text("Pan/tilt speed controls do not expose zero as a neutral value; joystick disabled for safety.");
+        }
+    }
 
     let has_pan = controls.iter().any(|c| c.name == "pan_absolute" && !c.disabled);
     let has_tilt = controls.iter().any(|c| c.name == "tilt_absolute" && !c.disabled);
@@ -158,7 +260,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     let total = controls.len();
     for control in controls {
-        if control.disabled || control.kind == "button" || control.name == "pan_absolute" || control.name == "tilt_absolute" { continue; }
+        if control.disabled || control.kind == "button" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "pan_speed" || control.name == "tilt_speed" { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(3);
         row.set_margin_bottom(3);
@@ -202,26 +304,31 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             row.append(&combo);
             row.append(&apply);
         } else {
-            let spin = gtk::SpinButton::with_range(control.min as f64, control.max as f64, control.step as f64);
-            spin.set_value(control.value as f64);
-            spin.set_width_chars(9);
-            let spin_apply = spin.clone();
-            let apply = gtk::Button::with_label("Apply");
+            let scale = gtk::Scale::with_range(
+                gtk::Orientation::Horizontal,
+                control.min as f64,
+                control.max as f64,
+                control.step as f64,
+            );
+            scale.set_value(control.value as f64);
+            scale.set_draw_value(true);
+            scale.set_digits(0);
+            scale.set_hexpand(true);
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
-            apply.connect_clicked(move |_| {
-                let requested = spin_apply.value_as_int() as i64;
+            scale.connect_value_changed(move |slider| {
+                let requested = slider.value().round() as i64;
                 let result = set_control(&dev, &name, requested);
-                status_label.set_text(&result.map(|_| format!("{name} set to {requested}")).unwrap_or_else(|e| e));
+                status_label.set_text(&result.map(|_| format!("{name}: {requested}"))
+                    .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
             });
-            row.append(&spin);
-            row.append(&apply);
+            row.append(&scale);
         }
         container.append(&row);
         container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
-    status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Changes are sent only when you press Apply."));
+    status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
 }
 
 fn build_ui(app: &gtk::Application) {
