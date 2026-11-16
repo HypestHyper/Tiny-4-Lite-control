@@ -240,13 +240,13 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
     let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
-    if let (Some(pan), Some(tilt)) = (pan_speed.as_ref(), tilt_speed.as_ref()) {
-        if pan.min <= 0 && pan.max >= 0 && tilt.min <= 0 && tilt.max >= 0 {
+    let joystick_enabled = match (pan_speed.as_ref(), tilt_speed.as_ref()) {
+        (Some(pan), Some(tilt)) if pan.min <= 0 && pan.max >= 0 && tilt.min <= 0 && tilt.max >= 0 => {
             add_speed_joystick(container, device, pan, tilt, status);
-        } else {
-            status.set_text("Pan/tilt speed controls do not expose zero as a neutral value; joystick disabled for safety.");
+            true
         }
-    }
+        _ => false,
+    };
 
     let has_pan = controls.iter().any(|c| c.name == "pan_absolute" && !c.disabled);
     let has_tilt = controls.iter().any(|c| c.name == "tilt_absolute" && !c.disabled);
@@ -267,7 +267,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     let total = controls.len();
     for control in controls {
-        if control.disabled || control.kind == "button" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "pan_speed" || control.name == "tilt_speed" { continue; }
+        if control.disabled || control.kind == "button" || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_margin_top(3);
         row.set_margin_bottom(3);
