@@ -255,7 +255,6 @@ const UVCIOC_CTRL_QUERY: std::os::raw::c_ulong = 0xc010_7521;
 const XU_UNIT: u8 = 2;
 const UVC_SET_CUR: u8 = 0x01;
 const UVC_GET_CUR: u8 = 0x81;
-static XU_SEQUENCE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0x30);
 
 extern "C" {
     fn ioctl(fd: std::os::raw::c_int, request: std::os::raw::c_ulong, ...) -> std::os::raw::c_int;
@@ -294,8 +293,7 @@ fn crc16_usb(bytes: &[u8]) -> u16 {
     !crc
 }
 
-fn obsbot_frame(function_group: [u8; 6], command: [u8; 6]) -> [u8; 60] {
-    let sequence = XU_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8; 60] {
     let mut frame = [0u8; 60];
     frame[0] = 0xaa;
     frame[1] = 0x25;
@@ -318,8 +316,8 @@ fn obsbot_frame(function_group: [u8; 6], command: [u8; 6]) -> [u8; 60] {
     frame
 }
 
-fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
-    let mut frame = obsbot_frame(function_group, command);
+fn xu_send_frame(device: &str, sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
+    let mut frame = obsbot_frame(sequence, function_group, command);
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
 }
 
@@ -335,21 +333,23 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
 
 fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
     let group = [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00];
-    let command = if sport {
-        [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00]
+    let (sequence, command) = if sport {
+        (0x0021, [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00])
     } else {
-        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
+        (0x0020, [0xab, 0xcb, 0xe6, 0x3f, 0x00, 0x00])
     };
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, sequence, group, command)
 }
 
 fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
-    let command = if enabled {
-        [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]
+    let (sequence, command) = if enabled {
+        (match group[3] { 0x30 => 0x0009, 0x31 => 0x000b, 0x33 if group[2] == 0x44 => 0x000d, _ => 0x000f },
+         [0x7a, 0x9f, 0x27, 0xff, 0x00, 0x00])
     } else {
-        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
+        (match group[3] { 0x30 => 0x0008, 0x31 => 0x000a, 0x33 if group[2] == 0x44 => 0x000c, _ => 0x000e },
+         [0x2b, 0x5a, 0xe6, 0x3f, 0x00, 0x00])
     };
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, sequence, group, command)
 }
 
 fn ai_mode_label(status: &[u8; 60]) -> &'static str {
@@ -717,12 +717,13 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn crc_and_tracking_frame_match_lite_capture() {
+    fn tracking_frame_matches_lite_capture() {
         let frame = obsbot_frame(
+            0x0020,
             [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00],
             [0xab, 0xcb, 0xe6, 0x3f, 0x00, 0x00],
         );
-        assert_eq!(&frame[..17], hex("aa2530000c00abcb0a04c40c0100e63f").as_slice());
+        assert_eq!(&frame[..17], hex("aa2520000c00abcb0a04c40c0100e63f").as_slice());
     }
 
     #[test]
