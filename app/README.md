@@ -4,9 +4,9 @@ A small GTK4 test bench for the OBSBOT Tiny 2 Lite.
 
 - Detects video nodes by walking sysfs to the USB parent and matching **3564:fef9**. It does not match regular Tiny 2 (3564:fef8).
 - Reads V4L2 control metadata from the camera at runtime.
-- Exposes supported boolean, menu, and numeric controls; numeric sliders apply changes immediately while dragging.
-- Provides a drag joystick for signed pan/tilt speed controls. Releasing the joystick sends zero speed to stop the gimbal.
-- Provides one-degree absolute pan/tilt buttons when available. Every absolute movement requires confirmation.
+- Exposes supported boolean, menu, and numeric controls. Numeric sliders apply changes immediately, mark the camera-reported default value, and include a Reset button. Binary 0/1 controls are instant toggles.
+- Provides a drag joystick for signed pan/tilt speed controls, mapped against the widget's actual size. Releasing the joystick sends zero speed to stop the gimbal.
+- Provides one-degree absolute pan/tilt buttons when available. These buttons move immediately without a confirmation dialog.
 - Does not send vendor XU commands, sleep/wake, preset mutations, or undocumented state changes in this first build.
 
 The app uses the ranges and menu entries reported by the connected camera rather than hard-coded assumptions.
@@ -35,4 +35,4 @@ cd app
 cargo build --release
 ```
 
-Absolute pan/tilt buttons move the physical gimbal by one degree and require confirmation. The speed joystick sends live signed speed values while dragged and sends zero on release. Keep the movement area clear. No movement is initiated automatically at startup; no homing, sleep/wake, preset save, or vendor XU command is sent.
+Absolute pan/tilt buttons move the physical gimbal by one degree immediately. The speed joystick sends live signed speed values while dragged and sends zero on release. Keep the movement area clear. No movement is initiated automatically at startup; no homing, sleep/wake, preset save, or vendor XU command is sent.
