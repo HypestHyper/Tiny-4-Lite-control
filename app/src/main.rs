@@ -1305,6 +1305,39 @@ mod xu_protocol_tests {
     }
 
     #[test]
+    fn continuous_zoom_requires_bidirectional_control_range() {
+        let control = Control {
+            name: "zoom_continuous".into(), kind: "int".into(),
+            min: -1, max: 1, step: 1, value: 0, default_value: 0,
+            disabled: false, menu: Vec::new(),
+        };
+        assert_eq!(continuous_zoom_values(&control), Some((-1, 1)));
+    }
+
+    #[test]
+    fn continuous_zoom_respects_reported_step_and_limits() {
+        let control = Control {
+            name: "zoom_continuous".into(), kind: "int".into(),
+            min: -4, max: 6, step: 2, value: 0, default_value: 0,
+            disabled: false, menu: Vec::new(),
+        };
+        assert_eq!(continuous_zoom_values(&control), Some((-2, 2)));
+    }
+
+    #[test]
+    fn continuous_zoom_is_omitted_for_unsupported_or_disabled_control() {
+        let mut control = Control {
+            name: "zoom_continuous".into(), kind: "int".into(),
+            min: 0, max: 1, step: 1, value: 0, default_value: 0,
+            disabled: false, menu: Vec::new(),
+        };
+        assert_eq!(continuous_zoom_values(&control), None);
+        control.min = -1;
+        control.disabled = true;
+        assert_eq!(continuous_zoom_values(&control), None);
+    }
+
+    #[test]
     fn tracking_frame_matches_lite_capture() {
         let frame = obsbot_frame(
             0x0020,
