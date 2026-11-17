@@ -14,7 +14,8 @@ URB ID in capture order; URB IDs are reused. The selector `0x02`
 Extension Unit traffic contains 93 SET_CUR submissions and 57 GET_CUR
 requests. The 93 SET_CUR frames use message types `0x01` (40),
 `0x21` (17), and `0x25` (36), with sequence values `0x23` through
-`0x7F`.
+`0x7F`. All 93 SET_CUR submissions have matching completions with
+USB status 0.
 
 The Capture tab's Finish operation hung during this large capture, so
 its checkpoint/report metadata was not recovered. Packet timestamps
