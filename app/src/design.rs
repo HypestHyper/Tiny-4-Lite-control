@@ -89,7 +89,12 @@ fn css(dark: bool) -> String {
 
 * {{ font-family: "Google Sans Flex", "Cantarell", sans-serif; }}
 window.tiny4-window {{ background: @tiny_surface_dim; color: @tiny_on_surface; }}
-.tiny4-root {{ padding: 20px; background: @tiny_surface_dim; color: @tiny_on_surface; }}
+.tiny4-root {{ padding: 12px; background: @tiny_surface_dim; color: @tiny_on_surface; }}
+.tiny4-root.compact-layout {{ padding: 6px; }}
+.content-page.compact-layout {{ padding: 6px; }}
+.compact-layout frame {{ padding: 6px; }}
+.compact-layout .app-title {{ font-size: 20px; }}
+.compact-layout button {{ padding-left: 12px; padding-right: 12px; }}
 .app-header {{ min-height: 64px; margin-bottom: 4px; }}
 .app-title {{ color: @tiny_on_surface; font-size: 24px; font-weight: 700; }}
 .material-icon {{ font-family: "Material Symbols Rounded"; font-size: 28px; color: @tiny_primary; padding-right: 8px; }}
