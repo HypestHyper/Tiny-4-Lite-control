@@ -682,6 +682,7 @@ fn build_ui(app: &gtk::Application) {
     scroll.set_child(Some(&controls_box));
     notebook.append_page(&scroll, Some(&gtk::Label::new(Some("Controls"))));
 
+    // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
     let capture_page = capture::build_page();
     notebook.append_page(&capture_page, Some(&gtk::Label::new(Some("Capture"))));
     root.append(&notebook);
