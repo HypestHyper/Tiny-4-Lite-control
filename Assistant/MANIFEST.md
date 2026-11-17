@@ -3,7 +3,7 @@
 ## Research bundle
 
 - Original OBSBOT Tiny 2 Lite research: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
-- Five topic partitions under `reference/`.
+- Seven topic notes under `reference/`, including the 2026-11-17 PTZ position read-back investigation.
 - Complete source preserved unchanged; topic files retain original section content/order.
 
 ## Current app handoff
