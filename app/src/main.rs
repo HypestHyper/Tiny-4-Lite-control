@@ -332,6 +332,108 @@ fn xu_send_frame(device: &str, sequence: u16, function_group: [u8; 6], command: 
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
 }
 
+fn set_fov(device: &str, mode: u8) -> Result<(), String> {
+    if mode > 2 { return Err("Unsupported FOV mode.".into()); }
+    // Selector 0x06 tag 0x04: [tag, length=1, mode].
+    // Wire values are 0=Wide, 1=Normal, 2=Narrow. Narrow is known to
+    // be ignored by the tested Tiny 2 Lite firmware.
+    let mut data = [0u8; 60];
+    data[0] = 0x04;
+    data[1] = 0x01;
+    data[2] = mode;
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+fn set_led_blinking(device: &str, blinking: bool) -> Result<(), String> {
+    // Selector 0x06 tag 0x18 controls blink vs solid, not brightness.
+    let mut data = [0u8; 60];
+    data[0] = 0x18;
+    data[1] = 0x01;
+    data[2] = u8::from(blinking);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Camera settings"));
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let fov_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let fov_label = gtk::Label::new(Some("Field of view"));
+    fov_label.set_width_chars(22);
+    fov_label.set_xalign(0.0);
+    let fov = gtk::ComboBoxText::new();
+    fov.append(Some("0"), "Wide · 86°");
+    fov.append(Some("1"), "Normal · 78°");
+    fov.append(Some("2"), "Narrow · 65° (may be ignored)");
+    fov.set_hexpand(true);
+    if let Ok(current) = xu_status(device) {
+        let selected = match current[0x11] { 1 => Some("0"), 2 => Some("1"), _ => None };
+        if let Some(id) = selected { fov.set_active_id(Some(id)); }
+    }
+    let apply_fov = gtk::Button::with_label("Apply");
+    let fov_apply = fov.clone();
+    let dev = device.to_string();
+    let status_fov = status.clone();
+    apply_fov.connect_clicked(move |_| {
+        let result = fov_apply.active_id()
+            .ok_or_else(|| "Could not read current FOV. Select a mode.".to_string())
+            .and_then(|id| id.parse::<u8>().map_err(|_| "Invalid FOV mode.".to_string()))
+            .and_then(|mode| set_fov(&dev, mode));
+        status_fov.set_text(&result.map(|_| "FOV command sent. Read camera status to verify; Narrow is a known no-op on tested Lite firmware.".to_string())
+            .unwrap_or_else(|e| format!("FOV change failed: {e}")));
+    });
+    fov_row.append(&fov_label);
+    fov_row.append(&fov);
+    fov_row.append(&apply_fov);
+    layout.append(&fov_row);
+
+    let led_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let led_label = gtk::Label::new(Some("LED indicator"));
+    led_label.set_width_chars(22);
+    led_label.set_xalign(0.0);
+    let solid = gtk::Button::with_label("Solid");
+    let blinking = gtk::Button::with_label("Blinking");
+    let dev_solid = device.to_string();
+    let status_solid = status.clone();
+    solid.connect_clicked(move |_| {
+        let result = set_led_blinking(&dev_solid, false);
+        status_solid.set_text(&result.map(|_| "LED solid-mode command sent.".to_string())
+            .unwrap_or_else(|e| format!("LED command failed: {e}")));
+    });
+    let dev_blink = device.to_string();
+    let status_blink = status.clone();
+    blinking.connect_clicked(move |_| {
+        let result = set_led_blinking(&dev_blink, true);
+        status_blink.set_text(&result.map(|_| "LED blinking-mode command sent.".to_string())
+            .unwrap_or_else(|e| format!("LED command failed: {e}")));
+    });
+    led_row.append(&led_label);
+    led_row.append(&solid);
+    led_row.append(&blinking);
+    layout.append(&led_row);
+
+    let led_brightness = gtk::Label::new(Some("LED brightness: read-back only"));
+    led_brightness.set_xalign(0.0);
+    led_brightness.add_css_class("dim-label");
+    if let Ok(current) = xu_status(device) {
+        led_brightness.set_text(&format!("LED brightness status byte: {} (0x{:02x}) · brightness writes are not yet mapped",
+            current[0x21], current[0x21]));
+    }
+    layout.append(&led_brightness);
+
+    let note = gtk::Label::new(Some("FOV and LED indicator commands use the OBSBOT extension unit. The LED buttons switch solid/blinking mode; they do not change brightness. FOV read-back uses status byte 0x11."));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     // Selector 0x06 uses [opcode, payload length, m, n].
     let mut data = [0u8; 60];
@@ -579,6 +681,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     container.append(&heading);
 
     add_sleep_controls(container, device, status);
+    add_camera_settings(container, device, status);
     add_ai_controls(container, device, status);
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
