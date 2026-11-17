@@ -134,7 +134,7 @@ Enable/disable frames are built with the current frame builder. The status block
 - No reliable per-gesture state read-back.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
-- No claim of a completed release or verified AppImage build is made by this status note.
+- GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging, not live hardware validation of the new diagnostics reads.
 
 ## 5. Evidence status and next investigation
 
