@@ -347,8 +347,25 @@ fn set_fov(device: &str, mode: u8) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
+fn led_brightness_payload(level: u8) -> Result<[u8; 3], String> {
+    if level > 3 {
+        return Err("LED brightness must be between 0 (off) and 3 (maximum).".into());
+    }
+    // Captured Tiny 2 Lite command: selector 0x06, tag 0x1A,
+    // payload [0x1A, 0x01, level]. Status byte 0x21 reads back the level.
+    Ok([0x1a, 0x01, level])
+}
+
+fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
+    let payload = led_brightness_payload(level)?;
+    let mut data = [0u8; 60];
+    data[..payload.len()].copy_from_slice(&payload);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
 fn set_led_blinking(device: &str, blinking: bool) -> Result<(), String> {
-    // Selector 0x06 tag 0x18 controls blink vs solid, not brightness.
+    // Selector 0x06 tag 0x18 controls blink vs solid, independently
+    // from brightness/on-off (tag 0x1A).
     let mut data = [0u8; 60];
     data[0] = 0x18;
     data[1] = 0x01;
@@ -402,7 +419,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
 
     let led_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     led_row.add_css_class("adaptive-row");
-    let led_label = gtk::Label::new(Some("LED indicator"));
+    let led_label = gtk::Label::new(Some("LED mode"));
     led_label.set_width_chars(22);
     led_label.set_xalign(0.0);
     let solid = gtk::Button::with_label("Solid");
@@ -411,31 +428,91 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     let status_solid = status.clone();
     solid.connect_clicked(move |_| {
         let result = set_led_blinking(&dev_solid, false);
-        status_solid.set_text(&result.map(|_| "LED solid-mode command sent.".to_string())
-            .unwrap_or_else(|e| format!("LED command failed: {e}")));
+        status_solid.set_text(&result.map(|_| "LED solid mode selected.".to_string())
+            .unwrap_or_else(|e| format!("LED mode change failed: {e}")));
     });
     let dev_blink = device.to_string();
     let status_blink = status.clone();
     blinking.connect_clicked(move |_| {
         let result = set_led_blinking(&dev_blink, true);
-        status_blink.set_text(&result.map(|_| "LED blinking-mode command sent.".to_string())
-            .unwrap_or_else(|e| format!("LED command failed: {e}")));
+        status_blink.set_text(&result.map(|_| "LED blinking mode selected.".to_string())
+            .unwrap_or_else(|e| format!("LED mode change failed: {e}")));
     });
     led_row.append(&led_label);
     led_row.append(&solid);
     led_row.append(&blinking);
     layout.append(&led_row);
 
-    let led_brightness = gtk::Label::new(Some("LED brightness: read-back only"));
+    let led_power_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    led_power_row.add_css_class("adaptive-row");
+    let led_power_label = gtk::Label::new(Some("LED power / intensity"));
+    led_power_label.set_width_chars(22);
+    led_power_label.set_xalign(0.0);
+    let intensity = gtk::ComboBoxText::new();
+    intensity.append(Some("1"), "1 · Low");
+    intensity.append(Some("2"), "2 · Medium");
+    intensity.append(Some("3"), "3 · High");
+    intensity.set_active_id(Some("1"));
+    if let Ok(current) = xu_status(device) {
+        if (1..=3).contains(&current[0x21]) {
+            intensity.set_active_id(Some(&current[0x21].to_string()));
+        }
+    }
+    intensity.set_hexpand(true);
+
+    let led_on = gtk::Button::with_label("On");
+    let dev_on = device.to_string();
+    let intensity_on = intensity.clone();
+    let status_on = status.clone();
+    led_on.connect_clicked(move |_| {
+        let result = intensity_on.active_id()
+            .ok_or_else(|| "Select an LED intensity level first.".to_string())
+            .and_then(|id| id.parse::<u8>().map_err(|_| "Invalid LED intensity.".to_string()))
+            .and_then(|level| {
+                set_led_brightness(&dev_on, level)?;
+                let actual = xu_status(&dev_on)?[0x21];
+                if actual == level {
+                    Ok(format!("LED on. Brightness level {actual} confirmed."))
+                } else {
+                    Err(format!("LED command sent level {level}, but status reports {actual}."))
+                }
+            });
+        status_on.set_text(&result.unwrap_or_else(|e| format!("LED power change failed: {e}")));
+    });
+
+    let led_off = gtk::Button::with_label("Off");
+    let dev_off = device.to_string();
+    let status_off = status.clone();
+    led_off.connect_clicked(move |_| {
+        let result = set_led_brightness(&dev_off, 0)
+            .and_then(|_| {
+                let actual = xu_status(&dev_off)?[0x21];
+                if actual == 0 {
+                    Ok("LED off confirmed.".to_string())
+                } else {
+                    Err(format!("Off command sent, but status reports brightness {actual}."))
+                }
+            });
+        status_off.set_text(&result.unwrap_or_else(|e| format!("LED power change failed: {e}")));
+    });
+
+    led_power_row.append(&led_power_label);
+    led_power_row.append(&intensity);
+    led_power_row.append(&led_on);
+    led_power_row.append(&led_off);
+    layout.append(&led_power_row);
+
+    let led_brightness = gtk::Label::new(Some("LED brightness status unavailable"));
     led_brightness.set_xalign(0.0);
     led_brightness.add_css_class("dim-label");
     if let Ok(current) = xu_status(device) {
-        led_brightness.set_text(&format!("LED brightness status byte: {} (0x{:02x}) · brightness writes are not yet mapped",
-            current[0x21], current[0x21]));
+        let level = current[0x21];
+        let state = match level { 0 => "Off", 1 => "Level 1", 2 => "Level 2", 3 => "Level 3", _ => "Unknown level" };
+        led_brightness.set_text(&format!("LED status: {state} (0x21 = {level})"));
     }
     layout.append(&led_brightness);
 
-    let note = gtk::Label::new(Some("FOV and LED indicator commands use the OBSBOT extension unit. The LED buttons switch solid/blinking mode; they do not change brightness. FOV read-back uses status byte 0x11."));
+    let note = gtk::Label::new(Some("LED on/off and intensity use captured selector 0x06 tag 0x1A; 0 means off and 1–3 are the observed intensity levels. Solid/blinking mode is a separate selector 0x06 tag 0x18 command. FOV read-back uses status byte 0x11."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -1269,6 +1346,15 @@ mod xu_protocol_tests {
         assert_eq!(&sleep[..20], hex("aa2542000c00ea630a02c2a00400bffb01000000").as_slice());
         assert!(wake[20..].iter().all(|byte| *byte == 0));
         assert!(sleep[20..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn led_brightness_payload_matches_lite_capture() {
+        assert_eq!(led_brightness_payload(0).unwrap(), [0x1a, 0x01, 0x00]);
+        assert_eq!(led_brightness_payload(1).unwrap(), [0x1a, 0x01, 0x01]);
+        assert_eq!(led_brightness_payload(2).unwrap(), [0x1a, 0x01, 0x02]);
+        assert_eq!(led_brightness_payload(3).unwrap(), [0x1a, 0x01, 0x03]);
+        assert!(led_brightness_payload(4).is_err());
     }
 
     #[test]
