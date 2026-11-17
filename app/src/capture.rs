@@ -389,7 +389,6 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
     let finish_button = finish.clone();
     let copy_finish = copy.clone();
     let open_finish = open_folder.clone();
-    let name_finish = test_name.clone();
     finish.connect_clicked(move |_| {
         let Some(active) = session_finish.borrow_mut().take() else {
             status_finish.set_text("No capture session is running.");
