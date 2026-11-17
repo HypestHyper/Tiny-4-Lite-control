@@ -274,6 +274,7 @@ fn text_view_contents(view: &gtk::TextView) -> String {
 
 pub fn build_page() -> gtk::Box {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    page.add_css_class("content-page");
     page.set_margin_top(12);
     page.set_margin_bottom(12);
     page.set_margin_start(12);
