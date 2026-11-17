@@ -143,6 +143,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
 
     let sensitivity = Rc::new(RefCell::new(1.0_f64));
     let sensitivity_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    sensitivity_row.add_css_class("adaptive-row");
     let sensitivity_label = gtk::Label::new(Some("Sensitivity"));
     let sensitivity_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 10.0, 200.0, 5.0);
     sensitivity_scale.set_value(100.0);
@@ -363,6 +364,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     layout.set_margin_end(10);
 
     let fov_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    fov_row.add_css_class("adaptive-row");
     let fov_label = gtk::Label::new(Some("Field of view"));
     fov_label.set_width_chars(22);
     fov_label.set_xalign(0.0);
@@ -393,6 +395,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     layout.append(&fov_row);
 
     let led_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    led_row.add_css_class("adaptive-row");
     let led_label = gtk::Label::new(Some("LED indicator"));
     led_label.set_width_chars(22);
     led_label.set_xalign(0.0);
@@ -461,6 +464,7 @@ fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
 fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera power"));
     let layout = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    layout.add_css_class("adaptive-row");
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
     layout.set_margin_start(10);
@@ -548,6 +552,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     layout.set_margin_end(10);
 
     let mode_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    mode_row.add_css_class("adaptive-row");
     let mode_label = gtk::Label::new(Some("Tracking mode"));
     mode_label.set_width_chars(22);
     mode_label.set_xalign(0.0);
@@ -593,6 +598,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     layout.append(&mode_row);
 
     let speed_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    speed_row.add_css_class("adaptive-row");
     let speed_label = gtk::Label::new(Some("Tracking speed"));
     speed_label.set_width_chars(22);
     speed_label.set_xalign(0.0);
@@ -627,6 +633,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     ];
     for (label, group) in gestures {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("adaptive-row");
         let name = gtk::Label::new(Some(label));
         name.set_xalign(0.0);
         name.set_hexpand(true);
@@ -646,6 +653,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     }
 
     let refresh_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    refresh_row.add_css_class("adaptive-row");
     let refresh = gtk::Button::with_label("Read AI status");
     let dev = device.to_string();
     let status_refresh = status.clone();
@@ -700,6 +708,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     if has_pan || has_tilt {
         let frame = gtk::Frame::new(Some("Gimbal movement"));
         let movement = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    movement.add_css_class("adaptive-row");
         if has_pan {
             add_move_button(&movement, device, "pan_absolute", -3600, "Pan −1°", status);
             add_move_button(&movement, device, "pan_absolute", 3600, "Pan +1°", status);
@@ -720,6 +729,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     for control in controls {
         if (control.disabled && control.name != "zoom_absolute" && control.name != "focus_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("adaptive-row");
         row.set_margin_top(3);
         row.set_margin_bottom(3);
         let title = gtk::Label::new(Some(&control.name.replace('_', " ")));
@@ -914,6 +924,7 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     page.append(&info_scroll);
 
     let model_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    model_row.add_css_class("adaptive-row");
     let model_button = gtk::Button::with_label("Read model string (XU 0x08)");
     let model_output = gtk::Label::new(Some("Not read."));
     model_output.set_xalign(0.0);
@@ -923,6 +934,7 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     page.append(&model_row);
 
     let selector_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    selector_row.add_css_class("adaptive-row");
     let read_status = gtk::Button::with_label("Read status (0x06)");
     let read_command = gtk::Button::with_label("Read command channel (0x02)");
     selector_row.append(&read_status);
@@ -1014,6 +1026,20 @@ fn save_theme_mode(mode: design::ThemeMode) {
     }
 }
 
+
+fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
+    if let Some(container) = widget.downcast_ref::<gtk::Box>() {
+        if container.has_css_class("adaptive-row") {
+            container.set_orientation(if compact { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal });
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        apply_compact_layout(&current, compact);
+    }
+}
+
 fn build_ui(app: &gtk::Application) {
     let theme_provider = design::install();
     let initial_theme = load_theme_mode();
@@ -1025,8 +1051,13 @@ fn build_ui(app: &gtk::Application) {
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
     root.add_css_class("tiny4-root");
+    root.set_margin_top(8);
+    root.set_margin_bottom(8);
+    root.set_margin_start(8);
+    root.set_margin_end(8);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    header.add_css_class("adaptive-row");
     header.add_css_class("app-header");
     let app_icon = gtk::Label::new(Some("videocam"));
     app_icon.add_css_class("material-icon");
@@ -1056,6 +1087,7 @@ fn build_ui(app: &gtk::Application) {
     root.append(&header);
 
     let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    device_row.add_css_class("adaptive-row");
     device_row.add_css_class("device-row");
     let device_label = gtk::Label::new(Some("Camera control device"));
     device_label.set_xalign(0.0);
@@ -1087,9 +1119,20 @@ fn build_ui(app: &gtk::Application) {
 
     // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
     let capture_page = capture::build_page();
-    stack.add_titled(&capture_page, Some("capture"), "Capture");
+    let capture_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true).vexpand(true).build();
+    capture_scroll.set_child(Some(&capture_page));
+    stack.add_titled(&capture_scroll, Some("capture"), "Capture");
+
     let diagnostics_page = add_diagnostics_page(&devices);
-    stack.add_titled(&diagnostics_page, Some("diagnostics"), "Diagnostics");
+    let diagnostics_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true).vexpand(true).build();
+    diagnostics_scroll.set_child(Some(&diagnostics_page));
+    stack.add_titled(&diagnostics_scroll, Some("diagnostics"), "Diagnostics");
 
     let navigation = gtk::StackSidebar::new();
     navigation.add_css_class("navigation-sidebar");
@@ -1102,13 +1145,20 @@ fn build_ui(app: &gtk::Application) {
     root.append(&switcher);
     let navigation_responsive = navigation.clone();
     let switcher_responsive = switcher.clone();
+    let root_responsive = root.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
-        let wide = window.width() >= 760;
+        let width = window.width();
+        let wide = width >= 760;
+        let compact = width < 620;
         navigation_responsive.set_visible(wide);
         switcher_responsive.set_visible(!wide);
+        root_responsive.set_margin_top(if compact { 6 } else { 12 });
+        root_responsive.set_margin_bottom(if compact { 6 } else { 12 });
+        apply_compact_layout(root_responsive.upcast_ref(), compact);
     });
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    content.add_css_class("adaptive-row");
     content.set_vexpand(true);
     content.append(&navigation);
     content.append(&stack);
