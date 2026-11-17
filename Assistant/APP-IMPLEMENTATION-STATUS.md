@@ -69,7 +69,7 @@ Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has 
 - The Diagnostics tab reads the 60-byte selector `0x06` status block and selector `0x02` command-channel response using GET_CUR only.
 - It shows the selector `0x08` model/stream name and USB descriptor identity, including `bcdDevice` clearly labelled as a USB device-release value, not confirmed firmware.
 - Status fields are decoded only where evidence exists. FOV (`0x11`) and crop/zoom-related raw code (`0x04`) are displayed separately. Candidate position floats from selector `0x02` remain labelled unverified.
-- Camera settings expose Wide / Normal / Narrow FOV commands and Solid / Blinking LED indicator commands. Narrow is known to be ignored by the tested Lite firmware. LED commands only target indicator mode, not brightness; LED brightness remains read-only. Treat these setters as experimental until separately confirmed by a live read-back or visible effect.
+- Camera settings expose Wide / Normal / Narrow FOV commands and Solid / Blinking LED indicator commands. The user has visually confirmed all three FOV modes. FOV changes are incompatible with certain AI tracking modes; the exact affected modes are not yet identified. The Narrow status-byte read-back mapping remains unverified. LED commands only target indicator mode, not on/off state or brightness; LED brightness remains read-only. LED blinking has been visually confirmed by the user.
 - Sleep and wake controls send the captured Tiny 2 Lite power command. The command action and power-status read-back are separate; the user physically confirmed both sleep and wake behaviour.
 
 ### USB capture workflow
