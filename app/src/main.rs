@@ -1138,7 +1138,6 @@ fn build_ui(app: &gtk::Application) {
 
     let devices_refresh = devices.clone();
     let controls_refresh = controls_box.clone();
-    let win_refresh = window.clone();
     let status_refresh = status.clone();
     refresh.connect_clicked(move |_| {
         devices_refresh.remove_all();
