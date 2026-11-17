@@ -476,12 +476,12 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     led_brightness.add_css_class("dim-label");
     if let Ok(current) = xu_status(device) {
         let level = current[0x21];
-        let state = match level { 0 => "Off", 1 => "Level 1", 2 => "Level 2", 3 => "Level 3", _ => "Unknown level" };
-        led_brightness.set_text(&format!("LED status: {state} (0x21 = {level})"));
+        let state = match level { 0 => "Level 1", 1 => "Level 2", 2 => "Level 3", 3 => "Level 4", _ => "Unknown level" };
+        led_brightness.set_text(&format!("LED brightness: {state} (raw 0x21 = {level}); power is controlled separately"));
     }
     layout.append(&led_brightness);
 
-    let note = gtk::Label::new(Some("LED on/off and intensity use captured selector 0x06 tag 0x1A; 0 means off and 1–3 are the observed intensity levels. Solid/blinking mode is a separate selector 0x06 tag 0x18 command. FOV read-back uses status byte 0x11."));
+    let note = gtk::Label::new(Some("LED power uses selector 0x06 tag 0x18. Brightness uses tag 0x1A with four levels: raw 0–3 map to levels 1–4. Status byte 0x21 reports brightness, not power state. FOV read-back uses status byte 0x11."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
