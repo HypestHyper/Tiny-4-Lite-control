@@ -52,6 +52,16 @@ Implemented XU operations:
 
 The current app does not implement sleep/wake or preset mutation.
 
+### USB capture workflow
+
+- A dedicated Capture tab records a continuous `usbmonN` trace for the selected Tiny 2 Lite USB bus.
+- The app discovers the bus and device address from the selected `/dev/videoN` node's sysfs ancestry.
+- Capture runs through `pkexec tshark` where elevated usbmon access is required; the pcapng stream is written to a user-owned file.
+- The user marks a baseline and subsequent state changes with timestamped text checkpoints.
+- Finishing a session creates a text report containing the checkpoint list and TShark-decoded control transfers filtered to the camera's USB address. It includes `usb.control.Response` and `usb.capdata` fields as available.
+- Raw `.pcapng` and `.txt` files are saved under `$XDG_DATA_HOME/tiny4lite-control/captures/` (or `~/.local/share/tiny4lite-control/captures/`).
+- This is a recorder and evidence exporter, not an automatic protocol decoder or payload diff engine. Unknown bytes remain uninterpreted.
+
 ## 2. Protocol findings currently encoded
 
 ### AI tracking modes
@@ -111,7 +121,7 @@ Enable/disable frames are built with the current frame builder. The status block
 
 ## 4. What is not implemented
 
-- No USBPcap/usbmon capture ingestion or trace-diff workflow in the application.
+- No automatic byte-diff view or protocol-semantic inference in the application; capture sessions export raw traces and timestamped decoded control-transfer reports.
 - No automatic firmware identification.
 - No reliable per-gesture state read-back.
 - No complete protocol coverage for all features listed in the research inventory.
@@ -120,7 +130,7 @@ Enable/disable frames are built with the current frame builder. The status block
 
 ## 5. Evidence status and next investigation
 
-The protocol work so far is based on the organized research, Lite-specific repository material, and captured byte examples already recorded in that research. **No new Windows OBSBOT Center USB traces have been collected yet.** The Windows 11 VM and QEMU Guest Agent/VirtIO setup are ready for that work.
+The protocol work so far is based on the organized research, Lite-specific repository material, and captured byte examples already recorded in that research. Controlled OBSBOT Center traces have now been collected from the Windows 11 VM and from Linux `usbmon3` while the camera was passed through to the VM. HDR On/Off testing confirmed a reversible status change at byte offset 5 of the selector `0x06` 60-byte status response (`00` Off, `01` On). The identical write prefix `01 01 01` was observed for both directions; its internal semantics remain unknown.
 
 Next investigation is a controlled capture campaign:
 
