@@ -1,25 +1,28 @@
-# Bundle manifest
+# Assistant bundle manifest
 
-- Original source: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
-- Original source lines: 822
-- Original source characters: 35216
-- Original source SHA-256: `cf07049df8c36093f07138354d88c08a794d2f0c213de07851cd8f51a168c87a`
-- Reference files: 5 topic partitions copied from contiguous ranges of the original document.
-- Preservation: the complete original is included unchanged; topic files retain the original section content and order. Navigation/agent guidance is additional metadata, not a replacement for source content.
+## Research bundle
 
-## Layout
+- Original OBSBOT Tiny 2 Lite research: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
+- Five topic partitions under `reference/`.
+- Complete source preserved unchanged; topic files retain original section content/order.
 
-```text
-Assistant/
-├── AGENTS.md
-├── INDEX.md
-├── MANIFEST.md
-├── reference/
-│   ├── 01-device-and-repositories.md
-│   ├── 02-feature-inventory.md
-│   ├── 03-media-and-limitations.md
-│   ├── 04-architecture-and-hardware-testing.md
-│   └── 05-licensing-handoff-and-open-questions.md
-└── source/
-    └── obsbot_tiny_2_lite_linux_research_handoff.md
-```
+## Current app handoff
+
+- [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md): current framework implementation, protocol details, gaps, and next investigation.
+- App source of truth: `../app/src/main.rs` on branch `test-app-v0.1`.
+- App runtime/build notes: `../app/README.md`.
+- Current app is a Rust/GTK4 hardware-control test bench. UI redesign is deferred.
+
+## USB tracing workflow
+
+The generic USB tracing guide and its partitioned references currently live on the repository `main` branch:
+
+- [Tracing index](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing)
+- [Tracing source](https://github.com/HypestHyper/Tiny-4-Lite-control/blob/main/Assistant/tracing/source/reverse-engineering-usb-devices.md)
+- [Capture template](https://github.com/HypestHyper/Tiny-4-Lite-control/blob/main/Assistant/tracing/templates/capture-session.md)
+
+**Applicability warning:** the generic guide is HID-oriented. Tiny 2 Lite control is V4L2/UVC XU. Reuse the evidence workflow, not HID-specific report assumptions.
+
+## Current evidence state
+
+No new Windows OBSBOT Center USB captures have been collected yet. Existing command/frame examples and protocol findings are documented in the original research and summarized in `APP-IMPLEMENTATION-STATUS.md`. Do not describe the next capture phase as completed.
