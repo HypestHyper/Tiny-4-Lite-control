@@ -66,8 +66,21 @@ separately confirmed.
 
 Use V4L2: - `zoom_absolute` - `zoom_continuous`
 
-Gesture-based zoom is applied internally by the camera and does not
-update V4L2 `zoom_absolute`.
+**2026-11-17 capture evidence:** Five standard UVC Camera Terminal
+Zoom Absolute writes (selector `0x0B`, two-byte little-endian values
+66, 63, 0, 2, 64) were closely followed by XU selector `0x02`
+messages carrying a float32 little-endian value at payload offset 16:
+2.98, 2.89, 1.00, 1.06, 2.92. The same XU record later carried 4.00.
+Its GET_CUR counterpart returned values including 1.00, 1.15, 1.47,
+3.00 and 4.00. This strongly associates the XU parameter with zoom,
+but the trace does **not** establish whether the crop is performed by
+the camera's image processor or elsewhere. Do not label it optical,
+digital, or hardware zoom based on this trace alone.
+
+Gesture-based zoom remains a separate feature and does not update
+V4L2 `zoom_absolute`. See
+[2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
+for packet details.
 
 ### 4.4 AI tracking / framing modes
 
@@ -163,6 +176,24 @@ Do not expose Narrow as working on all Lite firmware without retesting.
 **Status:** Standard V4L2 controls available; individual behavior should
 be queried and verified.
 
+Focus uses standard UVC Camera Terminal controls:
+
+- Focus Absolute: selector `0x06`, two-byte little-endian unsigned
+  value; exposed by V4L2 as `focus_absolute`.
+- Focus Auto: selector `0x08`, one-byte Boolean; exposed by V4L2 as
+  `focus_automatic_continuous` / `focus_auto`, depending on tool
+  naming.
+
+**2026-11-17 capture evidence:** OBSBOT Center read Focus Absolute as
+16, then wrote 14 values: 16, 16, 13, 0, 0, 0, 2, 18, 30, 43, 51,
+72, 87, 100. It read Focus Auto as 0, enabled it (1), read back 1,
+then disabled it (0) before the manual-focus sequence. All observed
+writes completed with USB status 0. These are observed values, **not**
+proof that the device's supported minimum/maximum are 0 and 100.
+Query the selected V4L2 node's control metadata at runtime; do not
+hardcode a range. Manual focus while continuous autofocus is enabled
+has undefined effect in the V4L2 API.
+
 Potential UI: - Auto/manual exposure. - Exposure time. - Autofocus
 toggle. - Manual focus. - Auto/manual white balance. - White-balance
 temperature. - Brightness, contrast, saturation, sharpness, gain, hue,
@@ -176,6 +207,9 @@ Face-AE GUI control was retired in Domatix because it meters correctly
 only in the XU auto-exposure path and silently no-ops when the V4L2
 exposure route is used. Treat Face AE as experimental, not a reliable
 basic feature.
+
+See [2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
+for raw request details and the accompanying zoom correlation.
 
 ### 4.10 Status block and read-back
 
