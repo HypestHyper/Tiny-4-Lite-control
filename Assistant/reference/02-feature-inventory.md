@@ -181,8 +181,7 @@ Focus uses standard UVC Camera Terminal controls:
 - Focus Absolute: selector `0x06`, two-byte little-endian unsigned
   value; exposed by V4L2 as `focus_absolute`.
 - Focus Auto: selector `0x08`, one-byte Boolean; exposed by V4L2 as
-  `focus_automatic_continuous` / `focus_auto`, depending on tool
-  naming.
+  `focus_automatic_continuous`.
 
 **2026-11-17 capture evidence:** OBSBOT Center read Focus Absolute as
 16, then wrote 14 values: 16, 16, 13, 0, 0, 0, 2, 18, 30, 43, 51,
