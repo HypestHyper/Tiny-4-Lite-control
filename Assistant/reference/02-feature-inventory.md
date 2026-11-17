@@ -243,7 +243,9 @@ Documented offsets (confidence varies):
 
   `0x1F`                  FPS                     Needs validation
 
-  `0x21`                  LED brightness          Needs validation
+  `0x21`                  LED brightness          Lite-confirmed: 0=off,
+                                                  1–3 intensity; write via
+                                                  selector 0x06 tag 0x1A
 
   `0x24`                  Tracking speed          Lite-confirmed
   -----------------------------------------------------------------------
@@ -258,7 +260,7 @@ indicator.
 
 These are useful research leads, not promises:
 
--   LED brightness.
+-   LED blink/solid mode details beyond the captured tag 0x18 command.
 -   Mirror mode.
 -   Auto-sleep timeout.
 -   HDR control details.
