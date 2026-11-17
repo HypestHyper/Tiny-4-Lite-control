@@ -994,8 +994,30 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     page
 }
 
+
+fn theme_config_path() -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("tiny4lite-control").join("settings.conf")
+}
+fn load_theme_mode() -> design::ThemeMode {
+    let value = fs::read_to_string(theme_config_path()).unwrap_or_default();
+    design::ThemeMode::from_name(value.lines().find_map(|line| line.strip_prefix("theme=")).unwrap_or("system"))
+}
+fn save_theme_mode(mode: design::ThemeMode) {
+    let path = theme_config_path();
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_ok() {
+            let _ = fs::write(path, format!("theme={}\n", mode.name()));
+        }
+    }
+}
+
 fn build_ui(app: &gtk::Application) {
-    design::install();
+    let theme_provider = design::install();
+    let initial_theme = load_theme_mode();
+    design::apply_theme(&theme_provider, initial_theme);
 
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control").default_width(1040).default_height(780).build();
@@ -1012,7 +1034,20 @@ fn build_ui(app: &gtk::Application) {
     title.set_xalign(0.0);
     let refresh = gtk::Button::with_label("Refresh camera");
     refresh.add_css_class("suggested-action");
+    let theme = gtk::ComboBoxText::new();
+    theme.append(Some("system"), "System");
+    theme.append(Some("light"), "Light");
+    theme.append(Some("dark"), "Dark");
+    theme.set_active_id(Some(initial_theme.name()));
+    theme.set_tooltip_text(Some("Choose whether the app follows the desktop theme or uses a fixed theme."));
+    let theme_provider_change = theme_provider.clone();
+    theme.connect_changed(move |combo| {
+        let mode = design::ThemeMode::from_name(combo.active_id().as_deref().unwrap_or("system"));
+        design::apply_theme(&theme_provider_change, mode);
+        save_theme_mode(mode);
+    });
     header.append(&title);
+    header.append(&theme);
     header.append(&refresh);
     root.append(&header);
 
@@ -1055,6 +1090,10 @@ fn build_ui(app: &gtk::Application) {
     let navigation = gtk::StackSidebar::new();
     navigation.add_css_class("navigation-sidebar");
     navigation.set_stack(&stack);
+    let navigation_responsive = navigation.clone();
+    window.connect_notify_local(Some("width"), move |window, _| {
+        navigation_responsive.set_visible(window.width() >= 760);
+    });
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     content.set_vexpand(true);
