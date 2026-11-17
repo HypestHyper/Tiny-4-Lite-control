@@ -54,13 +54,19 @@ Implemented XU operations:
 
 The current app does not implement sleep/wake or preset mutation.
 
+### Read-only diagnostics and device identity
+
+- The Diagnostics tab reads the 60-byte selector `0x06` status block and selector `0x02` command-channel response using GET_CUR only.
+- It shows the selector `0x08` model/stream name and USB descriptor identity, including `bcdDevice` clearly labelled as a USB device-release value, not confirmed firmware.
+- Status fields are decoded only where evidence exists. FOV (`0x11`) and crop/zoom-related raw code (`0x04`) are displayed separately. Candidate position floats from selector `0x02` remain labelled unverified.
+
 ### USB capture workflow
 
 - A dedicated Capture tab records a continuous `usbmonN` trace for the Tiny 2 Lite USB bus.
 - The app discovers the bus and device address directly by scanning `/sys/bus/usb/devices` for VID:PID `3564:fef9`; capture does not require a `/dev/videoN` node and works when interfaces are claimed by `usbfs` for VM passthrough.
 - Capture runs through `pkexec tshark` where elevated usbmon access is required; the pcapng stream is written to a user-owned file.
 - The user marks a baseline and subsequent state changes with timestamped text checkpoints.
-- Finishing a session creates a text report containing the checkpoint list and TShark-decoded control transfers filtered to the camera's USB address. It includes `usb.control.Response` and `usb.capdata` fields as available.
+- Finishing a session creates a text report containing the checkpoint list, a compact transfer summary grouped by transfer type and `bRequest/wValue/wIndex`, and TShark-decoded control transfers filtered to the camera's USB address. URB IDs/status, `usb.control.Response`, and `usb.capdata` are included as available.
 - Raw `.pcapng` and `.txt` files are saved under `$XDG_DATA_HOME/tiny4lite-control/captures/` (or `~/.local/share/tiny4lite-control/captures/`).
 - This is a recorder and evidence exporter, not an automatic protocol decoder or payload diff engine. Unknown bytes remain uninterpreted.
 
@@ -123,8 +129,8 @@ Enable/disable frames are built with the current frame builder. The status block
 
 ## 4. What is not implemented
 
-- No automatic byte-diff view or protocol-semantic inference in the application; capture sessions export raw traces and timestamped decoded control-transfer reports.
-- No automatic firmware identification.
+- No automatic byte-diff view or semantic inference for unknown XU records; capture reports now include a transfer summary and pairing aids, while preserving raw decoded rows.
+- No automatic firmware-version identification. USB `bcdDevice` and XU model identity are displayed, but neither is treated as the installed OBSBOT firmware revision.
 - No reliable per-gesture state read-back.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
@@ -146,6 +152,8 @@ Next work: test host-initiated selector 0x02 GET_CUR polling during idle, manual
 Use the capture workflow and template linked from the [tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing). Important: that generic guide is HID-focused. Tiny 2 Lite controls are V4L2/UVC XU; reuse its evidence discipline, not HID-specific assumptions.
 
 ## 6. Related project documentation
+
+- [Firmware identity and FOV/zoom evidence](reference/08-firmware-identification-and-fov.md)
 
 - [Research index](INDEX.md)
 - [Agent rules](AGENTS.md)
