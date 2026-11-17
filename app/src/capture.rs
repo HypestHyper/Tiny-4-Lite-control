@@ -282,6 +282,16 @@ fn saved_report_paths() -> Vec<PathBuf> {
 fn refresh_saved_list(list: &gtk::ListBox, paths: &Rc<RefCell<Vec<PathBuf>>>) {
     while let Some(child) = list.first_child() { list.remove(&child); }
     let found = saved_report_paths();
+    if found.is_empty() {
+        let empty = gtk::Label::new(Some("No saved captures yet. Finish a session to create a report."));
+        empty.set_xalign(0.0);
+        empty.add_css_class("dim-label");
+        empty.set_margin_top(12);
+        empty.set_margin_bottom(12);
+        empty.set_margin_start(12);
+        empty.set_margin_end(12);
+        list.append(&empty);
+    }
     for path in &found {
         let label = gtk::Label::new(Some(&format!(
             "{}\n{}",
@@ -434,9 +444,13 @@ pub fn build_page() -> gtk::Box {
     let list_refresh = saved_list.clone();
     let paths_refresh = saved_paths.clone();
     let selected_refresh = selected_saved.clone();
+    let open_report_refresh = saved_open_report.clone();
+    let open_raw_refresh = saved_open_raw.clone();
     saved_refresh.connect_clicked(move |_| {
         refresh_saved_list(&list_refresh, &paths_refresh);
         *selected_refresh.borrow_mut() = None;
+        open_report_refresh.set_sensitive(false);
+        open_raw_refresh.set_sensitive(false);
     });
     let selected_report = selected_saved.clone();
     let status_report = status.clone();
