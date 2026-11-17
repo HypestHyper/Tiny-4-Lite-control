@@ -1,31 +1,34 @@
-# OBSBOT Tiny 2 Lite Control: AI Research Handoff
+# OBSBOT Tiny 2 Lite Control: project handoff
 
-**Purpose:** Token-efficient navigation of the complete research handoff for a future Linux control/test application.  
-**Target:** OBSBOT Tiny 2 Lite (`3564:fef9`) on CachyOS/Arch, Wayland + Hyprland; proposed native UI is GTK4/libadwaita.  
-**Scope:** Organize and preserve research. This bundle does not implement the application.
+**Target:** OBSBOT Tiny 2 Lite (`3564:fef9`).  
+**Current stage:** Rust/GTK4 hardware-control framework and test bench. UI design comes later.
 
 ## Start here
 
-Read [`AGENTS.md`](AGENTS.md) for evidence, safety, and scope rules. Then use the topic map below. The complete original handoff is preserved verbatim at [`source/obsbot_tiny_2_lite_linux_research_handoff.md`](source/obsbot_tiny_2_lite_linux_research_handoff.md).
+1. Read [AGENTS.md](AGENTS.md) for project, evidence, and hardware-safety rules.
+2. Read [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) for the current app state, implemented control paths, protocol details, known gaps, and next work.
+3. Use the topic map below for deeper research. The original handoff remains preserved at [source/obsbot_tiny_2_lite_linux_research_handoff.md](source/obsbot_tiny_2_lite_linux_research_handoff.md).
 
 ## Topic map
 
 | Need | Read |
 |---|---|
-| Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [`reference/01-device-and-repositories.md`](reference/01-device-and-repositories.md) |
-| All feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block, experimental leads | [`reference/02-feature-inventory.md`](reference/02-feature-inventory.md) |
-| Preview, snapshots, recording, audio, Linux/firmware failure modes | [`reference/03-media-and-limitations.md`](reference/03-media-and-limitations.md) |
-| Proposed module boundaries, architecture rules, milestone sequence, phased hardware test plan | [`reference/04-architecture-and-hardware-testing.md`](reference/04-architecture-and-hardware-testing.md) |
-| License cautions, reusable build prompt, all source URLs, confidence questions, success definition | [`reference/05-licensing-handoff-and-open-questions.md`](reference/05-licensing-handoff-and-open-questions.md) |
+| Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
+| Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
+| Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
+| Preview, snapshots, recording, audio, Linux/firmware limitations | [reference/03-media-and-limitations.md](reference/03-media-and-limitations.md) |
+| Module boundaries, architecture, milestones, hardware test plan | [reference/04-architecture-and-hardware-testing.md](reference/04-architecture-and-hardware-testing.md) |
+| Licensing, source URLs, open questions, success criteria | [reference/05-licensing-handoff-and-open-questions.md](reference/05-licensing-handoff-and-open-questions.md) |
+| USB tracing workflow and capture template | [Tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing) |
 
 ## Critical facts
 
 - Tiny 2 Lite USB ID: `3564:fef9`; regular Tiny 2: `3564:fef8`.
-- Two separate control paths: standard V4L2 and vendor UVC Extension Unit requests via `UVCIOC_CTRL_QUERY`.
+- Camera controls use standard V4L2 and vendor UVC Extension Unit requests. Do not conflate these with USB HID feature reports.
 - Domatix `obsbot-control` and its `docs/PROTOCOL.md` are the primary Lite-specific reference in the supplied research.
-- Never assume other OBSBOT models' features work on the Lite.
-- The original document's claims, protocol notes, and repository links are preserved. They have not been silently updated or independently revalidated during this reorganization.
+- No new Windows OBSBOT Center USB traces have been collected yet. The next research phase is controlled capture, one setting/action at a time.
+- Do not assume features from other OBSBOT models work on the Lite.
 
-## Retrieval rule for agents
+## Retrieval rule
 
-Use the narrowest relevant topic file first. Consult the full source when a detail is absent or context is needed. Do not read every file for every task. Never treat an omitted detail in a summary/index as evidence that the original research did not contain it.
+Read the implementation status first for app work, then only the relevant topic file. Consult the full source when detail is missing. Do not load every file by default. The app source of truth is [app/src/main.rs](../app/src/main.rs) on branch `test-app-v0.1`.
