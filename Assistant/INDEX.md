@@ -29,3 +29,12 @@ Read [`AGENTS.md`](AGENTS.md) for evidence, safety, and scope rules. Then use th
 ## Retrieval rule for agents
 
 Use the narrowest relevant topic file first. Consult the full source when a detail is absent or context is needed. Do not read every file for every task. Never treat an omitted detail in a summary/index as evidence that the original research did not contain it.
+
+
+## Device tracing and protocol investigation
+
+A separate evidence-first workflow for observing official-software USB traffic, comparing one controlled change at a time, decoding transfers, validating read paths, and recording findings:
+- [tracing/INDEX.md](tracing/INDEX.md): start here; topic map and camera-specific HID/UVC distinction.
+- [tracing/AGENTS.md](tracing/AGENTS.md): capture, evidence, safety, privacy, and scope rules.
+- [tracing/templates/capture-session.md](tracing/templates/capture-session.md): repeatable record for every trace.
+- [tracing/source/reverse-engineering-usb-devices.md](tracing/source/reverse-engineering-usb-devices.md): complete supplied guide.
