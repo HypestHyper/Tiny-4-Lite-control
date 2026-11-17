@@ -33,6 +33,15 @@ fn set_control(device: &str, name: &str, value: i64) -> Result<(), String> {
     run_v4l2(device, &format!("--set-ctrl={name}={value}")).map(|_| ())
 }
 
+fn usb_camera_present() -> bool {
+    let Ok(entries) = fs::read_dir("/sys/bus/usb/devices") else { return false; };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        fs::read_to_string(path.join("idVendor")).unwrap_or_default().trim().eq_ignore_ascii_case("3564")
+            && fs::read_to_string(path.join("idProduct")).unwrap_or_default().trim().eq_ignore_ascii_case("fef9")
+    })
+}
+
 fn discover_tiny4lite() -> Vec<String> {
     let mut found = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/video4linux") else { return found; };
@@ -655,7 +664,7 @@ fn build_ui(app: &gtk::Application) {
     header.append(&title); header.append(&refresh); root.append(&header);
 
     let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    device_row.append(&gtk::Label::new(Some("Camera node")));
+    device_row.append(&gtk::Label::new(Some("V4L2 node (controls)")));
     let devices = gtk::ComboBoxText::new(); devices.set_hexpand(true);
     device_row.append(&devices); root.append(&device_row);
 
@@ -673,7 +682,7 @@ fn build_ui(app: &gtk::Application) {
     scroll.set_child(Some(&controls_box));
     notebook.append_page(&scroll, Some(&gtk::Label::new(Some("Controls"))));
 
-    let capture_page = capture::build_page(&devices);
+    let capture_page = capture::build_page();
     notebook.append_page(&capture_page, Some(&gtk::Label::new(Some("Capture"))));
     root.append(&notebook);
 
@@ -707,12 +716,20 @@ fn build_ui(app: &gtk::Application) {
             devices_refresh.set_active_id(Some(first));
         } else {
             clear_box(&controls_refresh);
-            status_refresh.set_text("Tiny 2 Lite not found. Connect it and press Refresh.");
+            if usb_camera_present() {
+                status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in the Capture tab.");
+            } else {
+                status_refresh.set_text("Tiny 2 Lite not found. Connect it and press Refresh.");
+            }
         }
     });
 
     if nodes.is_empty() {
-        status.set_text("Tiny 2 Lite not found. Connect it and press Refresh. Expected USB ID: 3564:fef9.");
+        if usb_camera_present() {
+            status.set_text("USB camera detected (3564:fef9), but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in the Capture tab.");
+        } else {
+            status.set_text("Tiny 2 Lite not found. Connect it and press Refresh. Expected USB ID: 3564:fef9.");
+        }
     }
     window.present();
 }
