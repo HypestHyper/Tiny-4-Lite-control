@@ -114,8 +114,25 @@ its role.
 | `0A 04 C4 30 01 00` | 2 | Existing target-selection gesture group; enable and disable patterns both observed |
 | `0A 04 44 31 01 00` | 2 | Existing Zoom/L-pose gesture group; enable and disable patterns both observed |
 | `0A 02 C2 A0 04 00` | 5 | Matches the documented sleep/wake command family; this trace alone does not assign each write to a UI action |
-| `0A 04 04 3B 04 00` | 15 | Matches the known `0x3B04` preset-name read opcode; appears in recurring groups of three, but slot mapping is not inferred |
+| `0A 04 04 3B 04 00` | 15 | Opcode-shaped like the known `0x3B04` preset-name family; appears in recurring groups of three, but the request/reply path is not proven to be the usable preset-read API |
 | `0A 04 44 3B FE 7F` | 5 | Matches the known `0x3B44` preset-list opcode; exact meaning of this captured payload form is not independently isolated |
+
+### Preset/name-like GET_CUR data
+
+The GET_CUR response stream also contains readable strings:
+
+- Response record `0A 04 3B 07 00` returned `Preset1`, `Preset2`,
+  and `Preset3` in five repeated groups of three.
+- Response record `0A 44 3B 03 00` returned strings including
+  `set1`, `set2B`, and `set3B`.
+
+These are observed response strings, not a verified mapping from UI
+slots to the preset APIs. The Lite-specific Domatix protocol reference
+reports that the documented `0x3B04` RPC name-read request is not
+usable on its tested firmware; it documents selector `0x0D` as the
+working entry-cursor read path. Do not treat the similar-looking
+selector-`0x02` records above as interchangeable with that API without
+a controlled read-back test.
 
 Other observed records remain unidentified. Notable examples:
 `0A 04 04 68 00 00`, `0A 04 04 01 FE 7F`,
