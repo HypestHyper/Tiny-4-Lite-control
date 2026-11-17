@@ -29,7 +29,7 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 - Reads and writes controls through `v4l2-ctl --get-ctrl` and `--set-ctrl`.
 - Supports the camera-reported boolean, menu, and numeric controls.
 - Handles continuous autofocus and manual focus availability. The 2026-11-17 Windows trace confirmed standard UVC Camera Terminal Focus Auto selector `0x08` (one-byte Boolean) and Focus Absolute selector `0x06` (two-byte little-endian value). It captured 14 Focus Absolute writes (observed values 0–100) after autofocus was disabled. These are observed values, not a validated min/max.
-- The same trace captured standard UVC Zoom Absolute selector `0x0B` writes. Nearby XU selector `0x02` float records strongly correlate with those zoom changes, but their exact role and processing path remain unconfirmed.
+- The same trace captured standard UVC Zoom Absolute selector `0x0B` writes. The XU selector `0x02` float record strongly correlates with the same manual-zoom changes. Domatix's Lite-specific protocol reference identifies manual zoom with the standard `zoom_absolute` control and distinguishes gesture zoom, which bypasses it. The XU record remains telemetry/secondary representation until its exact role is confirmed; the image-processing path is not established.
 - Uses the device-reported ranges, steps, menu entries, and defaults rather than assuming one fixed set of controls.
 - Provides pan/tilt speed control and bounded absolute pan/tilt steps. The joystick sends neutral speed on release.
 
