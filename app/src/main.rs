@@ -568,6 +568,22 @@ fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
     xu_send_frame(device, sequence, group, command)
 }
 
+fn set_gesture_zoom_ratio_payload_is_valid(ratio: f32) -> bool {
+    ratio.is_finite() && (1.0..=4.0).contains(&ratio)
+}
+
+fn set_gesture_zoom_ratio(device: &str, ratio: f32) -> Result<(), String> {
+    if !set_gesture_zoom_ratio_payload_is_valid(ratio) {
+        return Err("Gesture zoom ratio must be between 1.00x and 4.00x.".into());
+    }
+    // AI_SET_GESTURE_ZOOM_RATIO (0x3244), captured on Tiny 2 Lite.
+    // The payload is an IEEE-754 f32 in little-endian order.
+    let group = [0x0a, 0x04, 0x44, 0x32, 0x04, 0x00];
+    let mut command = [0u8; 6];
+    command[2..6].copy_from_slice(&ratio.to_le_bytes());
+    xu_send_frame(device, 0x0069, group, command)
+}
+
 fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
     let (sequence, command) = if enabled {
         (match group[3] { 0x30 => 0x0009, 0x31 => 0x000b, 0x33 if group[2] == 0x44 => 0x000d, _ => 0x000f },
@@ -589,7 +605,6 @@ fn ai_mode_label(status: &[u8; 60]) -> &'static str {
         (0x02, 0x04) => "Lower body",
         (0x05, 0x00) => "Desk mode",
         (0x04, 0x00) => "Whiteboard",
-        (0x03, 0x00) | (0x06, 0x00) => "Hand",
         (0x01, 0x00) => "Group",
         _ => "Unknown mode",
     }
@@ -610,7 +625,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     mode_label.set_xalign(0.0);
     let mode = gtk::ComboBoxText::new();
     mode.set_hexpand(true);
-    let modes: [(&str, &str, u8, u8); 10] = [
+    let modes: [(&str, &str, u8, u8); 7] = [
         ("off", "Off", 0x00, 0x00),
         ("normal", "Normal tracking", 0x02, 0x00),
         ("upper", "Upper body", 0x02, 0x01),
@@ -618,9 +633,6 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
         ("headless", "Headless", 0x02, 0x03),
         ("lower", "Lower body", 0x02, 0x04),
         ("group", "Group", 0x01, 0x00),
-        ("desk", "Desk mode", 0x05, 0x00),
-        ("whiteboard", "Whiteboard", 0x04, 0x00),
-        ("hand", "Hand", 0x03, 0x00),
     ];
     for (id, label, _, _) in modes { mode.append(Some(id), label); }
     if let Ok(current) = xu_status(device) {
@@ -677,32 +689,90 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     speed_row.append(&apply_speed);
     layout.append(&speed_row);
 
-    let gestures: [(&str, [u8; 6]); 4] = [
-        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00]),
-        ("Zoom (L-pose) gesture", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00]),
-        ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00]),
-        ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00]),
+    // Status byte 0x07 is inverted for the L-pose Zoom gesture:
+    // 1 = disabled, 0 = enabled. Other gesture states have no confirmed
+    // device read-back, so those start Unknown and become state-aware after
+    // the first successful command in this session.
+    let gestures: [(&str, [u8; 6], Option<bool>); 4] = [
+        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00], None),
+        ("Zoom (L-pose) gesture", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00],
+            xu_status(device).ok().map(|data| data[0x07] == 0)),
+        ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00], None),
+        ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00], None),
     ];
-    for (label, group) in gestures {
+    for (label, group, initial_state) in gestures {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("adaptive-row");
+        row.add_css_class("adaptive-row");
         let name = gtk::Label::new(Some(label));
         name.set_xalign(0.0);
         name.set_hexpand(true);
         row.append(&name);
-        for (caption, enabled) in [("Enable", true), ("Disable", false)] {
-            let button = gtk::Button::with_label(caption);
-            let dev = device.to_string();
-            let status_gesture = status.clone();
-            button.connect_clicked(move |_| {
-                let result = set_gesture(&dev, group, enabled);
-                status_gesture.set_text(&result.map(|_| format!("{label}: {} command sent.", if enabled { "enable" } else { "disable" }))
-                    .unwrap_or_else(|e| format!("{label} failed: {e}")));
-            });
-            row.append(&button);
-        }
+
+        let state = Rc::new(RefCell::new(initial_state));
+        let button = gtk::Button::with_label(&match initial_state {
+            Some(true) => "Enabled · Disable",
+            Some(false) => "Disabled · Enable",
+            None => "Unknown · Enable",
+        });
+        let dev = device.to_string();
+        let state_click = state.clone();
+        let button_click = button.clone();
+        let status_gesture = status.clone();
+        button.connect_clicked(move |_| {
+            // Never display an unknown state as Off. First click enables it;
+            // later clicks toggle the state established by successful writes.
+            let enabled = !state_click.borrow().unwrap_or(false);
+            match set_gesture(&dev, group, enabled) {
+                Ok(()) => {
+                    *state_click.borrow_mut() = Some(enabled);
+                    button_click.set_label(if enabled { "Enabled · Disable" } else { "Disabled · Enable" });
+                    status_gesture.set_text(&format!("{label}: {} command sent.{}",
+                        if enabled { "enabled" } else { "disabled" },
+                        if label == "Zoom (L-pose) gesture" {
+                            " Device state is readable from status byte 0x07."
+                        } else {
+                            " No confirmed device read-back exists; state reflects successful commands in this session."
+                        }));
+                }
+                Err(error) => status_gesture.set_text(&format!("{label} change failed: {error}")),
+            }
+        });
+        row.append(&button);
         layout.append(&row);
     }
+
+    let ratio_frame = gtk::Frame::new(Some("Gesture zoom ratio"));
+    let ratio_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let ratio_help = gtk::Label::new(Some("Zoom applied when the camera recognizes the L-shaped Zoom gesture. Range: 1.00×–4.00×."));
+    ratio_help.set_wrap(true);
+    ratio_help.set_xalign(0.0);
+    ratio_help.add_css_class("dim-label");
+    ratio_layout.append(&ratio_help);
+
+    let ratio_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    ratio_row.add_css_class("adaptive-row");
+    let ratio_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 4.0, 0.01);
+    ratio_scale.set_value(1.0);
+    ratio_scale.set_digits(2);
+    ratio_scale.set_draw_value(true);
+    ratio_scale.set_hexpand(true);
+    ratio_scale.set_value_pos(gtk::PositionType::Right);
+    let ratio_apply = gtk::Button::with_label("Apply ratio");
+    let dev_ratio = device.to_string();
+    let ratio_control = ratio_scale.clone();
+    let status_ratio = status.clone();
+    ratio_apply.connect_clicked(move |_| {
+        let ratio = ratio_control.value() as f32;
+        let result = set_gesture_zoom_ratio(&dev_ratio, ratio);
+        status_ratio.set_text(&result.map(|_| format!(
+            "Gesture zoom ratio command sent: {ratio:.2}×. The camera does not expose confirmed ratio read-back."
+        )).unwrap_or_else(|e| format!("Could not set gesture zoom ratio: {e}")));
+    });
+    ratio_row.append(&ratio_scale);
+    ratio_row.append(&ratio_apply);
+    ratio_layout.append(&ratio_row);
+    ratio_frame.set_child(Some(&ratio_layout));
+    layout.append(&ratio_frame);
 
     let refresh_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     refresh_row.add_css_class("adaptive-row");
@@ -719,7 +789,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     refresh_row.append(&refresh);
     layout.append(&refresh_row);
 
-    let note = gtk::Label::new(Some("AI commands use OBSBOT's vendor XU. Sport's legacy firmware value is not auto-selected; Hand mode uses the Lite-tested 0x03 tuple. Gesture buttons send explicit enable/disable commands."));
+    let note = gtk::Label::new(Some("AI commands use OBSBOT's vendor XU. Gesture zoom ratio is sent as a little-endian f32 using command 0x3244. The L-pose Zoom gesture has device read-back at status byte 0x07; other gesture states are unknown on startup and tracked locally after a successful toggle. Desk, Whiteboard, and Hand tracking are omitted."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -1304,6 +1374,19 @@ mod xu_protocol_tests {
         let on = obsbot_frame(0x0009, group, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
         assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f0000").as_slice());
         assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff0100").as_slice());
+    }
+
+    #[test]
+    fn gesture_zoom_ratio_frame_matches_lite_capture() {
+        let group = [0x0a, 0x04, 0x44, 0x32, 0x04, 0x00];
+        let mut command = [0u8; 6];
+        command[2..6].copy_from_slice(&1.0f32.to_le_bytes());
+        let frame = obsbot_frame(0x0069, group, command);
+        assert_eq!(&frame[..20], hex("aa2569000c0099200a04443204009fd70000803f").as_slice());
+        assert!(set_gesture_zoom_ratio_payload_is_valid(1.0));
+        assert!(set_gesture_zoom_ratio_payload_is_valid(4.0));
+        assert!(!set_gesture_zoom_ratio_payload_is_valid(0.99));
+        assert!(!set_gesture_zoom_ratio_payload_is_valid(4.01));
     }
 
     #[test]
