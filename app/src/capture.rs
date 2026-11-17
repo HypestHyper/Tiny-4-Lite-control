@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,6 +26,52 @@ struct CaptureSession {
     writer: Option<JoinHandle<io::Result<()>>>,
     stderr_reader: Option<JoinHandle<String>>,
     stopped: bool,
+}
+
+
+fn summarize_control_transfers(decoded: &str) -> String {
+    let mut lines = decoded.lines();
+    let Some(header) = lines.next() else { return "No decoded transfer rows.\n".into(); };
+    let columns: Vec<&str> = header.split('\t').collect();
+    let index = |name: &str| columns.iter().position(|column| *column == name);
+    let (Some(urb_type_i), Some(urb_id_i), Some(request_i), Some(value_i), Some(index_i)) =
+        (index("usb.urb_type"), index("usb.urb_id"), index("usb.setup.bRequest"),
+         index("usb.setup.wValue"), index("usb.setup.wIndex")) else {
+        return "Summary unavailable: expected TShark fields were not present in the decoded output.\n".into();
+    };
+
+    let mut transfer_types = BTreeMap::<String, usize>::new();
+    let mut request_groups = BTreeMap::<(String, String, String), usize>::new();
+    let mut urb_ids = BTreeMap::<String, usize>::new();
+    let mut rows = 0usize;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() <= [urb_type_i, urb_id_i, request_i, value_i, index_i].into_iter().max().unwrap_or(0) {
+            continue;
+        }
+        rows += 1;
+        *transfer_types.entry(fields[urb_type_i].to_string()).or_default() += 1;
+        *request_groups.entry((
+            fields[request_i].to_string(),
+            fields[value_i].to_string(),
+            fields[index_i].to_string(),
+        )).or_default() += 1;
+        *urb_ids.entry(fields[urb_id_i].to_string()).or_default() += 1;
+    }
+
+    let mut report = format!("TRANSFER SUMMARY\n----------------\nDecoded rows: {rows}\n\nURB types:\n");
+    for (kind, count) in transfer_types {
+        report.push_str(&format!("  {kind}: {count}\n"));
+    }
+    report.push_str("\nControl request groups (bRequest / wValue / wIndex):\n");
+    for ((request, value, index), count) in request_groups {
+        report.push_str(&format!("  {request} / {value} / {index}: {count}\n"));
+    }
+    let reused = urb_ids.values().filter(|count| **count > 1).count();
+    report.push_str(&format!(
+        "\nURB IDs appearing more than once: {reused}\nPair submissions and completions by URB ID in capture order; IDs can be reused.\n\n"
+    ));
+    report
 }
 
 impl CaptureSession {
@@ -68,8 +115,10 @@ impl CaptureSession {
             .args(["-T", "fields", "-E", "header=y", "-E", "separator=/t"])
             .args([
                 "-e", "frame.number",
+                "-e", "usb.urb_id",
                 "-e", "frame.time_relative",
                 "-e", "usb.urb_type",
+                "-e", "usb.urb_status",
                 "-e", "usb.endpoint_address",
                 "-e", "usb.bmRequestType",
                 "-e", "usb.setup.bRequest",
@@ -102,7 +151,10 @@ impl CaptureSession {
         report.push_str("\nCAMERA CONTROL TRANSFERS\n------------------------\n");
         report.push_str("Filtered to this camera's USB device address and control transfers.\n");
         if decoded.status.success() {
-            report.push_str(&String::from_utf8_lossy(&decoded.stdout));
+            let decoded_text = String::from_utf8_lossy(&decoded.stdout);
+            report.push_str(&summarize_control_transfers(&decoded_text));
+            report.push_str("RAW TRANSFER ROWS\n-----------------\n");
+            report.push_str(&decoded_text);
         } else {
             report.push_str("Could not decode the capture with tshark:\n");
             report.push_str(&String::from_utf8_lossy(&decoded.stderr));
