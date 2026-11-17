@@ -342,6 +342,69 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
+fn set_sleep_mode(device: &str, sleep: bool) -> Result<u8, String> {
+    // CAM_SET_DEV_STATUS (0xA0C2), confirmed on Tiny 2 Lite.
+    // Status payload: 0x00 = awake, 0x01 = asleep.
+    let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
+    let (sequence, command) = if sleep {
+        (0x0042, [0x00, 0x00, 0x01, 0x00, 0x00, 0x00])
+    } else {
+        (0x00a5, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    };
+    xu_send_frame(device, sequence, group, command)?;
+    let status = xu_status(device)?;
+    Ok(status[0x02])
+}
+
+fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Camera power"));
+    let layout = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    for (label, sleep) in [("Wake", false), ("Sleep", true)] {
+        let button = gtk::Button::with_label(label);
+        let dev = device.to_string();
+        let status_label = status.clone();
+        button.connect_clicked(move |_| {
+            let result = set_sleep_mode(&dev, sleep);
+            status_label.set_text(&match result {
+                Ok(0) if !sleep => "Wake command sent; status confirms camera is awake.".to_string(),
+                Ok(1) if sleep => "Sleep command sent; status confirms camera is asleep.".to_string(),
+                Ok(value) => format!(
+                    "{} command sent, but status readback is unexpected: 0x{value:02x}.",
+                    if sleep { "Sleep" } else { "Wake" }
+                ),
+                Err(error) => format!(
+                    "{} failed or status readback failed: {error}",
+                    if sleep { "Sleep" } else { "Wake" }
+                ),
+            });
+        });
+        layout.append(&button);
+    }
+
+    let read = gtk::Button::with_label("Read power status");
+    let dev = device.to_string();
+    let status_read = status.clone();
+    read.connect_clicked(move |_| {
+        status_read.set_text(&match xu_status(&dev) {
+            Ok(data) => match data[0x02] {
+                0x00 => "Camera status: awake.".to_string(),
+                0x01 => "Camera status: asleep.".to_string(),
+                value => format!("Camera sleep-state byte is unknown: 0x{value:02x}."),
+            },
+            Err(error) => format!("Could not read camera power status: {error}"),
+        });
+    });
+    layout.append(&read);
+
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
     let group = [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00];
     let (sequence, command) = if sport {
@@ -521,6 +584,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     heading.set_halign(gtk::Align::Start);
     container.append(&heading);
 
+    add_sleep_controls(container, device, status);
     add_ai_controls(container, device, status);
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
@@ -763,6 +827,17 @@ mod xu_protocol_tests {
         let on = obsbot_frame(0x0009, group, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
         assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f00").as_slice());
         assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff01").as_slice());
+    }
+
+    #[test]
+    fn sleep_frame_matches_tiny4linux_reference() {
+        let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
+        let wake = obsbot_frame(0x00a5, group, [0, 0, 0, 0, 0, 0]);
+        let sleep = obsbot_frame(0x0042, group, [0, 0, 1, 0, 0, 0]);
+        assert_eq!(&wake[..20], hex("aa25a5000c005fef0a02c2a00400be0700000000").as_slice());
+        assert_eq!(&sleep[..20], hex("aa2542000c00ea630a02c2a00400bffb01000000").as_slice());
+        assert!(wake[20..].iter().all(|byte| *byte == 0));
+        assert!(sleep[20..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
