@@ -90,6 +90,8 @@ window.tiny4-window {{ background: @tiny_surface_dim; color: @tiny_on_surface; }
 .tiny4-root {{ padding: 20px; background: @tiny_surface_dim; color: @tiny_on_surface; }}
 .app-header {{ min-height: 64px; margin-bottom: 4px; }}
 .app-title {{ color: @tiny_on_surface; font-size: 24px; font-weight: 700; }}
+.material-icon {{ font-family: "Material Symbols Rounded"; font-size: 28px; color: @tiny_primary; padding-right: 8px; }}
+.compact-switcher {{ margin: 4px 0 8px; }}
 .device-row {{ background: @tiny_surface; border-radius: 24px; padding: 14px 18px; margin-bottom: 2px; }}
 .status-chip {{ background: @tiny_surface_low; color: @tiny_on_surface_variant; border-radius: 999px; padding: 9px 14px; margin-bottom: 4px; }}
 .navigation-sidebar {{ min-width: 168px; padding: 4px 0; }}
@@ -115,7 +117,6 @@ scale slider {{ min-width: 18px; min-height: 18px; border-radius: 99px; backgrou
 textview, textview text {{ background: @tiny_surface_dim; color: @tiny_on_surface; }}
 scrolledwindow {{ border: none; }}
 separator {{ background: alpha(@tiny_outline, 0.24); }}
-@media (prefers-reduced-motion: reduce) {{ * {{ transition: none; animation: none; }} }}
 "#)
 }
 
