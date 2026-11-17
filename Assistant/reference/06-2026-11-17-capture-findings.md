@@ -39,7 +39,10 @@ The observed values do not establish the device's supported range;
 query V4L2 control metadata at runtime.
 
 Linux UVC maps Camera Terminal Focus Absolute to selector `0x06`
-and Focus Auto to `0x08`. The V4L2 API describes Focus Absolute's
+and Focus Auto to `0x08`. Domatix's Lite-specific protocol reference
+also documents `focus_absolute` as 0..100, step 1, and
+`focus_automatic_continuous` as Boolean; keep runtime V4L2 metadata
+authoritative. The V4L2 API describes Focus Absolute's
 unit as undefined and says manual focus while continuous autofocus is
 enabled has undefined effect:
 - [V4L2 camera controls](https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/ext-ctrls-camera.html)
@@ -48,7 +51,10 @@ enabled has undefined effect:
 ### Zoom
 
 Five standard Camera Terminal Zoom Absolute writes (selector
-`0x0B`, two-byte little-endian values) were observed:
+`0x0B`, two-byte little-endian values) were observed. Domatix's
+Lite-specific protocol reference documents V4L2 `zoom_absolute` as
+0..100, step 1, and identifies selector `0x0B` as the Camera Terminal
+Zoom Absolute control:
 
 | Relative time | UVC value | Nearby XU float |
 |---:|---:|---:|
@@ -59,10 +65,15 @@ Five standard Camera Terminal Zoom Absolute writes (selector
 | 450.540s | 64 | 2.92 at 450.556s |
 
 This close timing and value correspondence strongly associates the XU
-float parameter below with zoom. It does not establish the image
-processing location or distinguish digital crop from any other
-camera-side implementation. Do not describe it as optical, digital,
-or hardware zoom without further evidence.
+float parameter below with the same manual-zoom activity. Domatix's
+Lite-specific protocol reference independently states that manual zoom
+uses the standard UVC `zoom_absolute` path, while on-device gesture zoom
+bypasses it and leaves `zoom_absolute` unchanged. This capture does not
+establish the image-processing location or distinguish digital crop
+from another camera-side implementation. Do not describe the processing
+path as optical, digital, or hardware zoom based on this trace alone.
+See [Domatix OBSBOT control protocol](https://github.com/Domatix/obsbot-control/blob/main/docs/PROTOCOL.md)
+(sections 2.2 and Q10).
 
 ## Extension Unit selector 0x02
 
@@ -103,8 +114,8 @@ its role.
 | `0A 04 C4 30 01 00` | 2 | Existing target-selection gesture group; enable and disable patterns both observed |
 | `0A 04 44 31 01 00` | 2 | Existing Zoom/L-pose gesture group; enable and disable patterns both observed |
 | `0A 02 C2 A0 04 00` | 5 | Matches the documented sleep/wake command family; this trace alone does not assign each write to a UI action |
-| `0A 04 04 3B 04 00` | 15 | Recurring preset-related opcode family; exact action/slot mapping not inferred from this trace |
-| `0A 04 44 3B FE 7F` | 5 | Matches the known preset-list opcode family; exact UI action not independently isolated |
+| `0A 04 04 3B 04 00` | 15 | Matches the known `0x3B04` preset-name read opcode; appears in recurring groups of three, but slot mapping is not inferred |
+| `0A 04 44 3B FE 7F` | 5 | Matches the known `0x3B44` preset-list opcode; exact meaning of this captured payload form is not independently isolated |
 
 Other observed records remain unidentified. Notable examples:
 `0A 04 04 68 00 00`, `0A 04 04 01 FE 7F`,
