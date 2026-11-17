@@ -267,6 +267,40 @@ fn start_session(test_name: String, baseline: String) -> Result<CaptureSession, 
     Ok(session)
 }
 
+
+fn saved_report_paths() -> Vec<PathBuf> {
+    let Ok(directory) = capture_directory() else { return Vec::new(); };
+    let mut paths: Vec<PathBuf> = fs::read_dir(directory).ok().into_iter().flatten()
+        .flatten().map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "txt"))
+        .collect();
+    paths.sort_by_key(|path| fs::metadata(path).and_then(|m| m.modified()).ok());
+    paths.reverse();
+    paths
+}
+
+fn refresh_saved_list(list: &gtk::ListBox, paths: &Rc<RefCell<Vec<PathBuf>>>) {
+    while let Some(child) = list.first_child() { list.remove(&child); }
+    let found = saved_report_paths();
+    for path in &found {
+        let label = gtk::Label::new(Some(&format!(
+            "{}\n{}",
+            path.file_stem().unwrap_or_default().to_string_lossy(),
+            path.parent().unwrap_or(Path::new("")).display()
+        )));
+        label.set_xalign(0.0);
+        label.set_margin_top(8);
+        label.set_margin_bottom(8);
+        label.set_margin_start(12);
+        label.set_margin_end(12);
+        label.set_wrap(true);
+        let row = gtk::ListBoxRow::new();
+        row.set_child(Some(&label));
+        list.append(&row);
+    }
+    *paths.borrow_mut() = found;
+}
+
 fn text_view_contents(view: &gtk::TextView) -> String {
     let buffer = view.buffer();
     buffer.text(&buffer.start_iter(), &buffer.end_iter(), true).to_string()
@@ -354,6 +388,79 @@ pub fn build_page() -> gtk::Box {
     footer.append(&copy);
     footer.append(&open_folder);
     page.append(&footer);
+
+    let saved_frame = gtk::Frame::new(Some("Saved captures"));
+    let saved_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let saved_help = gtk::Label::new(Some("Browse earlier USB sessions. Reports and raw traces stay in your user data folder."));
+    saved_help.set_xalign(0.0);
+    saved_help.set_wrap(true);
+    saved_help.add_css_class("dim-label");
+    saved_box.append(&saved_help);
+    let saved_list = gtk::ListBox::new();
+    saved_list.set_selection_mode(gtk::SelectionMode::Single);
+    saved_list.set_vexpand(false);
+    saved_list.set_size_request(-1, 150);
+    let saved_scroll = gtk::ScrolledWindow::new();
+    saved_scroll.set_min_content_height(120);
+    saved_scroll.set_max_content_height(190);
+    saved_scroll.set_child(Some(&saved_list));
+    saved_box.append(&saved_scroll);
+    let saved_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let saved_refresh = gtk::Button::with_label("Refresh list");
+    let saved_open_report = gtk::Button::with_label("Open report");
+    let saved_open_raw = gtk::Button::with_label("Open raw trace");
+    saved_open_report.set_sensitive(false);
+    saved_open_raw.set_sensitive(false);
+    saved_actions.append(&saved_refresh);
+    saved_actions.append(&saved_open_report);
+    saved_actions.append(&saved_open_raw);
+    saved_box.append(&saved_actions);
+    saved_frame.set_child(Some(&saved_box));
+    page.append(&saved_frame);
+
+    let saved_paths = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+    refresh_saved_list(&saved_list, &saved_paths);
+    let selected_saved = Rc::new(RefCell::new(None::<PathBuf>));
+    let selected_state = selected_saved.clone();
+    let paths_for_selection = saved_paths.clone();
+    let open_report_button = saved_open_report.clone();
+    let open_raw_button = saved_open_raw.clone();
+    saved_list.connect_row_selected(move |_, row| {
+        let path = row.and_then(|row| paths_for_selection.borrow().get(row.index() as usize).cloned());
+        open_report_button.set_sensitive(path.is_some());
+        open_raw_button.set_sensitive(path.as_ref().is_some_and(|p| p.with_extension("pcapng").exists()));
+        *selected_state.borrow_mut() = path;
+    });
+    let list_refresh = saved_list.clone();
+    let paths_refresh = saved_paths.clone();
+    let selected_refresh = selected_saved.clone();
+    saved_refresh.connect_clicked(move |_| {
+        refresh_saved_list(&list_refresh, &paths_refresh);
+        *selected_refresh.borrow_mut() = None;
+    });
+    let selected_report = selected_saved.clone();
+    let status_report = status.clone();
+    saved_open_report.connect_clicked(move |_| {
+        if let Some(path) = selected_report.borrow().as_ref() {
+            if let Err(error) = Command::new("xdg-open").arg(path).spawn() {
+                status_report.set_text(&format!("Could not open report: {error}"));
+            }
+        }
+    });
+    let selected_raw = selected_saved.clone();
+    let status_raw = status.clone();
+    saved_open_raw.connect_clicked(move |_| {
+        if let Some(path) = selected_raw.borrow().as_ref() {
+            let raw = path.with_extension("pcapng");
+            if raw.exists() {
+                if let Err(error) = Command::new("xdg-open").arg(raw).spawn() {
+                    status_raw.set_text(&format!("Could not open raw trace: {error}"));
+                }
+            } else {
+                status_raw.set_text("The raw trace for this report is not present.");
+            }
+        }
+    });
 
     let session: Rc<RefCell<Option<CaptureSession>>> = Rc::new(RefCell::new(None));
     let report_text = Rc::new(RefCell::new(String::new()));
