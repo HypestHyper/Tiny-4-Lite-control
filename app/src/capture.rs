@@ -341,6 +341,7 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
                 let bus = new_session.bus;
                 let address = new_session.address;
                 *session_start.borrow_mut() = Some(new_session);
+                note_start.buffer().set_text("");
                 *summary_start.borrow_mut() = vec![format!("+0.000s  Baseline: {}", baseline.trim())];
                 log_start.set_text(&summary_start.borrow().join("\n"));
                 status_start.set_text(&format!(
