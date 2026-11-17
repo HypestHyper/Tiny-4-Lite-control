@@ -17,8 +17,9 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 
 ### Device discovery
 
-- Enumerates Linux V4L2 video nodes through `/sys/class/video4linux`.
-- Walks each node's sysfs device ancestry and matches USB vendor/product IDs `3564:fef9`.
+- Enumerates Linux V4L2 video nodes through `/sys/class/video4linux` and matches USB vendor/product IDs `3564:fef9`.
+- V4L2 controls require a video node bound to `uvcvideo`; they are unavailable while the camera's video interfaces are claimed by `usbfs` for VM passthrough.
+- USB camera presence is detected separately through `/sys/bus/usb/devices`, so the app can distinguish a missing camera from a camera with no host V4L2 node.
 - Excludes regular Tiny 2 (`3564:fef8`).
 - Reads control metadata from the selected node at runtime using `v4l2-ctl`.
 
@@ -54,8 +55,8 @@ The current app does not implement sleep/wake or preset mutation.
 
 ### USB capture workflow
 
-- A dedicated Capture tab records a continuous `usbmonN` trace for the selected Tiny 2 Lite USB bus.
-- The app discovers the bus and device address from the selected `/dev/videoN` node's sysfs ancestry.
+- A dedicated Capture tab records a continuous `usbmonN` trace for the Tiny 2 Lite USB bus.
+- The app discovers the bus and device address directly by scanning `/sys/bus/usb/devices` for VID:PID `3564:fef9`; capture does not require a `/dev/videoN` node and works when interfaces are claimed by `usbfs` for VM passthrough.
 - Capture runs through `pkexec tshark` where elevated usbmon access is required; the pcapng stream is written to a user-owned file.
 - The user marks a baseline and subsequent state changes with timestamped text checkpoints.
 - Finishing a session creates a text report containing the checkpoint list and TShark-decoded control transfers filtered to the camera's USB address. It includes `usb.control.Response` and `usb.capdata` fields as available.
