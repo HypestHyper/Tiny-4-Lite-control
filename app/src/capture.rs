@@ -129,13 +129,13 @@ impl Drop for CaptureSession {
     }
 }
 
-fn usb_location(video_node: &str) -> Result<(u32, u32), String> {
-    let name = Path::new(video_node).file_name()
-        .ok_or_else(|| "Invalid camera video node.".to_string())?;
-    let mut path = fs::canonicalize(Path::new("/sys/class/video4linux").join(name).join("device"))
-        .map_err(|e| format!("Could not resolve camera sysfs path: {e}"))?;
-
-    loop {
+fn usb_location() -> Result<(u32, u32), String> {
+    // Discover the USB device directly. Do not depend on /dev/videoN:
+    // the camera may be claimed by usbfs while passed through to a VM.
+    let entries = fs::read_dir("/sys/bus/usb/devices")
+        .map_err(|e| format!("Could not enumerate USB devices: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
         let vendor = fs::read_to_string(path.join("idVendor")).unwrap_or_default();
         let product = fs::read_to_string(path.join("idProduct")).unwrap_or_default();
         if vendor.trim().eq_ignore_ascii_case("3564")
@@ -149,11 +149,8 @@ fn usb_location(video_node: &str) -> Result<(u32, u32), String> {
                 .trim().parse::<u32>().map_err(|e| e.to_string())?;
             return Ok((bus, address));
         }
-        if !path.pop() {
-            break;
-        }
     }
-    Err("The selected video node is not attached to OBSBOT Tiny 2 Lite (3564:fef9).".into())
+    Err("OBSBOT Tiny 2 Lite (USB 3564:fef9) was not found in /sys/bus/usb/devices.".into())
 }
 
 fn capture_directory() -> Result<PathBuf, String> {
@@ -166,11 +163,11 @@ fn capture_directory() -> Result<PathBuf, String> {
     Ok(directory)
 }
 
-fn start_session(video_node: &str, test_name: String, baseline: String) -> Result<CaptureSession, String> {
+fn start_session(test_name: String, baseline: String) -> Result<CaptureSession, String> {
     if Command::new("tshark").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
         return Err("tshark is not installed. Install Wireshark/tshark first.".into());
     }
-    let (bus, address) = usb_location(video_node)?;
+    let (bus, address) = usb_location()?;
     let directory = capture_directory()?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?;
@@ -223,7 +220,7 @@ fn text_view_contents(view: &gtk::TextView) -> String {
     buffer.text(&buffer.start_iter(), &buffer.end_iter(), true).to_string()
 }
 
-pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
+pub fn build_page() -> gtk::Box {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
     page.set_margin_top(12);
     page.set_margin_bottom(12);
@@ -278,7 +275,7 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
     actions.append(&finish);
     page.append(&actions);
 
-    let status = gtk::Label::new(Some("Ready. Select the camera node above, then start a session."));
+    let status = gtk::Label::new(Some("Ready. The USB camera is detected independently of its video node."));
     status.set_xalign(0.0);
     status.set_wrap(true);
     page.append(&status);
@@ -310,7 +307,6 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
     let report_file: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let checkpoint_summary = Rc::new(RefCell::new(Vec::<String>::new()));
 
-    let devices_start = devices.clone();
     let name_start = test_name.clone();
     let note_start = note.clone();
     let session_start = session.clone();
@@ -322,10 +318,6 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
     let summary_start = checkpoint_summary.clone();
     start.connect_clicked(move |_| {
         if session_start.borrow().is_some() { return; }
-        let Some(device) = devices_start.active_id() else {
-            status_start.set_text("Select a camera video node first.");
-            return;
-        };
         let name = name_start.text().trim().to_string();
         if name.is_empty() {
             status_start.set_text("Enter a test name first, such as HDR or tracking mode.");
@@ -336,7 +328,7 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
             status_start.set_text("Describe the baseline state before starting.");
             return;
         }
-        match start_session(device.as_str(), name, baseline.clone()) {
+        match start_session(name, baseline.clone()) {
             Ok(new_session) => {
                 let bus = new_session.bus;
                 let address = new_session.address;
