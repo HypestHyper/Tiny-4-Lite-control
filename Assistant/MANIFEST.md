@@ -3,7 +3,7 @@
 ## Research bundle
 
 - Original OBSBOT Tiny 2 Lite research: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
-- Seven topic notes under `reference/`, including the 2026-11-17 PTZ position read-back investigation.
+- Eight topic notes under `reference/`, including the 2026-11-17 PTZ position read-back and firmware/FOV investigations.
 - Complete source preserved unchanged; topic files retain original section content/order.
 
 ## Current app handoff
@@ -25,4 +25,4 @@ The generic USB tracing guide and its partitioned references currently live on t
 
 ## Current evidence state
 
-Windows OBSBOT Center USB captures were collected and parsed on 2026-11-17. Focus/Zoom UVC controls, selector 0x02 command records, and a candidate PTZ position read-back response are documented in `reference/06-2026-11-17-capture-findings.md` and `reference/07-2026-11-17-ptz-position-readback.md`. Live position polling during AI tracking remains an uncompleted test. Do not describe that read-back capability as verified until a host-initiated GET_CUR test confirms changing values during physical tracking movement.
+Windows OBSBOT Center USB captures were collected and parsed on 2026-11-17. Focus/Zoom UVC controls, selector 0x02 command records, and a candidate PTZ position read-back response are documented in `reference/06-2026-11-17-capture-findings.md` and `reference/07-2026-11-17-ptz-position-readback.md` and `reference/08-firmware-identification-and-fov.md`. Live position polling during AI tracking remains an uncompleted test. Do not describe that read-back capability as verified until a host-initiated GET_CUR test confirms changing values during physical tracking movement.
