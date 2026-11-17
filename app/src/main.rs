@@ -1054,7 +1054,7 @@ fn build_ui(app: &gtk::Application) {
 
     let navigation = gtk::StackSidebar::new();
     navigation.add_css_class("navigation-sidebar");
-    navigation.set_stack(Some(&stack));
+    navigation.set_stack(&stack);
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     content.set_vexpand(true);
