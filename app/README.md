@@ -2,7 +2,7 @@
 
 A small GTK4 test bench for the OBSBOT Tiny 2 Lite.
 
-- Detects video nodes by walking sysfs to the USB parent and matching **3564:fef9**. It does not match regular Tiny 2 (3564:fef8).
+- Detects V4L2 video nodes by walking sysfs to the USB parent and matching **3564:fef9**. It does not match regular Tiny 2 (3564:fef8). USB camera presence is also detected directly through sysfs, independently of V4L2.
 - Reads V4L2 control metadata from the camera at runtime.
 - Exposes supported boolean, menu, and numeric controls. Numeric sliders apply changes immediately, mark the camera-reported default value, and include a Reset button. Binary 0/1 controls are instant toggles. Manual focus remains visible and becomes adjustable when continuous autofocus is switched off; the controls are refreshed after changing autofocus.
 - Provides a drag joystick for signed pan/tilt speed controls, mapped against the widget's actual size, with an adjustable 10–200% sensitivity slider. Releasing the joystick sends zero speed to stop the gimbal.
@@ -42,7 +42,7 @@ Absolute pan/tilt buttons move the physical gimbal by one degree immediately. Th
 
 ## USB capture workflow
 
-The Capture tab uses the selected camera video node to discover its USB bus and device address. It starts one continuous `tshark` recording on the matching `usbmonN` interface. On systems where usbmon access is restricted, it launches `tshark` through `pkexec` for a one-time authorization prompt; the capture stream is written back to a user-owned file.
+The Capture tab discovers the camera directly under `/sys/bus/usb/devices` by VID:PID `3564:fef9`, then reads its USB bus and device address. It does not require a `/dev/videoN` node, so capture still works when the camera's interfaces are claimed by `usbfs` during VM passthrough. V4L2 controls remain unavailable until the host has a video node bound to `uvcvideo`. It starts one continuous `tshark` recording on the matching `usbmonN` interface. On systems where usbmon access is restricted, it launches `tshark` through `pkexec` for a one-time authorization prompt; the capture stream is written back to a user-owned file.
 
 Use **Start capture + baseline**, change one setting in OBSBOT Center, enter a short description, and press **Add checkpoint** after each change. Press **Finish session** to stop the trace and generate a report. Files are saved under:
 
