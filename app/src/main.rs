@@ -709,6 +709,186 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
 }
 
+
+fn usb_descriptor_info() -> Result<String, String> {
+    let entries = fs::read_dir("/sys/bus/usb/devices")
+        .map_err(|e| format!("Could not enumerate USB devices: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let vendor = fs::read_to_string(path.join("idVendor")).unwrap_or_default();
+        let product = fs::read_to_string(path.join("idProduct")).unwrap_or_default();
+        if vendor.trim().eq_ignore_ascii_case("3564")
+            && product.trim().eq_ignore_ascii_case("fef9")
+        {
+            let read = |name: &str| fs::read_to_string(path.join(name))
+                .unwrap_or_else(|_| "unavailable".to_string()).trim().to_string();
+            return Ok(format!(
+                "USB identity: {} / {}\nManufacturer: {}\nProduct: {}\nUSB bcdDevice: {}\nUSB bus/address: {}/{}\n\nNote: bcdDevice is the USB device-release field. It is not confirmed to be the user-visible OBSBOT firmware version.",
+                read("idVendor"), read("idProduct"), read("manufacturer"), read("product"),
+                read("bcdDevice"), read("busnum"), read("devnum")
+            ));
+        }
+    }
+    Err("Tiny 2 Lite USB device (3564:fef9) is not currently visible to Linux.".into())
+}
+
+fn hex_dump(data: &[u8]) -> String {
+    let mut output = String::new();
+    for (offset, chunk) in data.chunks(16).enumerate() {
+        output.push_str(&format!("{:04x}: ", offset * 16));
+        for byte in chunk { output.push_str(&format!("{:02x} ", byte)); }
+        output.push('\n');
+    }
+    output
+}
+
+fn decode_xu_status(data: &[u8; 60]) -> String {
+    let sleep = match data[0x02] { 0x00 => "Awake", 0x01 => "Sleep", _ => "Unknown" };
+    let hdr = if data[0x06] == 0 { "Off" } else { "On / non-zero" };
+    let fov = match data[0x11] { 1 => "Wide (86°)", 2 => "Normal (78°)", v => {
+        return format!("Sleep: {sleep}\nHDR: {hdr}\nFOV raw: 0x{v:02x} (unknown)\nAI tuple: {:02x}/{:02x}\nTracking speed: 0x{:02x}",
+            data[0x18], data[0x1c], data[0x24]);
+    }};
+    let crop = match data[0x04] { 0x05 => "Wide crop code", 0x0f => "Normal crop code", _ => "Unmapped crop code" };
+    let mode = ai_mode_label(data);
+    let speed = match data[0x24] { 0x00 => "Standard", 0x02 => "Sport", 0x21 => "Sport (legacy)", _ => "Unknown" };
+    format!(
+        "Decoded fields (confidence varies by field):\nSleep: {sleep} [0x02]\nCrop/zoom-related code: {crop} (0x{:02x}) [0x04]\nHDR: {hdr} [0x06]\nFOV: {fov} [0x11]\nAI mode: {mode} [0x18/0x1c]\nTracking speed: {speed} [0x24]",
+        data[0x04]
+    )
+}
+
+fn decode_xu_command_response(data: &[u8; 60]) -> String {
+    let record = &data[9..15];
+    let position_record = record == [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
+        || record == [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00];
+    if !position_record {
+        return format!("No recognized position-like response record at bytes 9..14: {:02x?}\nOffset-20 values are not decoded for this response.", record);
+    }
+    let pan = f32::from_le_bytes(data[20..24].try_into().unwrap());
+    let tilt = f32::from_le_bytes(data[24..28].try_into().unwrap());
+    if pan.is_finite() && tilt.is_finite() {
+        format!("Candidate position record: {:02x?}\nCandidate pan: {pan:.2}\nCandidate tilt: {tilt:.2}\n\nUnverified: these floats are position-like in prior captures, but live movement correlation is still required.",
+            record)
+    } else {
+        format!("Recognized record, but non-finite float values at offset 20: {pan:?}, {tilt:?}")
+    }
+}
+
+fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    page.set_margin_top(12);
+    page.set_margin_bottom(12);
+    page.set_margin_start(12);
+    page.set_margin_end(12);
+
+    let heading = gtk::Label::new(Some("Read-only XU diagnostics"));
+    heading.add_css_class("title-2");
+    heading.set_xalign(0.0);
+    page.append(&heading);
+
+    let intro = gtk::Label::new(Some(
+        "Reads 60-byte UVC Extension Unit responses. These actions are GET_CUR only; no camera settings are changed."
+    ));
+    intro.set_wrap(true);
+    intro.set_xalign(0.0);
+    intro.add_css_class("dim-label");
+    page.append(&intro);
+
+    let device_info = gtk::TextView::new();
+    device_info.set_editable(false);
+    device_info.set_cursor_visible(false);
+    device_info.set_monospace(true);
+    device_info.set_wrap_mode(gtk::WrapMode::WordChar);
+    device_info.set_size_request(-1, 105);
+    if let Ok(info) = usb_descriptor_info() { device_info.buffer().set_text(&info); }
+    else { device_info.buffer().set_text("USB descriptor information unavailable until the camera is visible to Linux."); }
+    let info_scroll = gtk::ScrolledWindow::new();
+    info_scroll.set_min_content_height(105);
+    info_scroll.set_child(Some(&device_info));
+    page.append(&info_scroll);
+
+    let model_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let model_button = gtk::Button::with_label("Read model string (XU 0x08)");
+    let model_output = gtk::Label::new(Some("Not read."));
+    model_output.set_xalign(0.0);
+    model_output.set_wrap(true);
+    model_row.append(&model_button);
+    model_row.append(&model_output);
+    page.append(&model_row);
+
+    let selector_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let read_status = gtk::Button::with_label("Read status (0x06)");
+    let read_command = gtk::Button::with_label("Read command channel (0x02)");
+    selector_row.append(&read_status);
+    selector_row.append(&read_command);
+    page.append(&selector_row);
+
+    let output = gtk::TextView::new();
+    output.set_editable(false);
+    output.set_cursor_visible(false);
+    output.set_monospace(true);
+    output.set_wrap_mode(gtk::WrapMode::None);
+    output.set_vexpand(true);
+    let output_scroll = gtk::ScrolledWindow::new();
+    output_scroll.set_vexpand(true);
+    output_scroll.set_child(Some(&output));
+    page.append(&output_scroll);
+
+    let device = device_combo.clone();
+    let model_label = model_output.clone();
+    model_button.connect_clicked(move |_| {
+        let result = device.active_id()
+            .ok_or_else(|| "Select a Tiny 2 Lite V4L2 node first.".to_string())
+            .and_then(|node| {
+                let mut bytes = [0u8; 60];
+                xu_query(node.as_str(), 0x08, UVC_GET_CUR, &mut bytes)?;
+                let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+                let value = String::from_utf8_lossy(&bytes[..end]).trim().to_string();
+                Ok(if value.is_empty() { format!("Raw: {}", hex_dump(&bytes)) } else { value })
+            });
+        model_label.set_text(&result.unwrap_or_else(|e| format!("Read failed: {e}")));
+    });
+
+    let device = device_combo.clone();
+    let view = output.clone();
+    read_status.connect_clicked(move |_| {
+        let result = device.active_id()
+            .ok_or_else(|| "Select a Tiny 2 Lite V4L2 node first.".to_string())
+            .and_then(|node| xu_status(node.as_str()));
+        match result {
+            Ok(bytes) => {
+                let text = format!("Selector 0x06 · GET_CUR · 60 bytes\n\n{}\n{}",
+                    decode_xu_status(&bytes), hex_dump(&bytes));
+                view.buffer().set_text(&text);
+            }
+            Err(error) => view.buffer().set_text(&format!("Read failed: {error}")),
+        }
+    });
+
+    let device = device_combo.clone();
+    let view = output.clone();
+    read_command.connect_clicked(move |_| {
+        let result = device.active_id()
+            .ok_or_else(|| "Select a Tiny 2 Lite V4L2 node first.".to_string())
+            .and_then(|node| {
+                let mut bytes = [0u8; 60];
+                xu_query(node.as_str(), 0x02, UVC_GET_CUR, &mut bytes)?;
+                Ok(bytes)
+            });
+        match result {
+            Ok(bytes) => {
+                let text = format!("Selector 0x02 · GET_CUR · 60 bytes\n\n{}\n{}",
+                    decode_xu_command_response(&bytes), hex_dump(&bytes));
+                view.buffer().set_text(&text);
+            }
+            Err(error) => view.buffer().set_text(&format!("Read failed: {error}")),
+        }
+    });
+
+    page
+}
+
 fn build_ui(app: &gtk::Application) {
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control").default_width(760).default_height(760).build();
@@ -743,6 +923,8 @@ fn build_ui(app: &gtk::Application) {
     // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
     let capture_page = capture::build_page();
     notebook.append_page(&capture_page, Some(&gtk::Label::new(Some("Capture"))));
+    let diagnostics_page = add_diagnostics_page(&devices);
+    notebook.append_page(&diagnostics_page, Some(&gtk::Label::new(Some("Diagnostics"))));
     root.append(&notebook);
 
     let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° immediately. USB capture requires tshark and pkexec."));
