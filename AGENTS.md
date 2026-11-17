@@ -1,5 +1,5 @@
 # Repository instructions
 
-Before doing project work, read [Assistant/AGENTS.md](Assistant/AGENTS.md) and [Assistant/INDEX.md](Assistant/INDEX.md). The research handoff is authoritative project context. Load only the relevant topic file, using the preserved original when needed.
+Before project work, read [Assistant/AGENTS.md](Assistant/AGENTS.md) and [Assistant/INDEX.md](Assistant/INDEX.md). For current implementation details, read [Assistant/APP-IMPLEMENTATION-STATUS.md](Assistant/APP-IMPLEMENTATION-STATUS.md).
 
-This repository currently contains research and agent guidance only. Do not implement the application or run hardware tests unless the user explicitly asks. Follow all evidence, licensing, and hardware-safety constraints in `Assistant/AGENTS.md`.
+The repository contains a Rust/GTK4 hardware-control test bench and its research handoff. The current task stage is protocol/framework development; UI redesign is deferred. Follow evidence, licensing, and hardware-safety constraints in `Assistant/AGENTS.md`. Do not add undocumented device writes or run hardware tests without explicit user approval.
