@@ -161,15 +161,13 @@ operation on hardware.
 
 ### 4.8 Field of view (FOV)
 
-**Status:** Wide and Normal confirmed; Narrow is a no-op on Tiny 2 Lite
-firmware 5.10.
+**Status:** Wide, Normal, and Narrow visually confirmed working by the user.
 
 -   Wide: 86°
 -   Normal: 78°
--   Narrow: 65° (does not change state on the tested Lite firmware;
-    read-back remains Normal)
+-   Narrow: 65°
 
-Do not expose Narrow as working on all Lite firmware without retesting.
+**Compatibility limitation:** FOV changes do not work with certain AI tracking modes. The specific incompatible modes have not yet been identified, so do not imply that FOV is available in every tracking mode. If a change is ignored, switch tracking off or to another mode and retry. The Narrow status-byte read-back mapping is still unverified; visual operation is confirmed.
 
 ### 4.9 Exposure, focus, white balance and image settings
 
