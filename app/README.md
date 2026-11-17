@@ -9,7 +9,8 @@ A small GTK4 test bench for the OBSBOT Tiny 2 Lite.
 - Provides one-degree absolute pan/tilt buttons when available. These buttons move immediately without a confirmation dialog.
 - Includes OBSBOT vendor XU controls for all ten documented AI tracking modes, Standard/Sport tracking speed, and four gesture settings (target selection, Zoom/L-pose, dynamic zoom, and dynamic zoom direction). AI status is read from the 60-byte XU status block. XU commands are sent only when the user presses Apply, Enable, or Disable.
 - Includes a Capture tab for continuous Linux usbmon recording, timestamped baseline/change checkpoints, and a decoded report of the selected camera's USB control transfers. It preserves both the raw `.pcapng` and shareable `.txt` report, and includes a browser for opening saved reports and matching raw traces.
-- Does not send sleep/wake commands or mutate presets.
+- Includes explicit sleep and wake actions plus a separate read-power-status action. The user has physically tested both sleep and wake. Preset mutation is not implemented.
+- Exposes Wide / Normal / Narrow FOV selection and Solid / Blinking LED indicator commands. Narrow FOV is a known no-op on the tested Lite firmware; LED brightness is read-only and cannot be adjusted. Treat LED mode writes as experimental until live hardware behaviour is confirmed.
 
 The GTK interface uses the shared HypestHyper app-family design language as its starting point: rounded surfaces and controls, semantic light/dark palettes, persisted System / Light / Dark selection, responsive sidebar-to-switcher navigation, Google Sans Flex and Material Symbols Rounded bundled under their upstream licences. Fonts are registered for the process only and are not installed system-wide. The System mode reads the XDG appearance portal when available, but currently resolves the preference at startup or when selected rather than tracking live desktop changes.
 
@@ -39,7 +40,7 @@ cd app
 cargo build --release
 ```
 
-Absolute pan/tilt buttons move the physical gimbal by one degree immediately. The speed joystick sends live signed speed values while dragged and sends zero on release. Keep the movement area clear. No movement is initiated automatically at startup. AI status reads are read-only; AI mode, tracking speed, and gesture commands are sent only after an explicit user action. No homing, sleep/wake, or preset mutation is included.
+Absolute pan/tilt buttons move the physical gimbal by one degree immediately. The speed joystick sends live signed speed values while dragged and sends zero on release. Keep the movement area clear. No movement is initiated automatically at startup. AI status reads are read-only; AI mode, tracking speed, and gesture commands are sent only after an explicit user action. Sleep and wake are explicit user-triggered actions with separate status verification. No homing or preset mutation is included.
 
 
 ## USB capture workflow
