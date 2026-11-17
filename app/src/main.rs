@@ -1,3 +1,5 @@
+mod capture;
+
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -661,11 +663,21 @@ fn build_ui(app: &gtk::Application) {
     status.set_xalign(0.0); status.set_wrap(true); status.add_css_class("dim-label");
     root.append(&status);
 
+    let notebook = gtk::Notebook::new();
+    notebook.set_vexpand(true);
+    notebook.set_hexpand(true);
+
     let scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never).build();
     let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    scroll.set_child(Some(&controls_box)); root.append(&scroll);
-    let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° immediately."));
+    scroll.set_child(Some(&controls_box));
+    notebook.append_page(&scroll, Some(&gtk::Label::new(Some("Controls"))));
+
+    let capture_page = capture::build_page(&devices);
+    notebook.append_page(&capture_page, Some(&gtk::Label::new(Some("Capture"))));
+    root.append(&notebook);
+
+    let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° immediately. USB capture requires tshark and pkexec."));
     footer.set_xalign(0.0); footer.set_wrap(true); footer.add_css_class("dim-label");
     root.append(&footer);
     window.set_child(Some(&root));
