@@ -45,12 +45,10 @@ impl CaptureSession {
         let status = self.child.wait().map_err(|e| format!("Could not stop tshark: {e}"))?;
         self.stopped = true;
 
-        let writer_result = self.writer.take().map(|join| join.join());
-        if let Some(Ok(Err(error))) = writer_result {
-            return Err(format!("Could not finish writing the capture: {error}"));
-        }
-        if let Some(Err(_)) = writer_result {
-            return Err("The capture writer thread failed.".into());
+        match self.writer.take().map(|join| join.join()) {
+            Some(Ok(Err(error))) => return Err(format!("Could not finish writing the capture: {error}")),
+            Some(Err(_)) => return Err("The capture writer thread failed.".into()),
+            _ => {}
         }
 
         let stderr = self.stderr_reader.take()
@@ -388,6 +386,7 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
     let report_finish = report_text.clone();
     let report_file_finish = report_file.clone();
     let report_view_finish = report_view.clone();
+    let finish_button = finish.clone();
     let copy_finish = copy.clone();
     let open_finish = open_folder.clone();
     let name_finish = test_name.clone();
@@ -398,7 +397,7 @@ pub fn build_page(devices: &gtk::ComboBoxText) -> gtk::Box {
         };
         status_finish.set_text("Stopping capture and decoding camera control transfers…");
         checkpoint_finish.set_sensitive(false);
-        finish.set_sensitive(false);
+        finish_button.set_sensitive(false);
         match active.finish() {
             Ok((text, path)) => {
                 report_view_finish.buffer().set_text(&text);
