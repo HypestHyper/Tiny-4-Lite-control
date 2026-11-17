@@ -1,4 +1,5 @@
 mod capture;
+mod design;
 
 use gtk::prelude::*;
 use std::cell::RefCell;
@@ -993,45 +994,79 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
 }
 
 fn build_ui(app: &gtk::Application) {
+    design::install();
+
     let window = gtk::ApplicationWindow::builder().application(app)
-        .title("Tiny 2 Lite Control").default_width(760).default_height(760).build();
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    root.set_margin_top(18); root.set_margin_bottom(18); root.set_margin_start(18); root.set_margin_end(18);
+        .title("Tiny 2 Lite Control").default_width(1040).default_height(780).build();
+    window.add_css_class("tiny4-window");
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    root.add_css_class("tiny4-root");
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    header.add_css_class("app-header");
     let title = gtk::Label::new(Some("OBSBOT Tiny 2 Lite"));
-    title.add_css_class("title-1"); title.set_hexpand(true); title.set_xalign(0.0);
-    let refresh = gtk::Button::with_label("Refresh");
-    header.append(&title); header.append(&refresh); root.append(&header);
+    title.add_css_class("app-title");
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    let refresh = gtk::Button::with_label("Refresh camera");
+    refresh.add_css_class("suggested-action");
+    header.append(&title);
+    header.append(&refresh);
+    root.append(&header);
 
-    let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    device_row.append(&gtk::Label::new(Some("V4L2 node (controls)")));
-    let devices = gtk::ComboBoxText::new(); devices.set_hexpand(true);
-    device_row.append(&devices); root.append(&device_row);
+    let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    device_row.add_css_class("device-row");
+    let device_label = gtk::Label::new(Some("Camera control device"));
+    device_label.set_xalign(0.0);
+    let devices = gtk::ComboBoxText::new();
+    devices.set_hexpand(true);
+    device_row.append(&device_label);
+    device_row.append(&devices);
+    root.append(&device_row);
 
     let status = gtk::Label::new(Some("Searching for USB device 3564:fef9…"));
-    status.set_xalign(0.0); status.set_wrap(true); status.add_css_class("dim-label");
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    status.add_css_class("status-chip");
     root.append(&status);
 
-    let notebook = gtk::Notebook::new();
-    notebook.set_vexpand(true);
-    notebook.set_hexpand(true);
+    let stack = gtk::Stack::new();
+    stack.add_css_class("content-stack");
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    stack.set_transition_duration(160);
 
-    let scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
+    let controls_scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never).build();
-    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    scroll.set_child(Some(&controls_box));
-    notebook.append_page(&scroll, Some(&gtk::Label::new(Some("Controls"))));
+    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    controls_box.add_css_class("content-page");
+    controls_scroll.set_child(Some(&controls_box));
+    stack.add_titled(&controls_scroll, Some("controls"), "Controls");
 
     // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
     let capture_page = capture::build_page();
-    notebook.append_page(&capture_page, Some(&gtk::Label::new(Some("Capture"))));
+    stack.add_titled(&capture_page, Some("capture"), "Capture");
     let diagnostics_page = add_diagnostics_page(&devices);
-    notebook.append_page(&diagnostics_page, Some(&gtk::Label::new(Some("Diagnostics"))));
-    root.append(&notebook);
+    stack.add_titled(&diagnostics_page, Some("diagnostics"), "Diagnostics");
 
-    let footer = gtk::Label::new(Some("Pan/tilt buttons move the physical gimbal by 1° immediately. USB capture requires tshark and pkexec."));
-    footer.set_xalign(0.0); footer.set_wrap(true); footer.add_css_class("dim-label");
+    let navigation = gtk::StackSidebar::new();
+    navigation.add_css_class("navigation-sidebar");
+    navigation.set_stack(Some(&stack));
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    content.set_vexpand(true);
+    content.append(&navigation);
+    content.append(&stack);
+    root.append(&content);
+
+    let footer = gtk::Label::new(Some(
+        "Pan and tilt controls move the physical gimbal. USB capture requires tshark and pkexec."
+    ));
+    footer.set_xalign(0.0);
+    footer.set_wrap(true);
+    footer.add_css_class("dim-label");
     root.append(&footer);
     window.set_child(Some(&root));
 
@@ -1061,18 +1096,18 @@ fn build_ui(app: &gtk::Application) {
         } else {
             clear_box(&controls_refresh);
             if usb_camera_present() {
-                status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in the Capture tab.");
+                status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
             } else {
-                status_refresh.set_text("Tiny 2 Lite not found. Connect it and press Refresh.");
+                status_refresh.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera.");
             }
         }
     });
 
     if nodes.is_empty() {
         if usb_camera_present() {
-            status.set_text("USB camera detected (3564:fef9), but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in the Capture tab.");
+            status.set_text("USB camera detected (3564:fef9), but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
         } else {
-            status.set_text("Tiny 2 Lite not found. Connect it and press Refresh. Expected USB ID: 3564:fef9.");
+            status.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera. Expected USB ID: 3564:fef9.");
         }
     }
     window.present();
