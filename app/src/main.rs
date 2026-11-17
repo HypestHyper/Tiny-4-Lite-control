@@ -677,71 +677,6 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 }
 
 
-fn continuous_zoom_values(control: &Control) -> Option<(i64, i64)> {
-    if control.disabled || control.min >= 0 || control.max <= 0 {
-        return None;
-    }
-    let step = control.step.max(1);
-    let zoom_out = (-step).max(control.min);
-    let zoom_in = step.min(control.max);
-    if zoom_out < 0 && zoom_in > 0 {
-        Some((zoom_out, zoom_in))
-    } else {
-        None
-    }
-}
-
-fn add_continuous_zoom_controls(container: &gtk::Box, device: &str, control: &Control, status: &gtk::Label) {
-    let Some((zoom_out, zoom_in)) = continuous_zoom_values(control) else { return; };
-    let frame = gtk::Frame::new(Some("Continuous zoom"));
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("adaptive-row");
-    let out = gtk::Button::with_label("Zoom out");
-    let hint = gtk::Label::new(Some("Hold to zoom · release to stop"));
-    hint.add_css_class("dim-label");
-    let inside = gtk::Button::with_label("Zoom in");
-    out.set_tooltip_text(Some("Hold to zoom out. Release to stop."));
-    inside.set_tooltip_text(Some("Hold to zoom in. Release to stop."));
-    let make_controller = |button: &gtk::Button, value: i64, dev: String, name: String, status: gtk::Label| {
-        let gesture = gtk::GestureClick::new();
-        let dev_press = dev.clone();
-        let name_press = name.clone();
-        let status_press = status.clone();
-        gesture.connect_pressed(move |_, _, _, _| {
-            if let Err(error) = set_control(&dev_press, &name_press, value) {
-                status_press.set_text(&format!("Continuous zoom failed: {error}"));
-            } else {
-                status_press.set_text(if value < 0 { "Zooming out…" } else { "Zooming in…" });
-            }
-        });
-        let dev_release = dev.clone();
-        let name_release = name.clone();
-        let status_release = status.clone();
-        gesture.connect_released(move |_, _, _, _| {
-            let result = set_control(&dev_release, &name_release, 0);
-            status_release.set_text(&result.map(|_| "Continuous zoom stopped.".to_string())
-                .unwrap_or_else(|error| format!("Could not stop zoom: {error}")));
-        });
-        let dev_cancel = dev;
-        let name_cancel = name;
-        let status_cancel = status;
-        gesture.connect_cancel(move |_, _| {
-            let result = set_control(&dev_cancel, &name_cancel, 0);
-            if let Err(error) = result {
-                status_cancel.set_text(&format!("Could not stop zoom after input cancellation: {error}"));
-            }
-        });
-        button.add_controller(gesture);
-    };
-    make_controller(&out, zoom_out, device.to_string(), control.name.clone(), status.clone());
-    make_controller(&inside, zoom_in, device.to_string(), control.name.clone(), status.clone());
-    row.append(&out);
-    row.append(&hint);
-    row.append(&inside);
-    frame.set_child(Some(&row));
-    container.append(&frame);
-}
-
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
@@ -758,10 +693,6 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     add_sleep_controls(container, device, status);
     add_camera_settings(container, device, status);
     add_ai_controls(container, device, status);
-
-    if let Some(continuous_zoom) = controls.iter().find(|c| c.name == "zoom_continuous") {
-        add_continuous_zoom_controls(container, device, continuous_zoom, status);
-    }
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
     let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
@@ -1302,39 +1233,6 @@ mod xu_protocol_tests {
         (0..s.len()).step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
-    }
-
-    #[test]
-    fn continuous_zoom_requires_bidirectional_control_range() {
-        let control = Control {
-            name: "zoom_continuous".into(), kind: "int".into(),
-            min: -1, max: 1, step: 1, value: 0, default_value: 0,
-            disabled: false, menu: Vec::new(),
-        };
-        assert_eq!(continuous_zoom_values(&control), Some((-1, 1)));
-    }
-
-    #[test]
-    fn continuous_zoom_respects_reported_step_and_limits() {
-        let control = Control {
-            name: "zoom_continuous".into(), kind: "int".into(),
-            min: -4, max: 6, step: 2, value: 0, default_value: 0,
-            disabled: false, menu: Vec::new(),
-        };
-        assert_eq!(continuous_zoom_values(&control), Some((-2, 2)));
-    }
-
-    #[test]
-    fn continuous_zoom_is_omitted_for_unsupported_or_disabled_control() {
-        let mut control = Control {
-            name: "zoom_continuous".into(), kind: "int".into(),
-            min: 0, max: 1, step: 1, value: 0, default_value: 0,
-            disabled: false, menu: Vec::new(),
-        };
-        assert_eq!(continuous_zoom_values(&control), None);
-        control.min = -1;
-        control.disabled = true;
-        assert_eq!(continuous_zoom_values(&control), None);
     }
 
     #[test]
