@@ -1183,7 +1183,7 @@ mod xu_protocol_tests {
             [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00],
             [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00],
         );
-        assert_eq!(&frame[..18], hex("aa2520000c00abcb0a04c40c0100e63f00").as_slice());
+        assert_eq!(&frame[..18], hex("aa2520000c00abcb0a04c40c0100e63f0000").as_slice());
     }
 
     #[test]
@@ -1191,8 +1191,8 @@ mod xu_protocol_tests {
         let group = [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00];
         let off = obsbot_frame(0x0008, group, [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]);
         let on = obsbot_frame(0x0009, group, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
-        assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f00").as_slice());
-        assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff01").as_slice());
+        assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f0000").as_slice());
+        assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff0100").as_slice());
     }
 
     #[test]
