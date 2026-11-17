@@ -62,13 +62,15 @@ Implemented XU operations:
 - Send tracking-speed commands.
 - Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction.
 
-The current app does not implement sleep/wake or preset mutation.
+Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Preset mutation is not implemented.
 
 ### Read-only diagnostics and device identity
 
 - The Diagnostics tab reads the 60-byte selector `0x06` status block and selector `0x02` command-channel response using GET_CUR only.
 - It shows the selector `0x08` model/stream name and USB descriptor identity, including `bcdDevice` clearly labelled as a USB device-release value, not confirmed firmware.
 - Status fields are decoded only where evidence exists. FOV (`0x11`) and crop/zoom-related raw code (`0x04`) are displayed separately. Candidate position floats from selector `0x02` remain labelled unverified.
+- Camera settings expose Wide / Normal / Narrow FOV commands and Solid / Blinking LED indicator commands. Narrow is known to be ignored by the tested Lite firmware. LED commands only target indicator mode, not brightness; LED brightness remains read-only. Treat these setters as experimental until separately confirmed by a live read-back or visible effect.
+- Sleep and wake controls send the captured Tiny 2 Lite power command. The command action and power-status read-back are separate; the user physically confirmed both sleep and wake behaviour.
 
 ### USB capture workflow
 
@@ -135,7 +137,7 @@ Enable/disable frames are built with the current frame builder. The status block
 - Absolute pan/tilt steps cause immediate physical movement.
 - Commands should remain serialized. Stop testing on USB errors, disconnects, unexpected movement, or inconsistent status.
 - Keep the camera's movement area clear before any movement test.
-- Do not add guessed commands, firmware-specific fallbacks, sleep/wake, or preset mutation without documenting evidence and obtaining explicit approval.
+- Do not add guessed commands, firmware-specific fallbacks, or preset mutation without documenting evidence and obtaining explicit approval.
 
 ## 4. What is not implemented
 
