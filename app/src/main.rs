@@ -881,6 +881,7 @@ fn decode_xu_command_response(data: &[u8; 60]) -> String {
 
 fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    page.add_css_class("content-page");
     page.set_margin_top(12);
     page.set_margin_bottom(12);
     page.set_margin_start(12);
