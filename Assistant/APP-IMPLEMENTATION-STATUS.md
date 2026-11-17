@@ -28,7 +28,8 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 - Lists controls and menu metadata from `v4l2-ctl --list-ctrls-menus`.
 - Reads and writes controls through `v4l2-ctl --get-ctrl` and `--set-ctrl`.
 - Supports the camera-reported boolean, menu, and numeric controls.
-- Handles continuous autofocus and manual focus availability.
+- Handles continuous autofocus and manual focus availability. The 2026-11-17 Windows trace confirmed standard UVC Camera Terminal Focus Auto selector `0x08` (one-byte Boolean) and Focus Absolute selector `0x06` (two-byte little-endian value). It captured 14 Focus Absolute writes (observed values 0–100) after autofocus was disabled. These are observed values, not a validated min/max.
+- The same trace captured standard UVC Zoom Absolute selector `0x0B` writes. Nearby XU selector `0x02` float records strongly correlate with those zoom changes, but their exact role and processing path remain unconfirmed.
 - Uses the device-reported ranges, steps, menu entries, and defaults rather than assuming one fixed set of controls.
 - Provides pan/tilt speed control and bounded absolute pan/tilt steps. The joystick sends neutral speed on release.
 
@@ -131,19 +132,16 @@ Enable/disable frames are built with the current frame builder. The status block
 
 ## 5. Evidence status and next investigation
 
-The protocol work so far is based on the organized research, Lite-specific repository material, and captured byte examples already recorded in that research. Controlled OBSBOT Center traces have now been collected from the Windows 11 VM and from Linux `usbmon3` while the camera was passed through to the VM. HDR On/Off testing confirmed a reversible status change at byte offset 5 of the selector `0x06` 60-byte status response (`00` Off, `01` On). The identical write prefix `01 01 01` was observed for both directions; its internal semantics remain unknown.
+The 2026-11-17 Windows OBSBOT Center capture has now been parsed from the original PCAPNG. It contains 3,674,198 frames (about 868 MiB), 1,236 camera control submissions and 1,236 completions. See [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) for exact packet evidence.
 
-Next investigation is a controlled capture campaign:
+New findings:
 
-1. Establish the camera's USB identity and interfaces in the Windows VM.
-2. Capture idle/start-up behaviour from OBSBOT Center.
-3. Change exactly one camera setting or invoke one action.
-4. Preserve the original capture and record the action, before/after state, software/firmware versions, and timestamps.
-5. Compare only the relevant camera control transfers against the baseline.
-6. Repeat with multiple values/states before assigning field meanings.
-7. Record raw bytes, request metadata, timing, and confidence. Keep unknown bytes unknown.
-8. Validate read-back independently before treating a decoded field as state.
-9. Add implementation only after the command is understood and its physical/device effect is clear.
+- Standard UVC Focus Auto (Camera Terminal selector `0x08`) and Focus Absolute (selector `0x06`) were written and read back. The app already exposes these through its generic V4L2 control discovery; no special implementation is needed.
+- Standard UVC Zoom Absolute (selector `0x0B`) writes closely correlate with an XU selector `0x02` float record and matching GET_CUR values. Treat the XU record as zoom-associated, but do not claim digital/optical processing or add a duplicate control.
+- Existing tracking-speed, target-selection gesture, Zoom/L-pose gesture, sleep/wake, and preset opcode families also appear in the trace.
+- Several XU records remain unknown. The capture's Finish operation hung, so timestamped UI checkpoint descriptions were not recovered. Do not infer individual UI actions from timestamps alone.
+
+Next work is offline decoding of the unresolved XU records against the Lite-specific references, preserving unknown fields. Only collect another trace when a short, controlled one-setting test is needed to disambiguate a specific record. Any new setter must have a known payload and independent read-back/observable validation before implementation.
 
 Use the capture workflow and template linked from the [tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing). Important: that generic guide is HID-focused. Tiny 2 Lite controls are V4L2/UVC XU; reuse its evidence discipline, not HID-specific assumptions.
 
@@ -153,6 +151,7 @@ Use the capture workflow and template linked from the [tracing documentation on 
 - [Agent rules](AGENTS.md)
 - [Original feature research](source/obsbot_tiny_2_lite_linux_research_handoff.md)
 - [Feature inventory](reference/02-feature-inventory.md)
+- [2026-11-17 Windows capture findings](reference/06-2026-11-17-capture-findings.md)
 - [Architecture and hardware test plan](reference/04-architecture-and-hardware-testing.md)
 - [Application source](../app/src/main.rs)
 - [Application build/runtime notes](../app/README.md)
