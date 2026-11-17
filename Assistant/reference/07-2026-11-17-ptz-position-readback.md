@@ -65,7 +65,7 @@ The values are consistent with pan/tilt-like angles. Matching values from both r
 
 ### Request frequency and current limitation
 
-OBS​​BOT Center sent selector `0x02` GET_CUR requests during some ordinary operation sequences. However, in the dedicated AI-tracking capture it sent 19 selector `0x06` GET_CUR requests over approximately 38.3 seconds and **zero selector `0x02` GET_CUR requests**.
+OBSBOT Center sent selector `0x02` GET_CUR requests during some ordinary operation sequences. However, in the dedicated AI-tracking capture it sent 19 selector `0x06` GET_CUR requests over approximately 38.3 seconds and **zero selector `0x02` GET_CUR requests**.
 
 In that AI-tracking capture, selector `0x06` response byte offset `0x18` changed from `0x00` to `0x02` at approximately 4.66 seconds and remained `0x02`. This is evidence of a tracking-state change, not position feedback.
 
