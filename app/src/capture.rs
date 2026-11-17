@@ -39,8 +39,8 @@ impl CaptureSession {
 
     fn stop_process(&mut self) -> Result<String, String> {
         if self.child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            let pid = self.child.id().to_string();
-            let _ = Command::new("kill").args(["-INT", &pid]).status();
+            let pid = self.child.id();
+            let _ = Command::new("kill").arg("-INT").arg(pid.to_string()).status();
         }
         let status = self.child.wait().map_err(|e| format!("Could not stop tshark: {e}"))?;
         self.stopped = true;
@@ -180,9 +180,11 @@ fn start_session(video_node: &str, test_name: String, baseline: String) -> Resul
 
     // usbmon requires elevated access on many distributions. pkexec prompts once,
     // while stdout is piped back into a file owned by the logged-in user.
+    let interface = format!("usbmon{bus}");
     let mut child = Command::new("pkexec")
         .arg("tshark")
-        .args(["-i", &format!("usbmon{bus}"), "-w", "-"])
+        .arg("-i").arg(interface)
+        .args(["-w", "-"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
