@@ -36,6 +36,8 @@ jobs:
           install -Dm755 "$(command -v v4l2-ctl)" AppDir/usr/bin/v4l2-ctl
           install -Dm644 app/assets/tiny4lite-control.desktop AppDir/usr/share/applications/tiny4lite-control.desktop
           install -Dm644 app/assets/tiny4lite-control.svg AppDir/usr/share/icons/hicolor/scalable/apps/tiny4lite-control.svg
+          install -Dm644 app/assets/fonts/LICENSE-GoogleSansFlex.txt AppDir/usr/share/licenses/tiny4lite-control/LICENSE-GoogleSansFlex.txt
+          install -Dm644 app/assets/fonts/LICENSE-MaterialSymbols.txt AppDir/usr/share/licenses/tiny4lite-control/LICENSE-MaterialSymbols.txt
       - name: Download linuxdeploy
         run: |
           curl -fL --retry 3 --retry-all-errors \
