@@ -337,8 +337,9 @@ fn xu_send_frame(device: &str, sequence: u16, function_group: [u8; 6], command: 
 fn set_fov(device: &str, mode: u8) -> Result<(), String> {
     if mode > 2 { return Err("Unsupported FOV mode.".into()); }
     // Selector 0x06 tag 0x04: [tag, length=1, mode].
-    // Wire values are 0=Wide, 1=Normal, 2=Narrow. Narrow is known to
-    // be ignored by the tested Tiny 2 Lite firmware.
+    // Wire values are 0=Wide, 1=Normal, 2=Narrow. All three modes have
+    // been visually confirmed by the user; status-byte mapping for Narrow
+    // and compatibility with every AI tracking mode remain unverified.
     let mut data = [0u8; 60];
     data[0] = 0x04;
     data[1] = 0x01;
@@ -371,7 +372,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     let fov = gtk::ComboBoxText::new();
     fov.append(Some("0"), "Wide · 86°");
     fov.append(Some("1"), "Normal · 78°");
-    fov.append(Some("2"), "Narrow · 65° (may be ignored)");
+    fov.append(Some("2"), "Narrow · 65°");
     fov.set_hexpand(true);
     if let Ok(current) = xu_status(device) {
         let selected = match current[0x11] { 1 => Some("0"), 2 => Some("1"), _ => None };
@@ -386,13 +387,18 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
             .ok_or_else(|| "Could not read current FOV. Select a mode.".to_string())
             .and_then(|id| id.parse::<u8>().map_err(|_| "Invalid FOV mode.".to_string()))
             .and_then(|mode| set_fov(&dev, mode));
-        status_fov.set_text(&result.map(|_| "FOV command sent. Read camera status to verify; Narrow is a known no-op on tested Lite firmware.".to_string())
+        status_fov.set_text(&result.map(|_| "FOV command sent. Some AI tracking modes override FOV; verify the image after applying.".to_string())
             .unwrap_or_else(|e| format!("FOV change failed: {e}")));
     });
     fov_row.append(&fov_label);
     fov_row.append(&fov);
     fov_row.append(&apply_fov);
     layout.append(&fov_row);
+    let fov_note = gtk::Label::new(Some("Some AI tracking modes can override FOV changes. If the view does not change, switch tracking off or select a compatible tracking mode, then apply FOV again."));
+    fov_note.set_wrap(true);
+    fov_note.set_xalign(0.0);
+    fov_note.add_css_class("dim-label");
+    layout.append(&fov_note);
 
     let led_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     led_row.add_css_class("adaptive-row");
