@@ -25,4 +25,4 @@ The generic USB tracing guide and its partitioned references currently live on t
 
 ## Current evidence state
 
-No new Windows OBSBOT Center USB captures have been collected yet. Existing command/frame examples and protocol findings are documented in the original research and summarized in `APP-IMPLEMENTATION-STATUS.md`. Do not describe the next capture phase as completed.
+Windows OBSBOT Center USB captures were collected and parsed on 2026-11-17. Focus/Zoom UVC controls, selector 0x02 command records, and a candidate PTZ position read-back response are documented in `reference/06-2026-11-17-capture-findings.md` and `reference/07-2026-11-17-ptz-position-readback.md`. Live position polling during AI tracking remains an uncompleted test. Do not describe that read-back capability as verified until a host-initiated GET_CUR test confirms changing values during physical tracking movement.
