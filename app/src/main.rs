@@ -1033,6 +1033,14 @@ fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
             container.set_orientation(if compact { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal });
         }
     }
+    if widget.has_css_class("content-page") {
+        if compact { widget.add_css_class("compact-layout"); }
+        else { widget.remove_css_class("compact-layout"); }
+    }
+    if widget.is::<gtk::Frame>() {
+        if compact { widget.add_css_class("compact-layout"); }
+        else { widget.remove_css_class("compact-layout"); }
+    }
     let mut child = widget.first_child();
     while let Some(current) = child {
         child = current.next_sibling();
