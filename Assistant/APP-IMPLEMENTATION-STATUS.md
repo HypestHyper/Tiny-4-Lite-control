@@ -3,11 +3,21 @@
 **Branch:** `test-app-v0.1`  
 **Application:** `app/`  
 **Target:** OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`  
-**Stage:** Hardware-control framework / test bench. UI design and visual polish are explicitly deferred.
+**Stage:** Hardware-control test bench with an initial GTK family-design implementation. UI conformance is partial and remains subject to live desktop validation.
 
 This file records what is currently implemented in the repository and the protocol findings used by it. It is not a claim that every command has been independently validated on every firmware version.
 
 ## 1. Current implementation
+
+### GTK family design pass
+
+- Replaced notebook tabs with a rounded sidebar navigation and a compact stack switcher below 760 px.
+- Added persisted System / Light / Dark theme selection. System reads the XDG desktop appearance portal when `gdbus` is available; fallback uses GTK's dark-theme preference.
+- Bundles Google Sans Flex and Material Symbols Rounded as process-local fonts. Font files are embedded in the binary, cached under the user's cache directory, and registered through fontconfig; they are not installed system-wide. Both upstream licences are included under `app/assets/fonts/`.
+- Added semantic light/dark surface and accent tokens, rounded page surfaces, consistent control shapes, and keyboard focus styling.
+- Added a Saved captures browser to the Capture page. It lists saved text reports and opens the selected report or matching raw PCAPNG trace. It does not delete or modify captures.
+- Remaining validation: live portal theme-change updates, reduced-motion integration, accessibility/screen-reader checks, text scaling, and visual review under Adwaita/Breeze. The System theme is currently resolved when selected or when the app starts, not live-updated after an external desktop theme change.
+
 
 The application is a Rust + GTK4 test bench. Current source of truth:
 
