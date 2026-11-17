@@ -23,3 +23,12 @@ Assistant/
 └── source/
     └── obsbot_tiny_2_lite_linux_research_handoff.md
 ```
+
+
+## Additional source: USB reverse-engineering workflow
+
+- Source: `tracing/source/reverse-engineering-usb-devices.md`
+- Original uploaded filename: `reverse-engineering-usb-devices (1).md`
+- Source length: 236 lines, 9,509 characters, 9,519 UTF-8 bytes.
+- Preservation: source is stored in full; six topic partitions retain the original section text and order. Navigation, camera-specific applicability warnings, and a reusable capture-session template are additional material.
+- Scope warning: the source guide focuses on USB HID feature reports. OBSBOT Tiny 2 Lite research concerns V4L2 and UVC Extension Unit controls; do not conflate the protocols.
