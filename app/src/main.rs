@@ -603,8 +603,6 @@ fn ai_mode_label(status: &[u8; 60]) -> &'static str {
         (0x02, 0x02) => "Close-up",
         (0x02, 0x03) => "Headless",
         (0x02, 0x04) => "Lower body",
-        (0x05, 0x00) => "Desk mode",
-        (0x04, 0x00) => "Whiteboard",
         (0x01, 0x00) => "Group",
         _ => "Unknown mode",
     }
