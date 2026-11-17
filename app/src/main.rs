@@ -342,18 +342,17 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
-fn set_sleep_mode(device: &str, sleep: bool) -> Result<u8, String> {
+fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
     // CAM_SET_DEV_STATUS (0xA0C2), confirmed on Tiny 2 Lite.
-    // Status payload: 0x00 = awake, 0x01 = asleep.
+    // Power-state verification is deliberately separate: the camera's
+    // status byte may lag behind the command.
     let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
     let (sequence, command) = if sleep {
         (0x0042, [0x00, 0x00, 0x01, 0x00, 0x00, 0x00])
     } else {
         (0x00a5, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     };
-    xu_send_frame(device, sequence, group, command)?;
-    let status = xu_status(device)?;
-    Ok(status[0x02])
+    xu_send_frame(device, sequence, group, command)
 }
 
 fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
@@ -370,18 +369,13 @@ fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
         let status_label = status.clone();
         button.connect_clicked(move |_| {
             let result = set_sleep_mode(&dev, sleep);
-            status_label.set_text(&match result {
-                Ok(0) if !sleep => "Wake command sent; status confirms camera is awake.".to_string(),
-                Ok(1) if sleep => "Sleep command sent; status confirms camera is asleep.".to_string(),
-                Ok(value) => format!(
-                    "{} command sent, but status readback is unexpected: 0x{value:02x}.",
-                    if sleep { "Sleep" } else { "Wake" }
-                ),
-                Err(error) => format!(
-                    "{} failed or status readback failed: {error}",
-                    if sleep { "Sleep" } else { "Wake" }
-                ),
-            });
+            status_label.set_text(&result.map(|_| format!(
+                "{} command sent. Use Read power status to verify the camera's state.",
+                if sleep { "Sleep" } else { "Wake" }
+            )).unwrap_or_else(|error| format!(
+                "{} command failed: {error}",
+                if sleep { "Sleep" } else { "Wake" }
+            )));
         });
         layout.append(&button);
     }
