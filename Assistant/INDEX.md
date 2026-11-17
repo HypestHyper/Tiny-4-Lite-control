@@ -16,7 +16,8 @@
 | Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
 | Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
 | Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
-| 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |\n| PTZ position read-back hypothesis, selector 0x02 GET_CUR evidence, Windows KS topology attempts, and next AI-tracking polling test | [reference/07-2026-11-17-ptz-position-readback.md](reference/07-2026-11-17-ptz-position-readback.md) |
+| 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |
+| PTZ position read-back hypothesis, selector 0x02 GET_CUR evidence, Windows KS topology attempts, and next AI-tracking polling test | [reference/07-2026-11-17-ptz-position-readback.md](reference/07-2026-11-17-ptz-position-readback.md) |
 | Firmware identity and distinction between FOV, crop level, and zoom | [reference/08-firmware-identification-and-fov.md](reference/08-firmware-identification-and-fov.md) |
 | Preview, snapshots, recording, audio, Linux/firmware limitations | [reference/03-media-and-limitations.md](reference/03-media-and-limitations.md) |
 | Module boundaries, architecture, milestones, hardware test plan | [reference/04-architecture-and-hardware-testing.md](reference/04-architecture-and-hardware-testing.md) |
@@ -28,7 +29,8 @@
 - Tiny 2 Lite USB ID: `3564:fef9`; regular Tiny 2: `3564:fef8`.
 - Camera controls use standard V4L2 and vendor UVC Extension Unit requests. Do not conflate these with USB HID feature reports.
 - Domatix `obsbot-control` and its `docs/PROTOCOL.md` are the primary Lite-specific reference in the supplied research.
-- Windows OBSBOT Center USB traces were captured and parsed on 2026-11-17. Focus/Zoom UVC controls and several XU command families are documented in [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md).\n- The Diagnostics tab exposes read-only 60-byte XU reads for selectors 0x02 and 0x06, plus the model string from selector 0x08 and USB descriptor identity. Candidate pan/tilt values remain explicitly unverified.
+- Windows OBSBOT Center USB traces were captured and parsed on 2026-11-17. Focus/Zoom UVC controls and several XU command families are documented in [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md).
+- The Diagnostics tab exposes read-only 60-byte XU reads for selectors 0x02 and 0x06, plus the model string from selector 0x08 and USB descriptor identity. Candidate pan/tilt values remain explicitly unverified.
 - Selector 0x02 GET_CUR responses contain a strong candidate pan/tilt float32 pair at payload offset 20. Live read-back during AI tracking remains unverified; see [reference/07-2026-11-17-ptz-position-readback.md](reference/07-2026-11-17-ptz-position-readback.md).
 - Do not assume features from other OBSBOT models work on the Lite.
 
