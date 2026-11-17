@@ -1028,6 +1028,9 @@ fn build_ui(app: &gtk::Application) {
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     header.add_css_class("app-header");
+    let app_icon = gtk::Label::new(Some("videocam"));
+    app_icon.add_css_class("material-icon");
+    app_icon.set_tooltip_text(Some("OBSBOT Tiny 2 Lite"));
     let title = gtk::Label::new(Some("OBSBOT Tiny 2 Lite"));
     title.add_css_class("app-title");
     title.set_hexpand(true);
@@ -1046,6 +1049,7 @@ fn build_ui(app: &gtk::Application) {
         design::apply_theme(&theme_provider_change, mode);
         save_theme_mode(mode);
     });
+    header.append(&app_icon);
     header.append(&title);
     header.append(&theme);
     header.append(&refresh);
@@ -1090,9 +1094,18 @@ fn build_ui(app: &gtk::Application) {
     let navigation = gtk::StackSidebar::new();
     navigation.add_css_class("navigation-sidebar");
     navigation.set_stack(&stack);
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_halign(gtk::Align::Fill);
+    switcher.set_hexpand(true);
+    switcher.add_css_class("compact-switcher");
+    root.append(&switcher);
     let navigation_responsive = navigation.clone();
+    let switcher_responsive = switcher.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
-        navigation_responsive.set_visible(window.width() >= 760);
+        let wide = window.width() >= 760;
+        navigation_responsive.set_visible(wide);
+        switcher_responsive.set_visible(!wide);
     });
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
