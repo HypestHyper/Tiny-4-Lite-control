@@ -16,6 +16,7 @@
 | Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
 | Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
 | Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
+| 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |
 | Preview, snapshots, recording, audio, Linux/firmware limitations | [reference/03-media-and-limitations.md](reference/03-media-and-limitations.md) |
 | Module boundaries, architecture, milestones, hardware test plan | [reference/04-architecture-and-hardware-testing.md](reference/04-architecture-and-hardware-testing.md) |
 | Licensing, source URLs, open questions, success criteria | [reference/05-licensing-handoff-and-open-questions.md](reference/05-licensing-handoff-and-open-questions.md) |
@@ -26,7 +27,7 @@
 - Tiny 2 Lite USB ID: `3564:fef9`; regular Tiny 2: `3564:fef8`.
 - Camera controls use standard V4L2 and vendor UVC Extension Unit requests. Do not conflate these with USB HID feature reports.
 - Domatix `obsbot-control` and its `docs/PROTOCOL.md` are the primary Lite-specific reference in the supplied research.
-- No new Windows OBSBOT Center USB traces have been collected yet. The next research phase is controlled capture, one setting/action at a time.
+- A Windows OBSBOT Center USB trace was captured and parsed on 2026-11-17. Focus/Zoom UVC controls and several XU command families are documented in [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md).
 - Do not assume features from other OBSBOT models work on the Lite.
 
 ## Retrieval rule
