@@ -33,3 +33,8 @@ This directory is the authoritative project-research handoff for the OBSBOT Tiny
 ## Scope boundary
 
 The handoff describes a future test application and its eventual architecture. Do not build the app, create application source code, or perform hardware tests unless the user explicitly requests that separate work.
+
+
+## Device tracing workflow
+
+For collecting USB communication evidence, read [tracing/AGENTS.md](tracing/AGENTS.md) and [tracing/INDEX.md](tracing/INDEX.md). Important: the supplied generic guide is HID-focused; OBSBOT Tiny 2 Lite control uses V4L2/UVC XU paths. Reuse its evidence discipline, not its HID-specific assumptions. Preserve raw captures and use the per-session template.
