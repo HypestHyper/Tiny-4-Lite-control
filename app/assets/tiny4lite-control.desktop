@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tiny 2 Lite Control
+Comment=V4L2 controls for the OBSBOT Tiny 2 Lite
+Exec=tiny4lite-control
+Icon=tiny4lite-control
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+StartupNotify=true
