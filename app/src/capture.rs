@@ -358,6 +358,7 @@ pub fn build_page() -> gtk::Box {
     page.append(&note_scroll);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.add_css_class("adaptive-row");
     let start = gtk::Button::with_label("Start capture + baseline");
     let checkpoint = gtk::Button::with_label("Add checkpoint");
     let finish = gtk::Button::with_label("Finish session");
@@ -395,6 +396,7 @@ pub fn build_page() -> gtk::Box {
     page.append(&report_scroll);
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("adaptive-row");
     footer.append(&copy);
     footer.append(&open_folder);
     page.append(&footer);
@@ -416,6 +418,7 @@ pub fn build_page() -> gtk::Box {
     saved_scroll.set_child(Some(&saved_list));
     saved_box.append(&saved_scroll);
     let saved_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    saved_actions.add_css_class("adaptive-row");
     let saved_refresh = gtk::Button::with_label("Refresh list");
     let saved_open_report = gtk::Button::with_label("Open report");
     let saved_open_raw = gtk::Button::with_label("Open raw trace");
