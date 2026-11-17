@@ -14,7 +14,12 @@ The official OBSBOT Tiny 2 Lite download page lists firmware `v6.2.8.1` and says
 
 ## FOV versus zoom
 
-The 2026-11-17 large USB capture documents five standard UVC Camera Terminal Zoom Absolute writes (selector `0x0B`) and nearby XU selector `0x02` float records at payload offset 16. These are zoom-associated observations. The capture findings do not document a controlled FOV change, so they cannot prove that FOV is represented by those zoom values.
+The 2026-11-17 large Linux USB capture documents five standard UVC Camera Terminal Zoom Absolute writes (selector `0x0B`) and nearby XU selector `0x02` float records at payload offset 16. These are zoom-associated observations. The capture findings do not document a controlled FOV change, so they cannot prove that FOV is represented by those zoom values.
+
+The two smaller Windows USBPcap files were also reviewed from the saved TShark output:
+
+- `00-baseline-idle.pcap` (4,275 bytes) contains the device descriptor (`bcdDevice=0x0510`), the UVC XU selector `0x06` GET_LEN request/reply (length 60), and a selector `0x06` GET_CUR request. The pasted output ends before showing the 60-byte Current Value, so it cannot supply a usable FOV/zoom value comparison.
+- `01-hdr-test.pcap` (63,803 bytes) spans about 399.775 seconds and the saved field extraction contains 999 camera-address rows. However, only initial USB descriptor/configuration requests have decoded `bRequest` values in that extraction; later rows lack decoded setup fields and payloads. It therefore does not independently establish an HDR toggle or an FOV change. The original PCAP itself would need a corrected, setup-stage-aware extraction before those rows can be interpreted.
 
 The Lite-specific status mapping identifies two separate status fields:
 
@@ -36,7 +41,7 @@ The original capture is preserved. The summary does not attempt to assign UI act
 
 ## Evidence boundaries
 
-**Observed:** USB descriptor `bcdDevice=5.10`; model/stream name via selector `0x08`; zoom writes and zoom-associated XU float records in the large 2026-11-17 capture; FOV status byte mapping in the Lite-specific protocol research.
+**Observed:** USB descriptor `bcdDevice=0x0510` in the Windows baseline; model/stream name via selector `0x08`; zoom writes and zoom-associated XU float records in the large 2026-11-17 capture; FOV status byte mapping in the Lite-specific protocol research. The saved small-capture exports do not contain a reliable FOV change sequence.
 
 **Not established by the large capture:** an FOV change sequence, a direct firmware-version query, or a reliable relationship that makes the XU zoom-associated float a replacement for the standard V4L2 zoom control.
 
