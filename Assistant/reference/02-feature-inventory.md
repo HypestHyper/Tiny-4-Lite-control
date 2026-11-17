@@ -208,7 +208,23 @@ basic feature.
 See [2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
 for raw request details and the accompanying zoom correlation.
 
-### 4.10 Status block and read-back
+### 4.10 LED power and brightness
+
+**Status:** Commands recovered from the original Tiny 2 Lite capture; four
+brightness settings and a separate power switch are implemented.
+
+- Selector `0x06`, tag `0x18`, payload `[0x18, 0x01, 0x00]` = power off.
+- Selector `0x06`, tag `0x18`, payload `[0x18, 0x01, 0x01]` = power on.
+- Selector `0x06`, tag `0x1A`, payload `[0x1A, 0x01, raw]` = brightness.
+- The four user-facing brightness levels map to raw values 0, 1, 2, 3.
+- Status byte `0x21` reports the raw brightness value; it does not establish
+  whether the separate power switch is on or off.
+
+The original capture shows the tag `0x1A` values 0, 1, 2, and 3 as brightness
+changes, while tag `0x18` has its own independent 0/1 writes. Do not interpret
+brightness raw value 0 as LED power-off.
+
+### 4.11 Status block and read-back
 
 Selector `0x06` `GET_CUR` returns a 60-byte status block.
 
@@ -243,9 +259,9 @@ Documented offsets (confidence varies):
 
   `0x1F`                  FPS                     Needs validation
 
-  `0x21`                  LED brightness          Lite-confirmed: 0=off,
-                                                  1–3 intensity; write via
-                                                  selector 0x06 tag 0x1A
+  `0x21`                  LED brightness          Captured raw values
+                                                  0–3 map to user levels
+                                                  1–4; power is separate
 
   `0x24`                  Tracking speed          Lite-confirmed
   -----------------------------------------------------------------------
