@@ -709,7 +709,8 @@ pub fn build_page() -> gtk::Box {
             return;
         }
 
-        if let Some(path) = report_path_clear.borrow_mut().take() {
+        let completed_path = report_path_clear.borrow_mut().take();
+        if let Some(path) = completed_path {
             let raw = path.with_extension("pcapng");
             let mut errors = Vec::new();
             for file in [&path, &raw] {
