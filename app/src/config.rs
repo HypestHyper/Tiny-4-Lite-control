@@ -18,9 +18,28 @@ pub struct AppConfig {
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
+    // Service policy is persisted with the rest of the user's preferences.
+    // Auto-sleep is opt-in and must remain inert unless explicitly enabled.
+    pub service: ServiceConfig,
     // Reserved for a future explicit restore-on-connect feature. False is
     // deliberately the default: loading config must never move the camera.
     pub apply_on_connect: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServiceConfig {
+    pub auto_sleep_enabled: bool,
+    pub auto_sleep_timeout_minutes: u32,
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        Self {
+            auto_sleep_enabled: false,
+            auto_sleep_timeout_minutes: 10,
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -36,6 +55,7 @@ impl Default for AppConfig {
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
+            service: ServiceConfig::default(),
             apply_on_connect: false,
         }
     }
@@ -60,6 +80,7 @@ pub fn load() -> Result<AppConfig, String> {
             }
             config.version = CONFIG_VERSION;
             config.joystick_sensitivity_percent = config.joystick_sensitivity_percent.clamp(10, 200);
+            config.service.auto_sleep_timeout_minutes = config.service.auto_sleep_timeout_minutes.clamp(1, 1440);
             if config.gesture_zoom_ratio.is_some_and(|ratio| !ratio.is_finite() || !(1.0..=4.0).contains(&ratio)) {
                 config.gesture_zoom_ratio = None;
             }
@@ -109,6 +130,8 @@ mod tests {
     fn defaults_are_safe_and_have_no_camera_commands() {
         let config = AppConfig::default();
         assert!(!config.apply_on_connect);
+        assert!(!config.service.auto_sleep_enabled);
+        assert_eq!(config.service.auto_sleep_timeout_minutes, 10);
         assert!(config.v4l2_controls.is_empty());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
@@ -126,6 +149,8 @@ mod tests {
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
         config.joystick_sensitivity_percent = 135;
+        config.service.auto_sleep_enabled = true;
+        config.service.auto_sleep_timeout_minutes = 25;
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: AppConfig = toml::from_str(&encoded).unwrap();
@@ -137,5 +162,7 @@ mod tests {
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
         assert_eq!(decoded.joystick_sensitivity_percent, 135);
+        assert!(decoded.service.auto_sleep_enabled);
+        assert_eq!(decoded.service.auto_sleep_timeout_minutes, 25);
     }
 }
