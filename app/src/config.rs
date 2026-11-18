@@ -138,6 +138,14 @@ mod tests {
     }
 
     #[test]
+    fn older_config_without_service_section_gets_safe_defaults() {
+        let config: AppConfig = toml::from_str("version = 1\ntheme = \"dark\"\n").unwrap();
+        assert_eq!(config.theme, "dark");
+        assert!(!config.service.auto_sleep_enabled);
+        assert_eq!(config.service.auto_sleep_timeout_minutes, 10);
+    }
+
+    #[test]
     fn config_round_trips_all_persistent_settings() {
         let mut config = AppConfig::default();
         config.theme = "dark".into();
