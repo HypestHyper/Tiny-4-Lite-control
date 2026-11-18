@@ -1,7 +1,8 @@
-use gdk_pixbuf::{Colorspace, Pixbuf, PixbufLoader};
+use gdk_pixbuf::{Colorspace, Pixbuf};
+use jpeg_decoder::{Decoder, PixelFormat};
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc::{self, SyncSender, TryRecvError, TrySendError};
@@ -166,10 +167,31 @@ fn read_frames<R: Read>(mut reader: R, sender: SyncSender<Vec<u8>>, mode: VideoM
 
 fn decode_frame(frame: &[u8], mode: &VideoMode) -> Option<Pixbuf> {
     if mode.pixel_format == "MJPG" {
-        let loader = PixbufLoader::new();
-        loader.write(frame).ok()?;
-        loader.close().ok()?;
-        return loader.pixbuf();
+        let mut decoder = Decoder::new(Cursor::new(frame));
+        let pixels = decoder.decode().ok()?;
+        let info = decoder.info()?;
+        let width = info.width as usize;
+        let height = info.height as usize;
+        let rgb = match info.pixel_format {
+            PixelFormat::RGB24 => pixels,
+            PixelFormat::L8 => pixels.into_iter().flat_map(|value| [value, value, value]).collect(),
+            PixelFormat::CMYK32 => {
+                let mut rgb = Vec::with_capacity(width * height * 3);
+                for pixel in pixels.chunks_exact(4) {
+                    let k = pixel[3] as u16;
+                    rgb.push(255u16.saturating_sub(pixel[0] as u16 + k).min(255) as u8);
+                    rgb.push(255u16.saturating_sub(pixel[1] as u16 + k).min(255) as u8);
+                    rgb.push(255u16.saturating_sub(pixel[2] as u16 + k).min(255) as u8);
+                }
+                rgb
+            }
+        };
+        if rgb.len() != width * height * 3 { return None; }
+        let bytes = gtk::glib::Bytes::from_owned(rgb);
+        return Some(Pixbuf::from_bytes(
+            &bytes, Colorspace::Rgb, false, 8,
+            width as i32, height as i32, width as i32 * 3,
+        ));
     }
     if mode.pixel_format != "YUYV" || mode.width % 2 != 0 { return None; }
     let width = mode.width as usize;
