@@ -9,7 +9,7 @@ Research handoff and a Rust/GTK4 Linux hardware-control test bench for the OBSBO
 - Current framework status and protocol summary: [Assistant/APP-IMPLEMENTATION-STATUS.md](Assistant/APP-IMPLEMENTATION-STATUS.md)
 - Research and agent navigation: [Assistant/INDEX.md](Assistant/INDEX.md)
 
-The app identifies the Lite by USB ID `3564:fef9`, reads V4L2 controls dynamically, and contains a separate vendor UVC Extension Unit path for selected AI tracking and gesture operations. This is a functional test bench, not a finished UI. Visual redesign is deferred.
+The app identifies the Lite by USB ID `3564:fef9`, reads V4L2 controls dynamically, and contains a separate vendor UVC Extension Unit path for selected AI tracking, gesture, FOV, LED, and power operations. It also includes read-only diagnostics and a usbmon capture workflow. This is a functional test bench, not a finished UI. Visual redesign is deferred.
 
 ## Research
 
@@ -18,4 +18,4 @@ The app identifies the Lite by USB ID `3564:fef9`, reads V4L2 controls dynamical
 **Original feature research:** [Assistant/source/obsbot_tiny_2_lite_linux_research_handoff.md](Assistant/source/obsbot_tiny_2_lite_linux_research_handoff.md)  
 **USB tracing workflow:** [Assistant/tracing on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing)
 
-No new Windows OBSBOT Center USB traces have been collected yet. The next phase is controlled capture, changing one setting/action at a time and validating the resulting transfers before adding more protocol support.
+Windows OBSBOT Center captures from 2026-11-17 and a Tiny 2 Lite Direction Flip capture from 2026-11-18 have been analyzed. Current evidence, verified features, implemented controls, and remaining gaps are maintained in [Assistant/APP-IMPLEMENTATION-STATUS.md](Assistant/APP-IMPLEMENTATION-STATUS.md) and the linked feature inventory.
