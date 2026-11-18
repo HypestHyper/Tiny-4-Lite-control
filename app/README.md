@@ -22,11 +22,11 @@ not the final UI. UI redesign is deferred.
 - Autofocus uses the standard UVC Focus Auto control. When autofocus is
   off, the manual Focus Absolute slider is shown. While autofocus is on,
   Global / Face options send the framed XU `CAM_SET_FACE_FOCUS`
-  command (`0x3602`, receiver `0x02`) with a four-byte
-  little-endian integer: Global `0`, Face `1`. The app tracks
-  the selection locally; it does not yet read the mode back from the camera.
-  Hardware confirmation of the new app command remains pending. This is
-  distinct from face-priority auto-exposure.
+  command (`0x3602`, receiver `0x02`) using captured Tiny 2 Lite
+  payloads: Global `be 07 00 00`, Face `bf fb 01 00`. Their assignment
+  is inferred from paired transitions in the recording and still needs
+  physical confirmation. Selection is tracked locally because camera-side
+  read-back is unavailable. This is distinct from face-priority auto-exposure.
 - Exposes the camera-reported `zoom_absolute` as a position slider.
   `zoom_continuous` is currently suppressed. A hold-to-zoom control
   with release-to-stop is not implemented; do not assume the current
