@@ -129,16 +129,20 @@ Implemented XU operations:
     `1c 01 00`. The camera restarted after each toggle in OBSBOT
     Center. The restart mechanism and any additional restart-related
     commands have not been investigated. The UI exposes a **Disable
-    microphone** switch and persists its last successful selection as
-    a fallback when GET_CUR is unavailable.
+    microphone** switch. This is a distinct captured 60-byte command
+    payload with prefix `1c 01 <state>` and zero-filled remaining bytes,
+    not the GET_CUR status block. No matching read-back is established;
+    the UI displays the last successfully submitted local state only.
   - Auto gain: byte offset 25, Off = 0, On = 1. The capture sequence
     was Off → On → Off → On, with matching read-backs.
   - Noise reduction: byte offset 8, Off = 0, Weak = 1, Medium = 2,
     Strong = 3. All four levels were captured and read back.
-  All setters perform GET_CUR, modify only the relevant byte, then
-  SET_CUR the complete 60-byte block, preserving unrelated fields.
-  App-side hardware validation remains pending; successful ioctl
-  completion alone is not proof of the camera's applied state.
+  Auto gain and noise reduction perform GET_CUR, modify only their
+  respective status-block byte, then SET_CUR the complete block,
+  preserving unrelated fields. Disable microphone sends its separately
+  captured fixed command payload. App-side hardware validation remains
+  pending; successful ioctl completion alone is not proof of the
+  camera's applied state.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
 - Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture checkpoints show Direction Flip OFF at baseline, ON at 17.37s, OFF at 35.15s, then Dynamic Zoom OFF at 54.78s. The user has physically confirmed that Target Selection, Zoom/L-pose, Dynamic Zoom and Direction Flip all work on the Tiny 2 Lite. Direction Flip is the direction modifier for the Dynamic Zoom gesture and is intended to be used together with Dynamic Zoom; it does not change the separate Zoom/L-pose gesture or autofocus Global/Face priority. The corresponding SET_CUR packets are frames 13247, 72265, 170871, and 179033. The first three use direction group `0a 04 c4 33` and alternate payloads `27 ff 01 00`, `e6 3f 00 00`, `27 ff 01 00`. The fourth uses Dynamic Zoom group `0a 04 44 33` and is the separate Dynamic Zoom disable command, not a Direction Flip transition. The sequence values progress `0x000f`, `0x0010`, `0x0011`, `0x0012` across these commands. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The observed initial value `0x000f` is capture context; the required sequence seed on a fresh camera/app session is not established. The implementation currently initializes its process-local counter to zero and increments it for each framed XU write.
