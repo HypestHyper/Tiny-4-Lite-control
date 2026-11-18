@@ -117,7 +117,7 @@ pub(crate) fn append(
             return;
         };
         let message = presets::apply(&device_apply, preset)
-            .unwrap_or_else(|error| format!("Preset applied with errors: {error}"));
+            .unwrap_or_else(|error| format!("Preset submission reported errors: {error}"));
         crate::ui::controls::populate_controls(
             &device_apply, &container_apply, &window_apply, &status_apply,
         );
