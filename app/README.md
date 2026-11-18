@@ -40,8 +40,13 @@ not the final UI. UI redesign is deferred.
   Face = `03 01 00`, Global = `03 01 01`, padded to 60 bytes with
   zeros. This is not the autofocus command. The last submitted selection
   is persisted locally, but no reliable device read-back is known.
-  Exposure compensation (−3 to +3) is not implemented yet; its command
-  encoding is pending capture analysis.
+  Exposure compensation (−3.0 to +3.0) is implemented through UVC
+  Processing Unit 3, selector 1 (Backlight Compensation). The 19
+  OBSBOT Center positions map to unsigned little-endian values 1–19:
+  −3.0 = 1 (01 00), 0.0 = 10 (0a 00), and +3.0 = 19 (13 00).
+  It is shown only while V4L2 Auto Exposure is Auto. The current value
+  is initialized with UVC GET_CUR when supported, and successful changes
+  are persisted locally.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
   (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
