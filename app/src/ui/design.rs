@@ -33,10 +33,10 @@ fn register_fonts() {
     let dir = cache_dir();
     if fs::create_dir_all(&dir).is_err() { return; }
     let fonts: [(&str, &[u8]); 4] = [
-        ("GoogleSansFlex-latin-400.ttf", include_bytes!("../assets/fonts/GoogleSansFlex-latin-400.ttf")),
-        ("GoogleSansFlex-latin-500.ttf", include_bytes!("../assets/fonts/GoogleSansFlex-latin-500.ttf")),
-        ("GoogleSansFlex-latin-700.ttf", include_bytes!("../assets/fonts/GoogleSansFlex-latin-700.ttf")),
-        ("MaterialSymbolsRounded.ttf", include_bytes!("../assets/fonts/MaterialSymbolsRounded.ttf")),
+        ("GoogleSansFlex-latin-400.ttf", include_bytes!("../../assets/fonts/GoogleSansFlex-latin-400.ttf")),
+        ("GoogleSansFlex-latin-500.ttf", include_bytes!("../../assets/fonts/GoogleSansFlex-latin-500.ttf")),
+        ("GoogleSansFlex-latin-700.ttf", include_bytes!("../../assets/fonts/GoogleSansFlex-latin-700.ttf")),
+        ("MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),
     ];
     let mut registered = false;
     for (name, bytes) in fonts {
