@@ -80,6 +80,33 @@ per-gesture read-back. A successful ioctl only confirms host-side
 request completion; use observable device behaviour or independent
 read-back to validate state changes.
 
+## Persistent configuration
+
+Settings are stored outside the AppImage in:
+
+```text
+${XDG_CONFIG_HOME:-~/.config}/tiny4lite-control/config.toml
+```
+
+The versioned TOML config is loaded when the application starts and
+written after successful changes. It records supported V4L2 control
+values (excluding transient pan/tilt position and speed commands), LED
+brightness, AI tracking mode and speed, Global/Face focus selection,
+gesture toggles, gesture zoom ratio, theme, and joystick sensitivity.
+The previous `settings.conf` theme preference is migrated on first load.
+
+Loading the file does not send camera commands. In particular,
+`apply_on_connect` defaults to `false`; saved camera values are retained
+for the future in-process service, but are not replayed to the camera at
+startup. Camera read-back remains authoritative for settings that the
+device exposes. Locally remembered gesture/focus states are only the last
+successfully submitted commands where no reliable read-back exists.
+
+The config module provides version checking, defaults for missing keys,
+safe value validation, and write-to-temporary-file followed by rename.
+The in-process camera service that will own monitoring and optional
+restore-on-connect behavior is not implemented yet.
+
 ## Diagnostics and USB capture
 
 The Diagnostics page provides read-only XU reads for selectors `0x02`
