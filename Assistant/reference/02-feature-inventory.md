@@ -64,28 +64,27 @@ Do not assume a position query gives live physical feedback. The MCP
 Linux implementation documents gimbal position as cached/last-commanded
 rather than live. Display that distinction clearly.
 
-### 4.3 Zoom
+### 4.3 Zoom and field-of-view presets
 
-**Status:** Standard V4L2 zoom controls available; gesture zoom
-separately confirmed.
+**Status:** Physically confirmed; standard V4L2 control only.
 
-Use V4L2: - `zoom_absolute` - `zoom_continuous`
+Use `zoom_absolute` for all manual zoom and FOV preset operations. The
+Tiny 2 Lite reports a range of 0–100. The user confirmed smooth
+adjustment across the range and these preset mappings:
 
-**2026-11-17 capture evidence:** Five standard UVC Camera Terminal
-Zoom Absolute writes (selector `0x0B`, two-byte little-endian values
-66, 63, 0, 2, 64) were closely followed by XU selector `0x02`
-messages carrying a float32 little-endian value at payload offset 16:
-2.98, 2.89, 1.00, 1.06, 2.92. The same XU record later carried 4.00.
-Its GET_CUR counterpart returned values including 1.00, 1.15, 1.47,
-3.00 and 4.00. This strongly associates the XU parameter with zoom,
-but the trace does **not** establish whether the crop is performed by
-the camera's image processor or elsewhere. Do not label it optical,
-digital, or hardware zoom based on this trace alone.
+| Preset | `zoom_absolute` | Observed zoom factor |
+|---|---:|---:|
+| Wide | 0 | 1.00× |
+| Medium | 5 | 1.15× |
+| Narrow | 15 | 1.47× |
+| Maximum | 100 | Maximum zoom |
 
-Gesture-based zoom remains a separate feature and does not update
-V4L2 `zoom_absolute`. See
-[2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
-for packet details.
+The GTK app exposes the device-reported `zoom_absolute` slider and
+three preset buttons. Presets write the same V4L2 control and read its
+value back. Do not use `zoom_continuous` or the separate vendor FOV
+setter. Gesture zoom remains a separate camera-side gesture and does
+not update `zoom_absolute`.
+
 
 ### 4.4 AI tracking / framing modes
 
