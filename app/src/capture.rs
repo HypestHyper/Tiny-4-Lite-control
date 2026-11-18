@@ -362,15 +362,18 @@ pub fn build_page() -> gtk::Box {
     let start = gtk::Button::with_label("Start capture + baseline");
     let checkpoint = gtk::Button::with_label("Add checkpoint");
     let finish = gtk::Button::with_label("Finish session");
+    let clear = gtk::Button::with_label("Clear recording");
     let copy = gtk::Button::with_label("Copy report");
     let open_folder = gtk::Button::with_label("Open capture folder");
     checkpoint.set_sensitive(false);
     finish.set_sensitive(false);
+    clear.set_sensitive(false);
     copy.set_sensitive(false);
     open_folder.set_sensitive(false);
     actions.append(&start);
     actions.append(&checkpoint);
     actions.append(&finish);
+    actions.append(&clear);
     page.append(&actions);
 
     let status = gtk::Label::new(Some("Ready. The USB camera is detected independently of its video node."));
@@ -490,6 +493,7 @@ pub fn build_page() -> gtk::Box {
     let status_start = status.clone();
     let checkpoint_start = checkpoint.clone();
     let finish_start = finish.clone();
+    let clear_start = clear.clone();
     let start_button = start.clone();
     let log_start = checkpoints_log.clone();
     let summary_start = checkpoint_summary.clone();
@@ -518,6 +522,7 @@ pub fn build_page() -> gtk::Box {
                 ));
                 checkpoint_start.set_sensitive(true);
                 finish_start.set_sensitive(true);
+                clear_start.set_sensitive(true);
                 start_button.set_sensitive(false);
             }
             Err(error) => status_start.set_text(&format!("Could not start capture: {error}")),
@@ -561,33 +566,177 @@ pub fn build_page() -> gtk::Box {
     let finish_button = finish.clone();
     let copy_finish = copy.clone();
     let open_finish = open_folder.clone();
+    let clear_finish = clear.clone();
+    let saved_list_finish = saved_list.clone();
+    let saved_paths_finish = saved_paths.clone();
     finish.connect_clicked(move |_| {
         let Some(active) = session_finish.borrow_mut().take() else {
             status_finish.set_text("No capture session is running.");
             return;
         };
-        status_finish.set_text("Stopping capture and decoding camera control transfers…");
+        status_finish.set_text("Stopping capture and decoding camera control transfers in the background…");
         checkpoint_finish.set_sensitive(false);
         finish_button.set_sensitive(false);
-        match active.finish() {
-            Ok((text, path)) => {
-                report_view_finish.buffer().set_text(&text);
-                *report_finish.borrow_mut() = text;
-                *report_file_finish.borrow_mut() = Some(path.clone());
-                copy_finish.set_sensitive(true);
-                open_finish.set_sensitive(true);
-                start_finish.set_sensitive(true);
-                status_finish.set_text(&format!(
-                    "Session saved. Report: {}  |  Raw trace: {}",
-                    path.display(),
-                    path.with_extension("pcapng").display()
-                ));
+        clear_finish.set_sensitive(false);
+        start_finish.set_sensitive(false);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = sender.send(active.finish());
+        });
+        let status_done = status_finish.clone();
+        let checkpoint_done = checkpoint_finish.clone();
+        let finish_done = finish_button.clone();
+        let clear_done = clear_finish.clone();
+        let start_done = start_finish.clone();
+        let report_done = report_finish.clone();
+        let report_file_done = report_file_finish.clone();
+        let view_done = report_view_finish.clone();
+        let copy_done = copy_finish.clone();
+        let open_done = open_finish.clone();
+        let list_done = saved_list_finish.clone();
+        let paths_done = saved_paths_finish.clone();
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            match receiver.try_recv() {
+                Ok(Ok((text, path))) => {
+                    view_done.buffer().set_text(&text);
+                    *report_done.borrow_mut() = text;
+                    *report_file_done.borrow_mut() = Some(path.clone());
+                    copy_done.set_sensitive(true);
+                    open_done.set_sensitive(true);
+                    start_done.set_sensitive(true);
+                    clear_done.set_sensitive(true);
+                    status_done.set_text(&format!(
+                        "Session saved. Report: {}  |  Raw trace: {}",
+                        path.display(), path.with_extension("pcapng").display()
+                    ));
+                    refresh_saved_list(&list_done, &paths_done);
+                    checkpoint_done.set_sensitive(false);
+                    finish_done.set_sensitive(false);
+                    gtk::glib::ControlFlow::Break
+                }
+                Ok(Err(error)) => {
+                    start_done.set_sensitive(true);
+                    clear_done.set_sensitive(false);
+                    status_done.set_text(&format!("Capture stopped, but report generation failed: {error}"));
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    start_done.set_sensitive(true);
+                    status_done.set_text("Capture worker stopped unexpectedly.");
+                    gtk::glib::ControlFlow::Break
+                }
             }
-            Err(error) => {
-                start_finish.set_sensitive(true);
-                status_finish.set_text(&format!("Capture stopped, but report generation failed: {error}"));
+        });
+    });
+
+    // Clear discards the active capture, or removes the most recently completed
+    // report and raw trace. Stopping an active capture is kept off the GTK thread.
+    let session_clear = session.clone();
+    let status_clear = status.clone();
+    let start_clear = start.clone();
+    let checkpoint_clear = checkpoint.clone();
+    let finish_clear = finish.clone();
+    let clear_button = clear.clone();
+    let report_clear = report_text.clone();
+    let report_path_clear = report_file.clone();
+    let view_clear = report_view.clone();
+    let copy_clear = copy.clone();
+    let open_clear = open_folder.clone();
+    let log_clear = checkpoints_log.clone();
+    let summary_clear = checkpoint_summary.clone();
+    let list_clear = saved_list.clone();
+    let paths_clear = saved_paths.clone();
+    clear.connect_clicked(move |_| {
+        if let Some(active) = session_clear.borrow_mut().take() {
+            let raw_path = active.pcap_path.clone();
+            status_clear.set_text("Stopping and discarding the active capture…");
+            clear_button.set_sensitive(false);
+            start_clear.set_sensitive(false);
+            checkpoint_clear.set_sensitive(false);
+            finish_clear.set_sensitive(false);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            thread::spawn(move || {
+                let result = active.stop_process().and_then(|_| {
+                    fs::remove_file(&raw_path)
+                        .map_err(|e| format!("Could not remove raw capture {}: {e}", raw_path.display()))
+                });
+                let _ = sender.send(result);
+            });
+            let status_done = status_clear.clone();
+            let start_done = start_clear.clone();
+            let clear_done = clear_button.clone();
+            let view_done = view_clear.clone();
+            let report_done = report_clear.clone();
+            let report_path_done = report_path_clear.clone();
+            let copy_done = copy_clear.clone();
+            let open_done = open_clear.clone();
+            let log_done = log_clear.clone();
+            let summary_done = summary_clear.clone();
+            let list_done = list_clear.clone();
+            let paths_done = paths_clear.clone();
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                match receiver.try_recv() {
+                    Ok(Ok(())) => {
+                        view_done.buffer().set_text("");
+                        *report_done.borrow_mut() = String::new();
+                        *report_path_done.borrow_mut() = None;
+                        copy_done.set_sensitive(false);
+                        open_done.set_sensitive(false);
+                        log_done.set_text("No checkpoints yet.");
+                        summary_done.borrow_mut().clear();
+                        start_done.set_sensitive(true);
+                        clear_done.set_sensitive(false);
+                        status_done.set_text("Recording discarded. Ready for a new capture.");
+                        refresh_saved_list(&list_done, &paths_done);
+                        gtk::glib::ControlFlow::Break
+                    }
+                    Ok(Err(error)) => {
+                        start_done.set_sensitive(true);
+                        clear_done.set_sensitive(true);
+                        status_done.set_text(&format!("Could not discard capture: {error}"));
+                        gtk::glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        start_done.set_sensitive(true);
+                        status_done.set_text("Capture cleanup worker stopped unexpectedly.");
+                        gtk::glib::ControlFlow::Break
+                    }
+                }
+            });
+            return;
+        }
+
+        if let Some(path) = report_path_clear.borrow_mut().take() {
+            let raw = path.with_extension("pcapng");
+            let mut errors = Vec::new();
+            for file in [&path, &raw] {
+                if file.exists() {
+                    if let Err(error) = fs::remove_file(file) {
+                        errors.push(format!("{}: {error}", file.display()));
+                    }
+                }
+            }
+            if !errors.is_empty() {
+                *report_path_clear.borrow_mut() = Some(path);
+                status_clear.set_text(&format!("Could not remove saved capture: {}", errors.join("; ")));
+                return;
             }
         }
+        view_clear.buffer().set_text("");
+        *report_clear.borrow_mut() = String::new();
+        copy_clear.set_sensitive(false);
+        open_clear.set_sensitive(false);
+        log_clear.set_text("No checkpoints yet.");
+        summary_clear.borrow_mut().clear();
+        start_clear.set_sensitive(true);
+        checkpoint_clear.set_sensitive(false);
+        finish_clear.set_sensitive(false);
+        clear_button.set_sensitive(false);
+        status_clear.set_text("Recording cleared. Ready for a new capture.");
+        refresh_saved_list(&list_clear, &paths_clear);
     });
 
     let report_copy = report_text.clone();
