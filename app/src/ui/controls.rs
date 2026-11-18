@@ -252,3 +252,21 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     ui::layout::apply_compact_visibility(container.upcast_ref(), false, &[]);
     ui::layout::restore_scroll_position(scroll_position);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::control_display_value;
+
+    #[test]
+    fn exposure_values_display_as_shutter_speeds() {
+        assert_eq!(control_display_value("exposure_time_absolute", 330), "1/30 s");
+        assert_eq!(control_display_value("exposure_time_absolute", 167), "1/60 s");
+        assert_eq!(control_display_value("exposure_time_absolute", 2500), "1/4 s");
+    }
+
+    #[test]
+    fn iso_and_gain_keep_their_actual_v4l2_meaning() {
+        assert_eq!(control_display_value("iso_sensitivity", 400), "ISO 400");
+        assert_eq!(control_display_value("gain", 18), "Gain 18");
+    }
+}
