@@ -443,7 +443,7 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
 }
 
 // Tiny 2 Lite HDR control, captured as a 60-byte selector 0x06 SET_CUR.
-// The third byte is inverted: 0x00 enables HDR, 0x01 disables it.
+// Captures correlate third byte 0x01 with HDR On and 0x00 with HDR Off.
 fn hdr_payload(enabled: bool) -> [u8; 3] {
     [0x01, 0x01, if enabled { 0x01 } else { 0x00 }]
 }
