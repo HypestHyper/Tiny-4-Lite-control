@@ -1,6 +1,6 @@
 use gdk_pixbuf::{Colorspace, Pixbuf, PixbufLoader};
 use gtk::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -15,14 +15,20 @@ pub struct PreviewContext {
     placeholder: gtk::Label,
     status: gtk::Label,
     child: Rc<RefCell<Option<Child>>>,
+    generation: Rc<Cell<u64>>,
 }
 
 impl PreviewContext {
     pub fn new(picture: gtk::Picture, placeholder: gtk::Label, status: gtk::Label) -> Self {
-        Self { picture, placeholder, status, child: Rc::new(RefCell::new(None)) }
+        Self {
+            picture, placeholder, status,
+            child: Rc::new(RefCell::new(None)),
+            generation: Rc::new(Cell::new(0)),
+        }
     }
 
     pub fn stop(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
         if let Some(mut child) = self.child.borrow_mut().take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -76,6 +82,8 @@ impl PreviewContext {
         let mode_reader = mode.clone();
         thread::spawn(move || read_frames(stdout, sender, mode_reader));
         let mode_display = mode.clone();
+        let generation = self.generation.get();
+        let generation_state = self.generation.clone();
 
         let picture = self.picture.clone();
         let placeholder = self.placeholder.clone();
@@ -86,7 +94,14 @@ impl PreviewContext {
                 match receiver.try_recv() {
                     Ok(frame) => latest = Some(frame),
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return gtk::glib::ControlFlow::Break,
+                    Err(TryRecvError::Disconnected) => {
+                        if generation_state.get() == generation {
+                            placeholder.set_text("The camera stream stopped. Check the device and refresh the camera.");
+                            placeholder.set_visible(true);
+                            status.set_text("Preview stopped");
+                        }
+                        return gtk::glib::ControlFlow::Break;
+                    },
                 }
             }
             if let Some(frame) = latest {
