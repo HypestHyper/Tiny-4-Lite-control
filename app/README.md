@@ -20,9 +20,13 @@ not the final UI. UI redesign is deferred.
   controls apply immediately and offer reset to the camera-reported
   default.
 - Autofocus uses the standard UVC Focus Auto control. When autofocus is
-  off, the manual Focus Absolute slider is shown. Global / Face focus
-  options remain visible only while autofocus is on, but are disabled
-  because their vendor mapping has not been established reliably.
+  off, the manual Focus Absolute slider is shown. While autofocus is on,
+  Global / Face options send the framed XU `CAM_SET_FACE_FOCUS`
+  command (`0x3602`, receiver `0x02`) with a four-byte
+  little-endian integer: Global `0`, Face `1`. The app tracks
+  the selection locally; it does not yet read the mode back from the camera.
+  Hardware confirmation of the new app command remains pending. This is
+  distinct from face-priority auto-exposure.
 - Exposes the camera-reported `zoom_absolute` as a position slider.
   `zoom_continuous` is currently suppressed. A hold-to-zoom control
   with release-to-stop is not implemented; do not assume the current
@@ -144,7 +148,7 @@ revision as build-verified.
 - There is no separately installed background daemon or automatic
   sleep/wake service. The longer-term service/config architecture is
   still a design direction, not an implemented feature.
-- Zoom hold/release stop behaviour, Global / Face focus mode, reliable
+- Zoom hold/release stop behaviour, Global / Face focus mode hardware confirmation/read-back, reliable
   gesture read-back, automatic firmware detection, live pan/tilt
   telemetry, and preset mutation remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
