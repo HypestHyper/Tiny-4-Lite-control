@@ -1584,7 +1584,8 @@ fn build_ui(app: &gtk::Application) {
     root.append(&footer);
     window.set_child(Some(&root));
 
-    let nodes = discover_tiny4lite();
+    let nodes: Vec<String> = discover_tiny4lite().into_iter()
+        .filter(|node| video::capabilities(node).is_ok()).collect();
     for node in &nodes { devices.append(Some(node), node); }
     if let Some(first) = nodes.first() { devices.set_active_id(Some(first)); }
 
@@ -1605,7 +1606,8 @@ fn build_ui(app: &gtk::Application) {
     let status_refresh = status.clone();
     refresh.connect_clicked(move |_| {
         devices_refresh.remove_all();
-        let nodes = discover_tiny4lite();
+        let nodes: Vec<String> = discover_tiny4lite().into_iter()
+            .filter(|node| video::capabilities(node).is_ok()).collect();
         for node in &nodes { devices_refresh.append(Some(node), node); }
         if let Some(first) = nodes.first() {
             devices_refresh.set_active_id(Some(first));
