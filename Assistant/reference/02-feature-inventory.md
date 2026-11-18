@@ -109,30 +109,44 @@ all firmware.
 
 ### 4.6 Gestures
 
-**Status:** Gesture controls physically verified on Tiny 2 Lite. The user confirmed Target selection (open palm/fingers spread enables normal tracking), Zoom/L-pose, and Dynamic Zoom (both hands form L shapes and move apart/together). Dynamic Zoom direction remains unknown; do not infer which hand movement increases or decreases zoom.
+**Status:** Target selection, Zoom/L-pose, and Dynamic Zoom have all been physically verified on the user's Tiny 2 Lite. Target selection is triggered by an open palm/fingers spread and enables normal tracking. Zoom uses the L-pose gesture. Dynamic Zoom uses both hands in L shapes moved apart/together. Direction Flip has an identified wire-state mapping from a controlled 2026-11-18 capture; the corrected app implementation still needs live confirmation that it reverses the visible direction.
 
 Available controls: - Target selection - Zoom - Dynamic zoom - Dynamic
-zoom direction
+zoom direction (Direction Flip)
 
-The selector `0x02` framed messages are used. Function groups
-documented:
+The selector `0x02` framed messages are used. Function groups:
 
-  Gesture                  Function group
-  ------------------------ ---------------------
-  Target selection         `0a 04 c4 30 01 00`
-  Zoom                     `0a 04 44 31 01 00`
-  Dynamic zoom             `0a 04 44 33 01 00`
-  Dynamic zoom direction   `0a 04 c4 33 01 00`
+| Gesture | Function group |
+|---|---|
+| Target selection | `0a 04 c4 30 01 00` |
+| Zoom/L-pose | `0a 04 44 31 01 00` |
+| Dynamic Zoom | `0a 04 44 33 01 00` |
+| Dynamic Zoom Direction | `0a 04 c4 33 01 00` |
 
-Gesture on/off payload bytes: - Off: `e6 3f 00 00 00 00` - On:
-`27 ff 01 00 00 00`
+For the ordinary gesture groups, captured payloads are Off =
+`e6 3f 00 00 00 00` and On = `27 ff 01 00 00 00`.
+**Dynamic Zoom Direction is inverted:** UI Off sends
+`27 ff 01 00 00 00`; UI On sends `e6 3f 00 00 00 00`.
+
+The 2026-11-18 controlled capture has three Direction Flip transitions:
+OFF at baseline (frame 13247), ON (frame 72265), then OFF (frame
+170871). A fourth command (frame 179033) uses the separate Dynamic
+Zoom group `0a 04 44 33 01 00` and disables Dynamic Zoom. It is not a
+fourth Direction Flip transition. The sequence values progress
+`0x000f`, `0x0010`, `0x0011`, `0x0012` across those four framed
+commands. The app now allocates a rolling process-local 16-bit sequence
+number to every framed XU write. Its initial value of zero is an
+implementation choice; the capture does not establish the required
+sequence seed after a fresh connection or app restart.
 
 **Naming trap:** The L-pose gesture is called **Zoom**, not Dynamic
 Zoom. Disabling Zoom is the action that stops the L-shaped gesture.
-Disabling Dynamic Zoom appears to do nothing for that gesture.
+Dynamic Zoom is a separate two-hand L-shape gesture.
 
-Do not present the gesture controls as a single generic "gesture mode";
-expose each function separately and document the naming.
+The selector 0x06 status block does not provide reliable per-gesture
+read-back. A successful ioctl confirms host-side request completion,
+not that the camera applied the feature. Keep the controls separate and
+preserve this evidence distinction.
 
 ### 4.7 Presets
 
@@ -167,7 +181,7 @@ operation on hardware.
 -   Normal: 78°
 -   Narrow: 65°
 
-**Compatibility limitation:** FOV changes do not work with certain AI tracking modes. The specific incompatible modes have not yet been identified, so do not imply that FOV is available in every tracking mode. If a change is ignored, switch tracking off or to another mode and retry. The Narrow status-byte read-back mapping is still unverified; visual operation is confirmed.
+**Compatibility limitation:** FOV changes do not work with certain AI tracking modes. The specific incompatible modes have not yet been identified, so do not imply that FOV is available in every tracking mode. If a change is ignored, switch tracking off or to another mode and retry. The user has visually confirmed Wide, Normal, and Narrow. The Narrow status-byte read-back mapping remains unverified; visual operation is confirmed.
 
 ### 4.9 Exposure, focus, white balance and image settings
 
