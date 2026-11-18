@@ -6,6 +6,15 @@ use std::path::PathBuf;
 const CONFIG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VideoModeConfig {
+    pub width: u32,
+    pub height: u32,
+    pub pixel_format: String,
+    /// Frame rate multiplied by 1000 to preserve fractional rates.
+    pub frame_rate_milli: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CameraPreset {
     pub name: String,
     /// Namespaced integer settings: v4l2:<control>, obsbot:<setting>.
@@ -38,6 +47,8 @@ pub struct AppConfig {
     pub compact_controls: Vec<String>,
     /// User presets. The UI and persistence layer enforce a maximum of ten.
     pub presets: Vec<CameraPreset>,
+    /// Last selected capture mode. It is remembered but never forced on connect.
+    pub video_mode: Option<VideoModeConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +93,7 @@ impl Default for AppConfig {
                 "obsbot:led_brightness".into(),
             ],
             presets: Vec::new(),
+            video_mode: None,
         }
     }
 }
@@ -178,6 +190,7 @@ mod tests {
         assert_eq!(config.theme, "system");
         assert!(!config.compact_mode);
         assert!(config.presets.is_empty());
+        assert!(config.video_mode.is_none());
         assert_eq!(config.compact_controls.first().map(String::as_str), Some("v4l2:zoom_absolute"));
     }
 
@@ -205,6 +218,9 @@ mod tests {
         config.service.auto_sleep_timeout_minutes = 25;
         config.compact_mode = true;
         config.compact_controls = vec!["v4l2:zoom_absolute".into(), "obsbot:focus_mode".into()];
+        config.video_mode = Some(VideoModeConfig {
+            width: 1920, height: 1080, pixel_format: "MJPG".into(), frame_rate_milli: 30000,
+        });
         config.presets.push(CameraPreset {
             name: "Studio".into(),
             settings: BTreeMap::from([
@@ -227,6 +243,7 @@ mod tests {
         assert_eq!(decoded.service.auto_sleep_timeout_minutes, 25);
         assert!(decoded.compact_mode);
         assert_eq!(decoded.compact_controls.len(), 2);
+        assert_eq!(decoded.video_mode.as_ref().map(|mode| mode.pixel_format.as_str()), Some("MJPG"));
         assert_eq!(decoded.presets.len(), 1);
         assert_eq!(decoded.presets[0].settings.get("obsbot:led_brightness"), Some(&2));
     }
