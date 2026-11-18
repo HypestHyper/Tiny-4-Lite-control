@@ -11,7 +11,12 @@ fn refresh(combo: &gtk::ComboBoxText) {
     }
 }
 
-pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
+pub(crate) fn append(
+    container: &gtk::Box,
+    device: &str,
+    window: &gtk::ApplicationWindow,
+    status: &gtk::Label,
+) {
     let frame = gtk::Frame::new(Some("Camera presets"));
     crate::ui::layout::mark_compact_item(frame.upcast_ref(), "camera:presets");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -99,6 +104,8 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
     let device_apply = device.to_string();
     let combo_apply = combo.clone();
+    let container_apply = container.clone();
+    let window_apply = window.clone();
     let status_apply = status.clone();
     apply.connect_clicked(move |_| {
         let Some(index) = combo_apply.active_id().and_then(|id| id.parse::<usize>().ok()) else {
@@ -110,8 +117,12 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
             status_apply.set_text("The selected preset no longer exists. Refresh the camera controls.");
             return;
         };
-        status_apply.set_text(&presets::apply(&device_apply, preset)
-            .unwrap_or_else(|error| format!("Preset applied with errors: {error}")));
+        let message = presets::apply(&device_apply, preset)
+            .unwrap_or_else(|error| format!("Preset applied with errors: {error}"));
+        crate::ui::controls::populate_controls(
+            &device_apply, &container_apply, &window_apply, &status_apply,
+        );
+        status_apply.set_text(&message);
     });
 
     let combo_delete = combo.clone();
