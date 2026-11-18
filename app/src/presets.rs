@@ -176,7 +176,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             pixel_format: fourcc_from_i64(*format)?,
         }))();
         match mode {
-            Some(mode) => match video::set_mode(device, &mode) {
+            Some(mode) => {
+                stop_preview();
+                match video::set_mode(device, &mode) {
                 Ok(()) => {
                     restart_preview(device, Some(mode));
                     applied += 1;
@@ -186,7 +188,11 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                         frame_rate_milli: mode.frame_rate_milli,
                     }));
                 }
-                Err(error) => errors.push(format!("video mode: {error}")),
+                    Err(error) => {
+                        errors.push(format!("video mode: {error}"));
+                        restart_preview(device, video::current_mode(device));
+                    }
+                }
             },
             None => errors.push("video mode: invalid preset capture settings".into()),
         }
