@@ -293,6 +293,14 @@ Next work: test host-initiated selector 0x02 GET_CUR polling during idle, manual
 
 Use the capture workflow and template linked from the [tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing). Important: that generic guide is HID-focused. Tiny 2 Lite controls are V4L2/UVC XU; reuse its evidence discipline, not HID-specific assumptions.
 
+## Pop filter protocol investigation (not implemented)
+
+A dedicated evidence record now lives at [reference/09-pop-filter-protocol-investigation.md](reference/09-pop-filter-protocol-investigation.md). It contains all three controlled captures, the nine 60-byte SET_CUR payloads, action-window timestamps, frame numbers, the capture procedure, exact TShark commands, and the next experiment.
+
+Current findings: Pop filter changes use Extension Unit 2 / selector `0x02`, 60-byte SET_CUR payloads with signature `aa 25`. Across three On → Off → On captures, byte 17 correlates with On=`01` / Off=`00`, and bytes 14–15 correlate with On=`ef 4f` / Off=`be 8f`. Byte 2 increments across adjacent writes; bytes 6–7 repeat for the same byte-2 value (`0d:e9 6f`, `0e:19 60`, `0f:48 a5`, `10:79 00`). Their generation rule is unknown. Bytes 20–59 vary between captures, including nonzero capture-specific data and an all-zero tail in capture 3. Their semantics are unknown.
+
+GET_CUR has not yielded reliable Pop filter read-back. The complete 60-byte command cannot yet be generated safely. **Do not implement or send a reconstructed Pop filter write** until the sequence fields and variable tail are understood and the complete command is validated. The next planned experiment is ten alternating toggles in one uninterrupted OBSBOT Center/camera session, each in its own Begin action / End action window. The user cannot add a checkpoint simultaneously with changing the setting; the documented action-window workflow is mandatory.
+
 ## 6. Related project documentation
 
 - [Firmware identity and FOV/zoom evidence](reference/08-firmware-identification-and-fov.md)
