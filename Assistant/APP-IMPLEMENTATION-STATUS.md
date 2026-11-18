@@ -3,7 +3,7 @@
 **Branch:** `test-app-v0.1`  
 **Application:** `app/`  
 **Target:** OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`  
-**Stage:** Hardware-control test bench with an initial GTK family-design implementation. UI conformance is partial and remains subject to live desktop validation.
+**Stage:** Feature/protocol test bench. Core device discovery, generic V4L2 controls, selected vendor XU commands, diagnostics, and USB capture are implemented. The current GTK UI is temporary; further UI redesign is deferred.
 
 This file records what is currently implemented in the repository and the protocol findings used by it. It is not a claim that every command has been independently validated on every firmware version.
 
@@ -39,7 +39,7 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 - Reads and writes controls through `v4l2-ctl --get-ctrl` and `--set-ctrl`.
 - Supports the camera-reported boolean, menu, and numeric controls.
 - Handles continuous autofocus and manual focus availability. The 2026-11-17 Windows trace confirmed standard UVC Camera Terminal Focus Auto selector `0x08` (one-byte Boolean) and Focus Absolute selector `0x06` (two-byte little-endian value). It captured 14 Focus Absolute writes (observed values 0–100) after autofocus was disabled. These are observed values, not a validated min/max.
-- The GTK controls now put the Autofocus switch first. Global / Face options are shown only while autofocus is enabled, but are deliberately disabled: the previous XU `0x3602` payload interpretation was not sufficiently correlated with the UI checkpoints and the user reports that the options do not appear to work. Do not re-enable writes until a controlled capture establishes the mapping.
+- The GTK controls put the Autofocus switch first. When autofocus is enabled, Global / Face options are shown but remain disabled because the earlier XU `0x3602` interpretation was not reliably correlated with the UI checkpoints and the user reports that the options did not work. When autofocus is disabled, the Global / Face options are hidden and the manual Focus Absolute slider is shown. The standard UVC autofocus toggle and manual-focus path are confirmed; Global / Face mode writes remain unimplemented pending a controlled protocol capture.
 - The same trace captured standard UVC Zoom Absolute selector `0x0B` writes. The XU selector `0x02` float record strongly correlates with the same manual-zoom changes. Domatix's Lite-specific protocol reference identifies manual zoom with the standard `zoom_absolute` control and distinguishes gesture zoom, which bypasses it. The XU record remains telemetry/secondary representation until its exact role is confirmed; the image-processing path is not established.
 - Current GTK implementation exposes the device-reported `zoom_absolute` as a generic numeric slider and explicitly suppresses `zoom_continuous`. There is no zoom press/release handler or stop-on-release command in the app; the existing release-to-neutral code applies only to the pan/tilt joystick. Therefore the reported zoom continuing after release cannot be fixed safely by changing a callback that does not exist. First inspect the selected node's exact `zoom_absolute` and `zoom_continuous` descriptors (type, min/max, step, flags) and correlate them with a controlled press/hold/release trace. If the driver exposes a valid continuous control, implement a press/release interaction that sends the documented neutral value on release; otherwise keep absolute zoom as a position slider.
 - Uses the device-reported ranges, steps, menu entries, and defaults rather than assuming one fixed set of controls.
@@ -62,7 +62,7 @@ Implemented XU operations:
 - Read the tracking-speed status byte at `0x24`.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
-- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture shows the frame sequence advancing across commands (`0x000f`, `0x0010`, `0x0011`, `0x0012`), including the final, separate Dynamic Zoom disable command. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The counter starts at zero for each app process; the capture establishes incrementing behavior, not a required initial value. The fourth inspected packet uses group `0a 04 44 33` (Dynamic Zoom), not the direction group `0a 04 c4 33`, and is not used as direction-state evidence.
+- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture checkpoints show Direction Flip OFF at baseline, ON at 17.37s, OFF at 35.15s, then Dynamic Zoom OFF at 54.78s. The corresponding SET_CUR packets are frames 13247, 72265, 170871, and 179033. The first three use direction group `0a 04 c4 33` and alternate payloads `27 ff 01 00`, `e6 3f 00 00`, `27 ff 01 00`. The fourth uses Dynamic Zoom group `0a 04 44 33` and is the separate Dynamic Zoom disable command, not a Direction Flip transition. The sequence values progress `0x000f`, `0x0010`, `0x0011`, `0x0012` across these commands. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The observed initial value `0x000f` is capture context; the required sequence seed on a fresh camera/app session is not established. The implementation currently initializes its process-local counter to zero and increments it for each framed XU write.
 
 Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Preset mutation is not implemented.
 
@@ -127,7 +127,7 @@ Enable/disable frames are built with the current frame builder. The status block
 ### Frame construction and tests
 
 - The current frame builder constructs a 60-byte XU frame, including sequence, header, payload length, and CRC-16.
-- Unit tests in `app/src/main.rs` compare tracking-speed and gesture frame prefixes against the Lite captures recorded in the research.
+- Unit tests in `app/src/main.rs` cover the tracking-speed frame builder, generic gesture frame construction, Dynamic Zoom Direction payload selection, rolling sequence increment behavior, zoom-ratio bounds/frame construction, sleep-frame construction, LED payload mapping, and AI-mode payload shape. The Dynamic Zoom Direction test validates the payload mapping and counter progression; it does not reproduce the entire captured transaction stream.
 - A separate unit test checks the AI-mode setter payload.
 - These tests validate local byte construction against stored examples. They do not prove live-device acceptance, firmware compatibility, or command semantics beyond the evidence behind those examples.
 
@@ -145,12 +145,35 @@ Enable/disable frames are built with the current frame builder. The status block
 
 - No automatic byte-diff view or semantic inference for unknown XU records; capture reports now include a transfer summary and pairing aids, while preserving raw decoded rows.
 - No automatic firmware-version identification. USB `bcdDevice` and XU model identity are displayed, but neither is treated as the installed OBSBOT firmware revision.
-- No reliable per-gesture state read-back. Dynamic Zoom direction ON/OFF wire payloads are mapped from the 2026-11-18 capture, but the user-visible direction reversal still needs hardware confirmation.
+- No reliable per-gesture state read-back. Dynamic Zoom Direction's inverted ON/OFF wire payloads are mapped from the 2026-11-18 capture, but the corrected implementation still needs live hardware confirmation that the direction visibly reverses.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
 - GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging, not live hardware validation of the new diagnostics reads.
 
 ## 5. Evidence status and next investigation
+
+### 2026-11-18 Tiny 2 Lite Dynamic Zoom Direction capture
+
+The user supplied a 54.78-second controlled capture with timestamped checkpoints. The relevant command requests were extracted from the original PCAPNG using TShark `-V`, which exposed the 60-byte `Data Fragment` field even though `usb.capdata` was empty for these usbmon submission records.
+
+| Frame | Relative time | Checkpoint interpretation | Function group | 60-byte payload prefix |
+|---:|---:|---|---|---|
+| 13247 | 2.964235s | Baseline: Direction Flip OFF | `0a 04 c4 33 01 00` | `aa250f000c00da810a04c433010027ff0100` |
+| 72265 | 16.141447s | Direction Flip ON | `0a 04 c4 33 01 00` | `aa2510000c00eb240a04c4330100e63f0000` |
+| 170871 | 38.165125s | Direction Flip OFF | `0a 04 c4 33 01 00` | `aa2511000c00bae10a04c433010027ff0100` |
+| 179033 | 40.003863s | Dynamic Zoom OFF | `0a 04 44 33 01 00` | `aa2512000c002b2e0a0444330100e63f0000` |
+
+The fourth request is not a Direction Flip transition. The checkpoint at 54.78s records the final state marker after the Dynamic Zoom-off action; no additional SET_CUR packet was among the four extracted requests. The observed sequence values increment by one across the three Direction Flip writes and the separate Dynamic Zoom disable write. The payload values establish the Direction Flip inversion relative to the other gesture toggles. They do not establish the sequence counter's required starting value after reconnect/restart, nor do they independently prove that the corrected app implementation reverses the visible gesture direction.
+
+For this capture, the useful extraction was:
+
+```sh
+tshark -r "$HOME/.local/share/tiny4lite-control/captures/obsbot-capture-1794965274-629799401.pcapng" \\
+  -Y 'frame.number == 13247 || frame.number == 13252 || frame.number == 72265 || frame.number == 72268 || frame.number == 170871 || frame.number == 170872 || frame.number == 179033 || frame.number == 179058' \\
+  -V
+```
+
+This is the source evidence for the current Direction Flip payload mapping and rolling-sequence investigation. The raw capture remains on the user's machine; the repository records the relevant extracted bytes and interpretation.
 
 The 2026-11-17 Windows OBSBOT Center capture has now been parsed from the original PCAPNG. It contains 3,674,198 frames (about 868 MiB), 1,236 camera control submissions and 1,236 completions. See [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) for exact packet evidence.
 
