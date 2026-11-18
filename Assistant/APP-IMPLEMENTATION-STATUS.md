@@ -43,7 +43,7 @@ The application is a Rust + GTK4 test bench. Current source of truth:
   System/Light/Dark value is migrated without deleting the old file.
 - Successful setting changes are persisted: supported V4L2 control
   values, LED brightness, HDR state, AI tracking mode, tracking speed,
-  Global/Face focus selection, gesture toggles, gesture zoom ratio, theme, and
+  Global/Face focus and Auto Exposure priority selections, gesture toggles, gesture zoom ratio, theme, and
   joystick sensitivity.
 - Transient commands are deliberately excluded: pan/tilt position and
   speed movement, joystick motion, and Sleep/Wake are actions, not
