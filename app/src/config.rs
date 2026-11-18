@@ -6,6 +6,14 @@ use std::path::PathBuf;
 const CONFIG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CameraPreset {
+    pub name: String,
+    /// Namespaced integer settings: v4l2:<control>, obsbot:<setting>.
+    /// Movement commands are deliberately excluded from presets.
+    pub settings: BTreeMap<String, i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub version: u32,
@@ -24,6 +32,12 @@ pub struct AppConfig {
     // Reserved for a future explicit restore-on-connect feature. False is
     // deliberately the default: loading config must never move the camera.
     pub apply_on_connect: bool,
+    /// Compact mode is a user-selected quick-control surface.
+    pub compact_mode: bool,
+    /// Stable setting identifiers shown while compact mode is active.
+    pub compact_controls: Vec<String>,
+    /// User presets. The UI and persistence layer enforce a maximum of ten.
+    pub presets: Vec<CameraPreset>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,6 +71,17 @@ impl Default for AppConfig {
             joystick_sensitivity_percent: 100,
             service: ServiceConfig::default(),
             apply_on_connect: false,
+            compact_mode: false,
+            compact_controls: vec![
+                "v4l2:zoom_absolute".into(),
+                "v4l2:brightness".into(),
+                "v4l2:contrast".into(),
+                "v4l2:focus_automatic_continuous".into(),
+                "obsbot:focus_mode".into(),
+                "obsbot:ai_tracking_mode".into(),
+                "obsbot:led_brightness".into(),
+            ],
+            presets: Vec::new(),
         }
     }
 }
@@ -79,6 +104,9 @@ pub fn load() -> Result<AppConfig, String> {
                 return Err(format!("{} uses a newer config version ({}) than this app supports ({CONFIG_VERSION}).", path.display(), config.version));
             }
             config.version = CONFIG_VERSION;
+            if config.presets.len() > 10 {
+                return Err(format!("{} contains more than 10 camera presets; edit the file before opening it.", path.display()));
+            }
             config.joystick_sensitivity_percent = config.joystick_sensitivity_percent.clamp(10, 200);
             config.service.auto_sleep_timeout_minutes = config.service.auto_sleep_timeout_minutes.clamp(1, 1440);
             if config.gesture_zoom_ratio.is_some_and(|ratio| !ratio.is_finite() || !(1.0..=4.0).contains(&ratio)) {
@@ -109,6 +137,19 @@ pub fn load() -> Result<AppConfig, String> {
 }
 
 pub fn save(config: &AppConfig) -> Result<(), String> {
+    if config.presets.len() > 10 {
+        return Err("A maximum of 10 camera presets is supported.".into());
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for preset in &config.presets {
+        let name = preset.name.trim();
+        if name.is_empty() {
+            return Err("Camera preset names cannot be empty.".into());
+        }
+        if !names.insert(name.to_lowercase()) {
+            return Err(format!("Camera preset name '{name}' is already in use."));
+        }
+    }
     let path = config_path();
     let parent = path.parent().ok_or_else(|| "Config path has no parent directory.".to_string())?;
     fs::create_dir_all(parent)
@@ -135,6 +176,9 @@ mod tests {
         assert!(config.v4l2_controls.is_empty());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
+        assert!(!config.compact_mode);
+        assert!(config.presets.is_empty());
+        assert_eq!(config.compact_controls.first().map(String::as_str), Some("v4l2:zoom_absolute"));
     }
 
     #[test]
@@ -159,6 +203,15 @@ mod tests {
         config.joystick_sensitivity_percent = 135;
         config.service.auto_sleep_enabled = true;
         config.service.auto_sleep_timeout_minutes = 25;
+        config.compact_mode = true;
+        config.compact_controls = vec!["v4l2:zoom_absolute".into(), "obsbot:focus_mode".into()];
+        config.presets.push(CameraPreset {
+            name: "Studio".into(),
+            settings: BTreeMap::from([
+                ("v4l2:brightness".into(), 55),
+                ("obsbot:led_brightness".into(), 2),
+            ]),
+        });
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: AppConfig = toml::from_str(&encoded).unwrap();
@@ -172,5 +225,9 @@ mod tests {
         assert_eq!(decoded.joystick_sensitivity_percent, 135);
         assert!(decoded.service.auto_sleep_enabled);
         assert_eq!(decoded.service.auto_sleep_timeout_minutes, 25);
+        assert!(decoded.compact_mode);
+        assert_eq!(decoded.compact_controls.len(), 2);
+        assert_eq!(decoded.presets.len(), 1);
+        assert_eq!(decoded.presets[0].settings.get("obsbot:led_brightness"), Some(&2));
     }
 }
