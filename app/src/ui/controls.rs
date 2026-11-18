@@ -76,6 +76,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     let has_tilt = controls.iter().any(|c| c.name == "tilt_absolute" && !c.disabled);
     if has_pan || has_tilt {
         let frame = gtk::Frame::new(Some("Gimbal movement"));
+        ui::layout::mark_compact_item(frame.upcast_ref(), "camera:gimbal-movement");
         let movement = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     movement.add_css_class("adaptive-row");
         if has_pan {
