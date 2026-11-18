@@ -162,7 +162,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let format_restore = format.clone();
     let size_restore = size.clone();
     let rate_restore = rate.clone();
-    let apply = move || {
+    let apply = Rc::new(move || {
         if updating_apply.get() { return; }
         let Some(selected) = selected_mode(
             &modes_apply,
@@ -202,7 +202,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
                 }
             }
         }
-    };
+    });
 
     let apply_format = apply.clone();
     let updating_format = updating.clone();
