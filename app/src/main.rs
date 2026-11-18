@@ -483,6 +483,150 @@ fn xu_status(device: &str) -> Result<[u8; 60], String> {
     Ok(data)
 }
 
+const XU_AUDIO_NOISE_REDUCTION_OFFSET: usize = 8;
+const XU_AUDIO_AUTO_GAIN_OFFSET: usize = 25;
+
+fn audio_noise_reduction_label(level: u8) -> &'static str {
+    match level {
+        0 => "Off",
+        1 => "Weak",
+        2 => "Medium",
+        3 => "Strong",
+        _ => "Unknown",
+    }
+}
+
+fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), String> {
+    if offset >= 60 {
+        return Err(format!("OBSBOT status byte offset {offset} is outside the 60-byte block."));
+    }
+    // GET_CUR returns the current shared configuration block. Preserve every
+    // unrelated field and change only the byte established by controlled capture.
+    let mut data = xu_status(device)?;
+    data[offset] = value;
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+fn set_auto_gain(device: &str, enabled: bool) -> Result<(), String> {
+    set_xu_status_byte(device, XU_AUDIO_AUTO_GAIN_OFFSET, u8::from(enabled))?;
+    update_config(|config| config.audio_auto_gain = Some(enabled));
+    Ok(())
+}
+
+fn set_noise_reduction(device: &str, level: u8) -> Result<(), String> {
+    if level > 3 {
+        return Err("Noise reduction must be Off, Weak, Medium, or Strong.".into());
+    }
+    set_xu_status_byte(device, XU_AUDIO_NOISE_REDUCTION_OFFSET, level)?;
+    update_config(|config| config.audio_noise_reduction = Some(level));
+    Ok(())
+}
+
+fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Microphone processing"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:audio-processing");
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let auto_gain_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    auto_gain_row.add_css_class("adaptive-row");
+    let auto_gain_label = gtk::Label::new(Some("Auto gain"));
+    auto_gain_label.set_xalign(0.0);
+    auto_gain_label.set_hexpand(true);
+    let auto_gain = gtk::Switch::new();
+    auto_gain.set_valign(gtk::Align::Center);
+    let camera_auto_gain = xu_status(device).ok()
+        .map(|data| data[XU_AUDIO_AUTO_GAIN_OFFSET])
+        .filter(|value| *value <= 1)
+        .map(|value| value != 0);
+    let initial_auto_gain = camera_auto_gain.or(current_config().audio_auto_gain);
+    if let Some(enabled) = initial_auto_gain {
+        auto_gain.set_active(enabled);
+    } else {
+        auto_gain.set_sensitive(false);
+        auto_gain.set_tooltip_text(Some("Auto gain state could not be read from the camera."));
+    }
+    let auto_gain_device = device.to_string();
+    let auto_gain_status = status.clone();
+    auto_gain.connect_state_set(move |switch, enabled| {
+        match set_auto_gain(&auto_gain_device, enabled) {
+            Ok(()) => auto_gain_status.set_text(if enabled {
+                "Microphone auto gain enabled."
+            } else {
+                "Microphone auto gain disabled."
+            }),
+            Err(error) => {
+                switch.set_active(!enabled);
+                auto_gain_status.set_text(&format!("Could not change auto gain: {error}"));
+            }
+        }
+        gtk::glib::Propagation::Proceed
+    });
+    auto_gain_row.append(&auto_gain_label);
+    auto_gain_row.append(&auto_gain);
+    layout.append(&auto_gain_row);
+
+    let noise_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    noise_row.add_css_class("adaptive-row");
+    let noise_label = gtk::Label::new(Some("Noise reduction"));
+    noise_label.set_xalign(0.0);
+    noise_label.set_hexpand(true);
+    let noise_level = gtk::ComboBoxText::new();
+    for (value, label) in [(0, "Off"), (1, "Weak"), (2, "Medium"), (3, "Strong")] {
+        noise_level.append(Some(&value.to_string()), label);
+    }
+    let camera_noise_level = xu_status(device).ok()
+        .map(|data| data[XU_AUDIO_NOISE_REDUCTION_OFFSET])
+        .filter(|value| *value <= 3);
+    let initial_noise_level = camera_noise_level.or(current_config().audio_noise_reduction);
+    if let Some(level) = initial_noise_level {
+        noise_level.set_active_id(Some(&level.to_string()));
+    } else {
+        noise_level.set_sensitive(false);
+        noise_level.set_tooltip_text(Some("Noise reduction state could not be read from the camera."));
+    }
+    let noise_device = device.to_string();
+    let noise_status = status.clone();
+    let last_level = Rc::new(Cell::new(initial_noise_level.unwrap_or(0)));
+    let changing = Rc::new(Cell::new(false));
+    let last_level_change = last_level.clone();
+    let changing_state = changing.clone();
+    let noise_restore = noise_level.clone();
+    noise_level.connect_changed(move |selection| {
+        if changing_state.get() { return; }
+        let Some(id) = selection.active_id() else { return; };
+        let Ok(level) = id.parse::<u8>() else { return; };
+        match set_noise_reduction(&noise_device, level) {
+            Ok(()) => {
+                last_level_change.set(level);
+                noise_status.set_text(&format!("Microphone noise reduction: {}.", audio_noise_reduction_label(level)));
+            }
+            Err(error) => {
+                changing_state.set(true);
+                noise_restore.set_active_id(Some(&last_level_change.get().to_string()));
+                changing_state.set(false);
+                noise_status.set_text(&format!("Could not change noise reduction: {error}"));
+            }
+        }
+    });
+    noise_row.append(&noise_label);
+    noise_row.append(&noise_level);
+    layout.append(&noise_row);
+
+    let note = gtk::Label::new(Some(
+        "These settings use the camera's 60-byte Extension Unit configuration block. Each change reads the current block and modifies only its own verified byte, preserving all other settings."
+    ));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn crc16_usb(bytes: &[u8]) -> u16 {
     let mut crc = 0xffffu16;
     for byte in bytes {
@@ -787,6 +931,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     led_layout.append(&led_note);
     led_frame.set_child(Some(&led_layout));
     layout.append(&led_frame);
+
+    add_audio_controls(&layout, device, status);
 
     let note = gtk::Label::new(Some("Image controls are discovered from V4L2 metadata; camera-reported ranges, steps, menus and inactive flags are authoritative."));
     note.set_wrap(true);
