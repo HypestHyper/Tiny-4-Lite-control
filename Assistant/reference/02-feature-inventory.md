@@ -215,7 +215,7 @@ has undefined effect in the V4L2 API.
 - These payloads replace the earlier unsupported `i32le(0/1)` assumption. The assignment is inferred from the paired transitions around the 15.85s and 25.17s checkpoints; later checkpoints are not cleanly correlated. Hardware confirmation remains pending.
 - Transport: framed V3 command on XU unit 2, selector `0x02`.
 - This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a different selector `0x06` tag `0x03` setting and status byte `0x07`.
-- The app now enables the Global / Face radio-style controls while autofocus is on and sends the corresponding command. It tracks the selection locally; camera-side `CAM_GET_FACE_FOCUS` read-back is not implemented yet. Validate the visible focus behavior on the Tiny 2 Lite before marking this path hardware-confirmed.
+- The app enables Global / Face controls while autofocus is on and sends the captured Tiny 2 Lite payloads above. It tracks selection locally; no reliable camera-side read-back is implemented. Validate visible focus behavior on the Tiny 2 Lite before marking this path hardware-confirmed.
 
 
 Potential UI: - Auto/manual exposure. - Exposure time. - Autofocus
