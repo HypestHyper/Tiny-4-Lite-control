@@ -93,6 +93,7 @@ impl Default for AppConfig {
                 "v4l2:contrast".into(),
                 "v4l2:focus_automatic_continuous".into(),
                 "obsbot:focus_mode".into(),
+                "obsbot:auto_exposure_mode".into(),
                 "obsbot:ai_tracking_mode".into(),
                 "obsbot:led_brightness".into(),
             ],
@@ -191,6 +192,7 @@ mod tests {
         assert_eq!(config.service.auto_sleep_timeout_minutes, 10);
         assert!(config.v4l2_controls.is_empty());
         assert!(config.hdr_enabled.is_none());
+        assert!(config.auto_exposure_mode.is_none());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
         assert!(!config.compact_mode);
