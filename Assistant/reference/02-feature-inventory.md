@@ -205,6 +205,15 @@ Query the selected V4L2 node's control metadata at runtime; do not
 hardcode a range. Manual focus while continuous autofocus is enabled
 has undefined effect in the V4L2 API.
 
+**Global / Face autofocus priority (separate vendor command):**
+
+- Global: `CAM_SET_FACE_FOCUS` (`0x3602`, receiver `0x02`) with a four-byte signed little-endian integer `0`.
+- Face: the same command with `i32le(1)`.
+- Transport: framed V3 command on XU unit 2, selector `0x02`.
+- This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a different selector `0x06` tag `0x03` setting and status byte `0x07`.
+- The app now enables the Global / Face radio-style controls while autofocus is on and sends the corresponding command. It tracks the selection locally; camera-side `CAM_GET_FACE_FOCUS` read-back is not implemented yet. Validate the visible focus behavior on the Tiny 2 Lite before marking this path hardware-confirmed.
+
+
 Potential UI: - Auto/manual exposure. - Exposure time. - Autofocus
 toggle. - Manual focus. - Auto/manual white balance. - White-balance
 temperature. - Brightness, contrast, saturation, sharpness, gain, hue,
