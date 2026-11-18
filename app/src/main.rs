@@ -2,7 +2,7 @@ mod capture;
 mod design;
 
 use gtk::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::fs;
@@ -470,10 +470,17 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     container.append(&frame);
 }
 
-// Global/Face focus-mode payloads are not mapped reliably yet. Keep the
-// options visible while autofocus is enabled, but disable them rather than
-// sending a guessed command that appears to succeed without changing focus.
-fn add_focus_mode_control(container: &gtk::Box) {
+// CAM_SET_FACE_FOCUS (wire command 0x3602, Camera receiver 0x02)
+// accepts a four-byte signed little-endian Boolean. Global = 0, Face = 1.
+fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
+    let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
+    let mut command = [0u8; 6];
+    let enabled: i32 = if face_priority { 1 } else { 0 };
+    command[2..6].copy_from_slice(&enabled.to_le_bytes());
+    xu_send_frame(device, group, command)
+}
+
+fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Autofocus mode"));
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     layout.set_margin_top(8);
@@ -486,13 +493,48 @@ fn add_focus_mode_control(container: &gtk::Box) {
     let face = gtk::CheckButton::with_label("Face Focus");
     face.set_group(Some(&global));
     global.set_active(true);
-    global.set_sensitive(false);
-    face.set_sensitive(false);
     row.append(&global);
     row.append(&face);
     layout.append(&row);
 
-    let note = gtk::Label::new(Some("Global / Face protocol mapping is not confirmed yet. These options are temporarily disabled; autofocus itself remains controlled above."));
+    // The camera has a dedicated read command, but this app does not yet
+    // decode it. Keep the current selection for this UI session and report
+    // command submission without claiming device-side read-back.
+    let current_face = Rc::new(Cell::new(false));
+    let updating = Rc::new(Cell::new(false));
+    for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
+        let dev = device.to_string();
+        let status_label = status.clone();
+        let current = current_face.clone();
+        let updating_state = updating.clone();
+        let global_restore = global.clone();
+        let face_restore = face.clone();
+        button.connect_toggled(move |selected| {
+            if updating_state.get() || !selected.is_active() {
+                return;
+            }
+            let previous = current.get();
+            match set_face_focus(&dev, face_priority) {
+                Ok(()) => {
+                    current.set(face_priority);
+                    status_label.set_text(if face_priority {
+                        "Face-priority autofocus command sent."
+                    } else {
+                        "Global autofocus command sent."
+                    });
+                }
+                Err(error) => {
+                    updating_state.set(true);
+                    global_restore.set_active(!previous);
+                    face_restore.set_active(previous);
+                    updating_state.set(false);
+                    status_label.set_text(&format!("Could not change autofocus mode: {error}"));
+                }
+            }
+        });
+    }
+
+    let note = gtk::Label::new(Some("Global uses standard autofocus priority. Face sends the camera's face-priority autofocus command. The camera does not expose this setting in the status block, so selection is tracked locally."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -915,7 +957,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         add_autofocus_control(container, device, window, status, autofocus_enabled);
     }
     if autofocus_enabled {
-        add_focus_mode_control(container);
+        add_focus_mode_control(container, device, status);
     }
 
     for control in controls {
@@ -1460,6 +1502,22 @@ mod xu_protocol_tests {
         assert_eq!(next_xu_sequence(&sequence), 0x0010);
         assert_eq!(next_xu_sequence(&sequence), 0x0011);
         assert_eq!(next_xu_sequence(&sequence), 0x0012);
+    }
+
+    #[test]
+    fn face_focus_frame_uses_camera_command_and_i32_payload() {
+        let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
+        let mut face_command = [0u8; 6];
+        face_command[2..6].copy_from_slice(&1i32.to_le_bytes());
+        let face = obsbot_frame(0x0040, group, face_command);
+        assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
+        assert_eq!(&face[16..20], hex("01000000").as_slice());
+
+        let mut global_command = [0u8; 6];
+        global_command[2..6].copy_from_slice(&0i32.to_le_bytes());
+        let global = obsbot_frame(0x0041, group, global_command);
+        assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
+        assert_eq!(&global[16..20], hex("00000000").as_slice());
     }
 
     #[test]
