@@ -36,7 +36,7 @@ fn fourcc_to_i64(value: &str) -> Option<i64> {
 
 fn fourcc_from_i64(value: i64) -> Option<String> {
     let bytes = u32::try_from(value).ok()?.to_le_bytes();
-    if !bytes.iter().all(u8::is_ascii_graphic) { return None; }
+    if !bytes.iter().all(|byte| byte.is_ascii_graphic()) { return None; }
     Some(String::from_utf8(bytes.to_vec()).ok()?)
 }
 
