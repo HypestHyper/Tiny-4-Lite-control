@@ -141,6 +141,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         .is_some_and(|c| c.value == 0);
     if auto_exposure_enabled {
         add_auto_exposure_mode_control(container, device, status);
+        add_exposure_compensation_control(container, device, status);
     }
 
     let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
