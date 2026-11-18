@@ -1495,7 +1495,7 @@ fn build_ui(app: &gtk::Application) {
     preview_picture.set_keep_aspect_ratio(true);
     preview_picture.set_hexpand(true);
     preview_picture.set_vexpand(true);
-    preview_picture.set_size_request(320, 160);
+    preview_picture.set_size_request(240, 135);
     let preview_placeholder = gtk::Label::new(Some("Connect OBSBOT Tiny 2 Lite to start the live preview."));
     preview_placeholder.set_wrap(true);
     preview_placeholder.set_halign(gtk::Align::Center);
