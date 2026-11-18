@@ -22,14 +22,18 @@ not the final UI. UI redesign is deferred.
 - Autofocus uses the standard UVC Focus Auto control. When autofocus is
   off, the manual Focus Absolute slider is shown. While autofocus is on,
   Global / Face options send the framed XU `CAM_SET_FACE_FOCUS`
-  command (`0x3602`, receiver `0x02`) using captured Tiny 2 Lite
-  payloads: Global `be 07 00 00`, Face `bf fb 01 00`. Their assignment
-  is inferred from imperfectly correlated capture checkpoints. The user
-  tested both options and reports that neither currently produces the
-  expected focus behavior. Treat Global/Face as not working/unverified;
-  the UI confirms only command submission, not camera behavior. Selection
-  is tracked locally because camera-side read-back is unavailable. This
-  is distinct from face-priority auto-exposure.
+  command (`0x3602`, receiver `0x02`). The 2026-11-18 controlled Linux
+  capture correlates Global with `bf fb 01 00` and Face with
+  `be 07 00 00`; the earlier app mapping had these reversed. The grouped
+  selector now dispatches from the newly clicked active segment rather
+  than both buttons' toggle-state signals. The final Face-to-Global
+  transition in that capture emitted no focus SET_CUR, so this dispatch
+  correction still needs a fresh hardware test. Treat Global/Face as
+  not yet hardware-verified: successful USB transfer completion does not
+  prove camera behavior, and camera-side read-back is unavailable.
+  Selection is tracked locally as the last successfully submitted
+  command, not actual camera state. This is distinct from face-priority
+  auto-exposure.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
   (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
