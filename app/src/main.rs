@@ -19,12 +19,13 @@ thread_local! {
 }
 
 fn update_config_checked(update: impl FnOnce(&mut config::AppConfig)) -> Result<(), String> {
-    let snapshot = APP_CONFIG.with(|current| {
-        let mut value = current.borrow_mut();
-        update(&mut value);
-        value.clone()
-    });
-    config::save(&snapshot)
+    // Persist a candidate snapshot first. If disk I/O or validation fails,
+    // keep the in-memory config unchanged as well.
+    let mut snapshot = current_config();
+    update(&mut snapshot);
+    config::save(&snapshot)?;
+    APP_CONFIG.with(|current| *current.borrow_mut() = snapshot);
+    Ok(())
 }
 
 fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
