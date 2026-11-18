@@ -1253,6 +1253,7 @@ fn show_compact_settings(
         ("obsbot:dynamic_zoom", "Dynamic zoom gesture"),
         ("obsbot:dynamic_zoom_direction", "Dynamic zoom direction"),
         ("obsbot:gesture_zoom_ratio", "Gesture zoom ratio"),
+        ("camera:video_mode", "Video format, resolution and frame rate"),
         ("camera:pan_tilt_joystick", "Pan / tilt joystick"),
         ("camera:gimbal_movement", "Pan / tilt step controls"),
         ("camera:power", "Camera sleep / wake"),
