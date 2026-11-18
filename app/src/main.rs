@@ -972,6 +972,16 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
     blockers
 }
 
+fn v4l2_control_group(name: &str) -> &'static str {
+    match name {
+        "white_balance_automatic" | "red_balance" | "blue_balance" | "white_balance_temperature" => "White balance",
+        "auto_exposure" | "exposure_time_absolute" | "power_line_frequency" => "Exposure",
+        "focus_absolute" => "Focus",
+        "zoom_absolute" => "Zoom",
+        _ => "Image",
+    }
+}
+
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let scroll_position = ui::layout::capture_scroll_position(container.upcast_ref());
     clear_box(container);
@@ -1032,6 +1042,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         add_focus_mode_control(container, device, status);
     }
 
+    let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
     for control in controls.iter().cloned() {
         if control.name == "focus_automatic_continuous" { continue; }
         if control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
@@ -1132,7 +1143,19 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             row.append(&scale);
             row.append(&reset);
         }
-        container.append(&row);
+        let group_name = v4l2_control_group(&control.name);
+        let group = control_groups.entry(group_name).or_insert_with(|| {
+            let frame = gtk::Frame::new(Some(group_name));
+            let content = gtk::Box::new(gtk::Orientation::Vertical, 5);
+            content.set_margin_top(6);
+            content.set_margin_bottom(6);
+            content.set_margin_start(8);
+            content.set_margin_end(8);
+            frame.set_child(Some(&content));
+            container.append(&frame);
+            content
+        });
+        group.append(&row);
         if unavailable {
             let note = gtk::Label::new(Some(&format!("Unavailable: {}.", blockers.join("; "))));
             note.set_wrap(true);
@@ -1140,9 +1163,9 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             note.add_css_class("dim-label");
             note.set_margin_start(8);
             note.set_margin_bottom(4);
-            container.append(&note);
+            group.append(&note);
         }
-        container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
     ui::layout::restore_scroll_position(scroll_position);
