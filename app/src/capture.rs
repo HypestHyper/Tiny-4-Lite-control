@@ -14,6 +14,14 @@ struct Checkpoint {
     note: String,
 }
 
+struct ActionWindow {
+    start_elapsed: f64,
+    start_epoch: f64,
+    end_elapsed: f64,
+    end_epoch: f64,
+    note: String,
+}
+
 struct CaptureSession {
     child: Child,
     pcap_path: PathBuf,
@@ -23,6 +31,8 @@ struct CaptureSession {
     started_epoch: u64,
     test_name: String,
     checkpoints: Vec<Checkpoint>,
+    actions: Vec<ActionWindow>,
+    pending_action: Option<(f64, f64, String)>,
     writer: Option<JoinHandle<io::Result<()>>>,
     stderr_reader: Option<JoinHandle<String>>,
     stopped: bool,
@@ -84,6 +94,32 @@ impl CaptureSession {
         Ok(elapsed)
     }
 
+    fn begin_action(&mut self, note: String) -> Result<f64, String> {
+        if self.child.try_wait().map_err(|e| e.to_string())?.is_some() {
+            return Err("The capture process has stopped. Finish this session and inspect its error log.".into());
+        }
+        if self.pending_action.is_some() {
+            return Err("An action window is already open. End it before starting another.".into());
+        }
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let epoch = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_secs_f64();
+        self.pending_action = Some((elapsed, epoch, note));
+        Ok(elapsed)
+    }
+
+    fn end_action(&mut self) -> Result<(f64, f64), String> {
+        let (start_elapsed, start_epoch, note) = self.pending_action.take()
+            .ok_or_else(|| "No action window is open.".to_string())?;
+        let end_elapsed = self.started.elapsed().as_secs_f64();
+        let end_epoch = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_secs_f64();
+        self.actions.push(ActionWindow {
+            start_elapsed, start_epoch, end_elapsed, end_epoch, note,
+        });
+        Ok((end_elapsed, end_epoch))
+    }
+
     fn stop_process(&mut self) -> Result<String, String> {
         if self.child.try_wait().map_err(|e| e.to_string())?.is_none() {
             let pid = self.child.id();
@@ -117,6 +153,7 @@ impl CaptureSession {
                 "-e", "frame.number",
                 "-e", "usb.urb_id",
                 "-e", "frame.time_relative",
+                "-e", "frame.time_epoch",
                 "-e", "usb.urb_type",
                 "-e", "usb.urb_status",
                 "-e", "usb.endpoint_address",
@@ -146,6 +183,26 @@ impl CaptureSession {
         for (index, checkpoint) in self.checkpoints.iter().enumerate() {
             report.push_str(&format!("{:02}. +{:.6}s  {}\n",
                 index + 1, checkpoint.elapsed, checkpoint.note));
+        }
+
+        report.push_str("\nACTION WINDOWS\n--------------\n");
+        report.push_str("Each window brackets the time spent switching to OBSBOT Center and making one change. Match USB packets by frame.time_epoch (Unix time) between the start and end timestamps; frame.time_relative is also retained for convenience.\n");
+        if self.actions.is_empty() {
+            report.push_str("No completed action windows.\n");
+        } else {
+            for (index, action) in self.actions.iter().enumerate() {
+                report.push_str(&format!(
+                    "{:02}. {} | elapsed +{:.6}s to +{:.6}s | epoch {:.6} to {:.6}\n",
+                    index + 1, action.note, action.start_elapsed, action.end_elapsed,
+                    action.start_epoch, action.end_epoch
+                ));
+            }
+        }
+        if let Some((start_elapsed, start_epoch, note)) = &self.pending_action {
+            report.push_str(&format!(
+                "INCOMPLETE. {} | started +{:.6}s | epoch {:.6}; no End action was recorded.\n",
+                note, start_elapsed, start_epoch
+            ));
         }
 
         report.push_str("\nCAMERA CONTROL TRANSFERS\n------------------------\n");
@@ -260,7 +317,8 @@ fn start_session(test_name: String, baseline: String) -> Result<CaptureSession, 
 
     let mut session = CaptureSession {
         child, pcap_path, bus, address, started: Instant::now(), started_epoch,
-        test_name, checkpoints: Vec::new(), writer: Some(writer),
+        test_name, checkpoints: Vec::new(), actions: Vec::new(), pending_action: None,
+        writer: Some(writer),
         stderr_reader: Some(stderr_reader), stopped: false,
     };
     session.add_checkpoint(baseline)?;
@@ -330,9 +388,7 @@ pub fn build_page() -> gtk::Box {
     page.append(&heading);
 
     let help = gtk::Label::new(Some(
-        "Record one continuous USB trace while changing one camera setting at a time. \
-         Start with the baseline, change the setting in OBSBOT Center, then add a checkpoint \
-         with a short description. You can use this app to change settings while recording. Finish saves the raw trace and decoded report; Clear discards the current session so you can start another."
+        "Record one continuous USB trace while changing one camera setting at a time. Start with a baseline, enter the intended new state, click Begin action, switch to OBSBOT Center and make the change, then return and click End action. Each action is recorded as a time window, so you do not need to click at the exact instant of the camera change. Finish saves the raw trace and decoded report; Clear discards the current session."
     ));
     help.set_wrap(true);
     help.set_xalign(0.0);
@@ -343,7 +399,7 @@ pub fn build_page() -> gtk::Box {
     test_name.set_placeholder_text(Some("Test name, e.g. HDR"));
     page.append(&test_name);
 
-    let note_label = gtk::Label::new(Some("What is the current state / what did you change?"));
+    let note_label = gtk::Label::new(Some("Describe the next action (include the target value)"));
     note_label.set_xalign(0.0);
     page.append(&note_label);
 
@@ -360,18 +416,21 @@ pub fn build_page() -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.add_css_class("adaptive-row");
     let start = gtk::Button::with_label("Start capture + baseline");
-    let checkpoint = gtk::Button::with_label("Add checkpoint");
+    let begin_action = gtk::Button::with_label("Begin action");
+    let end_action = gtk::Button::with_label("End action");
     let finish = gtk::Button::with_label("Finish session");
     let clear = gtk::Button::with_label("Clear recording");
     let copy = gtk::Button::with_label("Copy report");
     let open_folder = gtk::Button::with_label("Open capture folder");
-    checkpoint.set_sensitive(false);
+    begin_action.set_sensitive(false);
+    end_action.set_sensitive(false);
     finish.set_sensitive(false);
     clear.set_sensitive(false);
     copy.set_sensitive(false);
     open_folder.set_sensitive(false);
     actions.append(&start);
-    actions.append(&checkpoint);
+    actions.append(&begin_action);
+    actions.append(&end_action);
     actions.append(&finish);
     actions.append(&clear);
     page.append(&actions);
@@ -491,7 +550,8 @@ pub fn build_page() -> gtk::Box {
     let note_start = note.clone();
     let session_start = session.clone();
     let status_start = status.clone();
-    let checkpoint_start = checkpoint.clone();
+    let begin_start = begin_action.clone();
+    let end_start = end_action.clone();
     let finish_start = finish.clone();
     let clear_start = clear.clone();
     let start_button = start.clone();
@@ -518,9 +578,10 @@ pub fn build_page() -> gtk::Box {
                 *summary_start.borrow_mut() = vec![format!("+0.000s  Baseline: {}", baseline.trim())];
                 log_start.set_text(&summary_start.borrow().join("\n"));
                 status_start.set_text(&format!(
-                    "Capture running on usbmon{bus}, camera USB address {address}. Change one setting, then add a checkpoint."
+                    "Capture running on usbmon{bus}, camera USB address {address}. Describe the next change, click Begin action, make the change in OBSBOT Center, then click End action."
                 ));
-                checkpoint_start.set_sensitive(true);
+                begin_start.set_sensitive(true);
+                end_start.set_sensitive(false);
                 finish_start.set_sensitive(true);
                 clear_start.set_sensitive(true);
                 start_button.set_sensitive(false);
@@ -529,36 +590,76 @@ pub fn build_page() -> gtk::Box {
         }
     });
 
-    let session_mark = session.clone();
-    let note_mark = note.clone();
-    let status_mark = status.clone();
-    let summary_mark = checkpoint_summary.clone();
-    let log_mark = checkpoints_log.clone();
-    checkpoint.connect_clicked(move |_| {
-        let current_note = text_view_contents(&note_mark);
-        if current_note.trim().is_empty() {
-            status_mark.set_text("Describe the state change before adding a checkpoint.");
+    let session_begin = session.clone();
+    let note_begin = note.clone();
+    let status_begin = status.clone();
+    let begin_button = begin_action.clone();
+    let end_button = end_action.clone();
+    let finish_begin = finish.clone();
+    begin_action.connect_clicked(move |_| {
+        let description = text_view_contents(&note_begin);
+        if description.trim().is_empty() {
+            status_begin.set_text("Describe the intended setting and target value before beginning the action.");
             return;
         }
-        let mut active = session_mark.borrow_mut();
+        let mut active = session_begin.borrow_mut();
         let Some(active) = active.as_mut() else {
-            status_mark.set_text("No capture session is running.");
+            status_begin.set_text("No capture session is running.");
             return;
         };
-        match active.add_checkpoint(current_note.trim().to_string()) {
+        match active.begin_action(description.trim().to_string()) {
             Ok(elapsed) => {
-                summary_mark.borrow_mut().push(format!("+{elapsed:.3}s  {}", current_note.trim()));
-                log_mark.set_text(&summary_mark.borrow().join("\n"));
-                note_mark.buffer().set_text("");
-                status_mark.set_text(&format!("Checkpoint added at +{elapsed:.3}s. Change the next setting when ready."));
+                status_begin.set_text(&format!(
+                    "ACTION OPEN since +{elapsed:.3}s. Switch to OBSBOT Center and make this change: {}. Return here and click End action.",
+                    description.trim()
+                ));
+                begin_button.set_sensitive(false);
+                end_button.set_sensitive(true);
+                finish_begin.set_sensitive(false);
             }
-            Err(error) => status_mark.set_text(&format!("Could not add checkpoint: {error}")),
+            Err(error) => status_begin.set_text(&format!("Could not begin action: {error}")),
+        }
+    });
+
+    let session_end = session.clone();
+    let status_end = status.clone();
+    let note_end = note.clone();
+    let summary_end = checkpoint_summary.clone();
+    let log_end = checkpoints_log.clone();
+    let begin_end = begin_action.clone();
+    let end_button = end_action.clone();
+    let finish_end = finish.clone();
+    end_action.connect_clicked(move |_| {
+        let mut active = session_end.borrow_mut();
+        let Some(active) = active.as_mut() else {
+            status_end.set_text("No capture session is running.");
+            return;
+        };
+        match active.end_action() {
+            Ok((elapsed, _epoch)) => {
+                let description = active.actions.last().map(|action| action.note.clone()).unwrap_or_default();
+                summary_end.borrow_mut().push(format!(
+                    "+{:.3}s to +{elapsed:.3}s  {}",
+                    active.actions.last().map(|action| action.start_elapsed).unwrap_or(elapsed),
+                    description
+                ));
+                log_end.set_text(&summary_end.borrow().join("\n"));
+                note_end.buffer().set_text("");
+                status_end.set_text(&format!(
+                    "Action window closed at +{elapsed:.3}s. Enter the next target value and click Begin action."
+                ));
+                begin_end.set_sensitive(true);
+                end_button.set_sensitive(false);
+                finish_end.set_sensitive(true);
+            }
+            Err(error) => status_end.set_text(&format!("Could not end action: {error}")),
         }
     });
 
     let session_finish = session.clone();
     let status_finish = status.clone();
-    let checkpoint_finish = checkpoint.clone();
+    let begin_finish = begin_action.clone();
+    let end_finish = end_action.clone();
     let start_finish = start.clone();
     let report_finish = report_text.clone();
     let report_file_finish = report_file.clone();
@@ -575,7 +676,8 @@ pub fn build_page() -> gtk::Box {
             return;
         };
         status_finish.set_text("Stopping capture and decoding camera control transfers in the background…");
-        checkpoint_finish.set_sensitive(false);
+        begin_finish.set_sensitive(false);
+        end_finish.set_sensitive(false);
         finish_button.set_sensitive(false);
         clear_finish.set_sensitive(false);
         start_finish.set_sensitive(false);
@@ -585,7 +687,8 @@ pub fn build_page() -> gtk::Box {
             let _ = sender.send(active.finish());
         });
         let status_done = status_finish.clone();
-        let checkpoint_done = checkpoint_finish.clone();
+        let begin_done = begin_finish.clone();
+        let end_done = end_finish.clone();
         let finish_done = finish_button.clone();
         let clear_done = clear_finish.clone();
         let start_done = start_finish.clone();
@@ -611,7 +714,8 @@ pub fn build_page() -> gtk::Box {
                         path.display(), path.with_extension("pcapng").display()
                     ));
                     refresh_saved_list(&list_done, &paths_done);
-                    checkpoint_done.set_sensitive(false);
+                    begin_done.set_sensitive(false);
+                    end_done.set_sensitive(false);
                     finish_done.set_sensitive(false);
                     gtk::glib::ControlFlow::Break
                 }
@@ -636,7 +740,8 @@ pub fn build_page() -> gtk::Box {
     let session_clear = session.clone();
     let status_clear = status.clone();
     let start_clear = start.clone();
-    let checkpoint_clear = checkpoint.clone();
+    let begin_clear = begin_action.clone();
+    let end_clear = end_action.clone();
     let finish_clear = finish.clone();
     let clear_button = clear.clone();
     let report_clear = report_text.clone();
@@ -654,7 +759,8 @@ pub fn build_page() -> gtk::Box {
             status_clear.set_text("Stopping and discarding the active capture…");
             clear_button.set_sensitive(false);
             start_clear.set_sensitive(false);
-            checkpoint_clear.set_sensitive(false);
+            begin_clear.set_sensitive(false);
+            end_clear.set_sensitive(false);
             finish_clear.set_sensitive(false);
             let (sender, receiver) = std::sync::mpsc::channel();
             thread::spawn(move || {
@@ -733,7 +839,8 @@ pub fn build_page() -> gtk::Box {
         log_clear.set_text("No checkpoints yet.");
         summary_clear.borrow_mut().clear();
         start_clear.set_sensitive(true);
-        checkpoint_clear.set_sensitive(false);
+        begin_clear.set_sensitive(false);
+        end_clear.set_sensitive(false);
         finish_clear.set_sensitive(false);
         clear_button.set_sensitive(false);
         status_clear.set_text("Recording cleared. Ready for a new capture.");
