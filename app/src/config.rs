@@ -38,6 +38,8 @@ pub struct AppConfig {
     pub exposure_compensation_position: Option<u8>,
     /// Last successfully submitted microphone auto-gain state; camera GET_CUR is authoritative.
     pub audio_auto_gain: Option<bool>,
+    /// Last successfully submitted microphone-disabled state; camera GET_CUR is authoritative.
+    pub audio_microphone_disabled: Option<bool>,
     /// Last successfully submitted microphone noise-reduction level: 0 Off, 1 Weak, 2 Medium, 3 Strong.
     pub audio_noise_reduction: Option<u8>,
     pub gesture_states: BTreeMap<String, bool>,
@@ -89,6 +91,7 @@ impl Default for AppConfig {
             auto_exposure_mode: None,
             exposure_compensation_position: None,
             audio_auto_gain: None,
+            audio_microphone_disabled: None,
             audio_noise_reduction: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
@@ -241,6 +244,7 @@ mod tests {
         config.auto_exposure_mode = Some("global".into());
         config.exposure_compensation_position = Some(18);
         config.audio_auto_gain = Some(true);
+        config.audio_microphone_disabled = Some(true);
         config.audio_noise_reduction = Some(3);
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
@@ -271,6 +275,7 @@ mod tests {
         assert_eq!(decoded.auto_exposure_mode.as_deref(), Some("global"));
         assert_eq!(decoded.exposure_compensation_position, Some(18));
         assert_eq!(decoded.audio_auto_gain, Some(true));
+        assert_eq!(decoded.audio_microphone_disabled, Some(true));
         assert_eq!(decoded.audio_noise_reduction, Some(3));
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
