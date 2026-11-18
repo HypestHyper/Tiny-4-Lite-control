@@ -363,6 +363,14 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
+fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Camera settings"));
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
     // FOV presets are positions on the standard V4L2 zoom_absolute control.
     let zoom_frame = gtk::Frame::new(Some("Zoom and field of view"));
     let zoom_layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
