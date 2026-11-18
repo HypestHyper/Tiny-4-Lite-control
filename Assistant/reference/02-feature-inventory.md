@@ -109,7 +109,7 @@ all firmware.
 
 ### 4.6 Gestures
 
-**Status:** Gesture controls discovered and verified on Tiny 2 Lite.
+**Status:** Gesture controls physically verified on Tiny 2 Lite. The user confirmed Target selection (open palm/fingers spread enables normal tracking), Zoom/L-pose, and Dynamic Zoom (both hands form L shapes and move apart/together). Dynamic Zoom direction remains unknown; do not infer which hand movement increases or decreases zoom.
 
 Available controls: - Target selection - Zoom - Dynamic zoom - Dynamic
 zoom direction
@@ -210,19 +210,14 @@ for raw request details and the accompanying zoom correlation.
 
 ### 4.10 LED power and brightness
 
-**Status:** Commands recovered from the original Tiny 2 Lite capture; four
-brightness settings and a separate power switch are implemented.
+**Status:** Brightness command family recovered, but current app implementation is defective and the separate tag 0x18 behaviour is unresolved. Do not describe the LED power switch as verified.
 
-- Selector `0x06`, tag `0x18`, payload `[0x18, 0x01, 0x00]` = power off.
-- Selector `0x06`, tag `0x18`, payload `[0x18, 0x01, 0x01]` = power on.
 - Selector `0x06`, tag `0x1A`, payload `[0x1A, 0x01, raw]` = brightness.
 - The four user-facing brightness levels map to raw values 0, 1, 2, 3.
-- Status byte `0x21` reports the raw brightness value; it does not establish
-  whether the separate power switch is on or off.
+- Status byte `0x21` reports raw brightness; it does not establish LED power.
+- Tag `0x18` has independent 0/1 writes in the capture, but its semantics are not settled. The current app assumed Off/On; live user testing found that the On command makes the LED blink and the Off command leaves it continuously lit. This conflicts with a simple power-switch interpretation. It may control a blink/indicator mode, but that is only a hypothesis.
 
-The original capture shows the tag `0x1A` values 0, 1, 2, and 3 as brightness
-changes, while tag `0x18` has its own independent 0/1 writes. Do not interpret
-brightness raw value 0 as LED power-off.
+The current app implementation has three definite defects: it exposes only three brightness levels instead of four, reads `data[0x20]` instead of status byte `data[0x21]`, and derives the power-switch initial state from brightness. The current ordering also sends a brightness write before tag `0x18` when enabling. Do not change tag `0x18` semantics or claim it is power until a controlled capture isolates the command and its visible effect. Do not interpret brightness raw value 0 as LED power-off.
 
 ### 4.11 Status block and read-back
 
