@@ -209,12 +209,15 @@ revision as build-verified.
   sleep/wake service. Persistent TOML configuration is implemented;
   the in-process camera service and optional restore-on-connect behavior
   are still future work.
-- Global / Face autofocus priority is currently not working in the
-  user's hardware test; the capture-derived payload assignment and
-  camera-side effect remain unverified. Reliable read-back for most
-  gesture states, automatic firmware detection, live pan/tilt
-  telemetry, HDR setter verification, mirror support, and preset
-  mutation remain unimplemented or unverified.
+- Global / Face autofocus priority remains not yet hardware-verified.
+  The 2026-11-18 capture establishes the likely payload mapping
+  (Global `bf fb 01 00`, Face `be 07 00 00`) and shows that the final
+  Face-to-Global transition emitted no focus SET_CUR. The payload mapping
+  and GTK toggle dispatch were corrected; a fresh capture and visible
+  behavior test are still required. Reliable read-back for most gesture
+  states, automatic firmware detection, live pan/tilt telemetry, HDR
+  setter verification, mirror support, and preset mutation remain
+  unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
   capture evidence and explicit hardware validation.
 
