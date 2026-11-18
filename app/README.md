@@ -115,7 +115,7 @@ ${XDG_CONFIG_HOME:-~/.config}/tiny4lite-control/config.toml
 The versioned TOML config is loaded when the application starts and
 written after successful changes. It records supported V4L2 control
 values (excluding transient pan/tilt position and speed commands), LED
-brightness, AI tracking mode and speed, HDR state, Global/Face focus selection,
+brightness, AI tracking mode and speed, HDR state, Global/Face focus and Auto Exposure priority selections,
 gesture toggles, gesture zoom ratio, theme, joystick sensitivity, and
 background-service policy.
 
