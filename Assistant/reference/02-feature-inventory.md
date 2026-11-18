@@ -426,8 +426,9 @@ Close / Standard / Far selector and remembers only the last successful
 local submission. A successful ioctl is transport evidence, not
 independent proof that the camera applied the setting.
 
-Microphone during sleep and pop filter remain unimplemented until their
-fields are independently isolated and mapped.
+Microphone during sleep remains unimplemented pending an isolated mapping.
+
+**Pop filter:** Protocol investigation is documented in [09-pop-filter-protocol-investigation.md](09-pop-filter-protocol-investigation.md). Three controlled On → Off → On captures identify XU unit 2 / selector `0x02`, 60-byte SET_CUR writes, and repeatable state-correlated fields: byte 17 On=`01` / Off=`00`; bytes 14–15 On=`ef 4f` / Off=`be 8f`. Byte 2 increments across adjacent commands, and bytes 6–7 repeat for the same counter values, but their generation rule is unknown. Bytes 20–59 vary across captures. GET_CUR has not provided reliable read-back. **Not implemented:** the complete payload cannot yet be constructed safely. Do not send a guessed or zero-filled command. The evidence file records the raw payloads, capture files, action-window method, TShark commands, and next experiment.
 
 ------------------------------------------------------------------------
 
