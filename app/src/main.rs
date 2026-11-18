@@ -1,4 +1,5 @@
 mod capture;
+mod config;
 mod design;
 
 use gtk::prelude::*;
@@ -9,6 +10,27 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU16, Ordering};
+
+thread_local! {
+    static APP_CONFIG: RefCell<config::AppConfig> = RefCell::new(config::AppConfig::default());
+}
+
+fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
+    APP_CONFIG.with(|current| {
+        let snapshot = {
+            let mut value = current.borrow_mut();
+            update(&mut value);
+            value.clone()
+        };
+        if let Err(error) = config::save(&snapshot) {
+            eprintln!("Could not save settings: {error}");
+        }
+    });
+}
+
+fn current_config() -> config::AppConfig {
+    APP_CONFIG.with(|value| value.borrow().clone())
+}
 
 #[derive(Clone, Debug)]
 struct Control {
@@ -32,7 +54,12 @@ fn get_control(device: &str, name: &str) -> Result<i64, String> {
 }
 
 fn set_control(device: &str, name: &str, value: i64) -> Result<(), String> {
-    run_v4l2(device, &format!("--set-ctrl={name}={value}")).map(|_| ())
+    run_v4l2(device, &format!("--set-ctrl={name}={value}"))?;
+    // Position and speed are transient movement commands, never preferences.
+    if !matches!(name, "pan_absolute" | "tilt_absolute" | "pan_speed" | "tilt_speed") {
+        update_config(|config| { config.v4l2_controls.insert(name.to_string(), value); });
+    }
+    Ok(())
 }
 
 fn usb_camera_present() -> bool {
@@ -142,12 +169,13 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     hint.add_css_class("dim-label");
     layout.append(&hint);
 
-    let sensitivity = Rc::new(RefCell::new(1.0_f64));
+    let initial_sensitivity = current_config().joystick_sensitivity_percent.clamp(10, 200);
+    let sensitivity = Rc::new(RefCell::new(initial_sensitivity as f64 / 100.0));
     let sensitivity_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     sensitivity_row.add_css_class("adaptive-row");
     let sensitivity_label = gtk::Label::new(Some("Sensitivity"));
     let sensitivity_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 10.0, 200.0, 5.0);
-    sensitivity_scale.set_value(100.0);
+    sensitivity_scale.set_value(initial_sensitivity as f64);
     sensitivity_scale.set_digits(0);
     sensitivity_scale.set_draw_value(true);
     sensitivity_scale.set_hexpand(true);
@@ -157,6 +185,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     sensitivity_scale.connect_value_changed(move |scale| {
         let percent = scale.value().round();
         *sensitivity_state.borrow_mut() = percent / 100.0;
+        update_config(|config| config.joystick_sensitivity_percent = percent as u16);
         sensitivity_value_label.set_text(&format!("{percent:.0}%"));
     });
     sensitivity_row.append(&sensitivity_label);
@@ -360,7 +389,9 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     let payload = led_brightness_payload(level)?;
     let mut data = [0u8; 60];
     data[..payload.len()].copy_from_slice(&payload);
-    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.led_brightness = Some(level));
+    Ok(())
 }
 
 fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::ApplicationWindow, status: &gtk::Label) {
@@ -469,7 +500,9 @@ fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
     let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
     let mut command = [0u8; 6];
     command[2..6].copy_from_slice(&face_focus_payload(face_priority));
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, group, command)?;
+    update_config(|config| config.focus_mode = Some(if face_priority { "face" } else { "global" }.into()));
+    Ok(())
 }
 
 fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
@@ -587,7 +620,10 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     data[1] = 0x02;
     data[2] = mode.0;
     data[3] = mode.1;
-    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x01, 0x00) => "group", _ => "unknown" };
+    update_config(|config| config.ai_tracking_mode = Some(name.into()));
+    Ok(())
 }
 
 fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
@@ -655,7 +691,9 @@ fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
     } else {
         [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
     };
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, group, command)?;
+    update_config(|config| config.tracking_speed = Some(if sport { "sport" } else { "standard" }.into()));
+    Ok(())
 }
 
 fn set_gesture_zoom_ratio_payload_is_valid(ratio: f32) -> bool {
@@ -671,7 +709,9 @@ fn set_gesture_zoom_ratio(device: &str, ratio: f32) -> Result<(), String> {
     let group = [0x0a, 0x04, 0x44, 0x32, 0x04, 0x00];
     let mut command = [0u8; 6];
     command[2..6].copy_from_slice(&ratio.to_le_bytes());
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, group, command)?;
+    update_config(|config| config.gesture_zoom_ratio = Some(ratio));
+    Ok(())
 }
 
 fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
@@ -692,7 +732,10 @@ fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
 
 fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
     let command = gesture_command(group, enabled);
-    xu_send_frame(device, group, command)
+    xu_send_frame(device, group, command)?;
+    let key = match group { [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00] => "target_selection", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00] => "zoom_l_pose", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00] => "dynamic_zoom", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] => "dynamic_zoom_direction", _ => "unknown" };
+    if key != "unknown" { update_config(|config| { config.gesture_states.insert(key.into(), enabled); }); }
+    Ok(())
 }
 
 fn ai_mode_label(status: &[u8; 60]) -> &'static str {
@@ -1235,23 +1278,8 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
 }
 
 
-fn theme_config_path() -> std::path::PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("tiny4lite-control").join("settings.conf")
-}
-fn load_theme_mode() -> design::ThemeMode {
-    let value = fs::read_to_string(theme_config_path()).unwrap_or_default();
-    design::ThemeMode::from_name(value.lines().find_map(|line| line.strip_prefix("theme=")).unwrap_or("system"))
-}
 fn save_theme_mode(mode: design::ThemeMode) {
-    let path = theme_config_path();
-    if let Some(parent) = path.parent() {
-        if fs::create_dir_all(parent).is_ok() {
-            let _ = fs::write(path, format!("theme={}\n", mode.name()));
-        }
-    }
+    update_config(|config| config.theme = mode.name().to_string());
 }
 
 
@@ -1277,8 +1305,13 @@ fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
 }
 
 fn build_ui(app: &gtk::Application) {
+    let loaded_config = match config::load() {
+        Ok(value) => value,
+        Err(error) => { eprintln!("Settings load warning: {error}"); config::AppConfig::default() }
+    };
+    APP_CONFIG.with(|current| *current.borrow_mut() = loaded_config.clone());
     let theme_provider = design::install();
-    let initial_theme = load_theme_mode();
+    let initial_theme = design::ThemeMode::from_name(&loaded_config.theme);
     design::apply_theme(&theme_provider, initial_theme);
 
     let window = gtk::ApplicationWindow::builder().application(app)
