@@ -163,7 +163,7 @@ Four command groups are encoded. The user has physically confirmed Target select
 - Dynamic zoom: `0a 04 44 33 01 00`
 - Dynamic zoom direction: `0a 04 c4 33 01 00`; unlike the other gesture commands, its wire-state payload is inverted: OFF = `27 ff 01 00`, ON = `e6 3f 00 00`. Unit tests check both payload choices and rolling sequence increments. The capture-derived full frame prefixes are recorded in the evidence section below.
 
-Enable/disable frames are built with the current frame builder. The status block does not provide reliable per-gesture read-back, so a successful ioctl only confirms that the request was accepted by the host driver, not that the camera applied the feature. Capture-based validation is still required.
+Enable/disable frames are built with the current frame builder. The status block does not provide reliable per-gesture read-back for Target Selection, Dynamic Zoom, or Direction Flip, so a successful ioctl only confirms host-driver request completion. The user has separately confirmed the visible behavior of all four gesture controls on the camera; the app still cannot reconstruct the initial state of most gestures from device read-back.
 
 ### Frame construction and tests
 
