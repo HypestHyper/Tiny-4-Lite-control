@@ -90,31 +90,31 @@ fn packets_in_action_windows(decoded: &str, actions: &[ActionWindow]) -> String 
     }
     let mut lines = decoded.lines();
     let Some(header) = lines.next() else {
-        return "\\nPACKETS INSIDE ACTION WINDOWS\\n-----------------------------\\nNo decoded packet rows.\\n".into();
+        return "\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\nNo decoded packet rows.\n".into();
     };
-    let columns: Vec<&str> = header.split('\\t').collect();
+    let columns: Vec<&str> = header.split('\t').collect();
     let Some(epoch_index) = columns.iter().position(|column| *column == "frame.time_epoch") else {
-        return "\\nPACKETS INSIDE ACTION WINDOWS\\n-----------------------------\\nUnavailable: frame.time_epoch was not present.\\n".into();
+        return "\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\nUnavailable: frame.time_epoch was not present.\n".into();
     };
-    let rows: Vec<Vec<String>> = lines.map(|line| line.split('\\t').map(str::to_string).collect()).collect();
-    let mut report = String::from("\\nPACKETS INSIDE ACTION WINDOWS\\n-----------------------------\\n");
+    let rows: Vec<Vec<String>> = lines.map(|line| line.split('\t').map(str::to_string).collect()).collect();
+    let mut report = String::from("\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\n");
     for (index, action) in actions.iter().enumerate() {
-        report.push_str(&format!("\\nAction {:02}: {}\\n", index + 1, action.note));
+        report.push_str(&format!("\nAction {:02}: {}\n", index + 1, action.note));
         let mut matched = 0usize;
         for row in &rows {
             let Some(epoch) = row.get(epoch_index).and_then(|value| value.parse::<f64>().ok()) else {
                 continue;
             };
             if epoch >= action.start_epoch && epoch <= action.end_epoch {
-                report.push_str(&row.join("\\t"));
-                report.push('\\n');
+                report.push_str(&row.join("\t"));
+                report.push('\n');
                 matched += 1;
             }
         }
         if matched == 0 {
-            report.push_str("  No decoded control-transfer rows fell inside this time window.\\n");
+            report.push_str("  No decoded control-transfer rows fell inside this time window.\n");
         } else {
-            report.push_str(&format!("Matched rows: {matched}\\n"));
+            report.push_str(&format!("Matched rows: {matched}\n"));
         }
     }
     report
