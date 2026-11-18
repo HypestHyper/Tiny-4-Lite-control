@@ -577,19 +577,21 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     }
     let microphone_device = device.to_string();
     let microphone_status = status.clone();
-    microphone_disabled.connect_state_set(move |switch, disabled| {
+    microphone_disabled.connect_state_set(move |_, disabled| {
         match set_microphone_disabled(&microphone_device, disabled) {
-            Ok(()) => microphone_status.set_text(if disabled {
-                "Camera microphone disabled. The camera may restart."
-            } else {
-                "Camera microphone enabled. The camera may restart."
-            }),
+            Ok(()) => {
+                microphone_status.set_text(if disabled {
+                    "Camera microphone disabled. The camera may restart."
+                } else {
+                    "Camera microphone enabled. The camera may restart."
+                });
+                gtk::glib::Propagation::Proceed
+            }
             Err(error) => {
-                switch.set_active(!disabled);
                 microphone_status.set_text(&format!("Could not change microphone state: {error}"));
+                gtk::glib::Propagation::Stop
             }
         }
-        gtk::glib::Propagation::Proceed
     });
     microphone_disabled_row.append(&microphone_disabled_label);
     microphone_disabled_row.append(&microphone_disabled);
