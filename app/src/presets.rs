@@ -183,10 +183,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         }))();
         match mode {
             Some(mode) => {
-                stop_preview();
                 match video::set_mode(device, &mode) {
                 Ok(()) => {
-                    restart_preview(device, Some(mode.clone()));
                     applied += 1;
                     if let Err(error) = update_config_checked(|config| config.video_mode = Some(config::VideoModeConfig {
                         width: mode.width, height: mode.height,
@@ -198,7 +196,6 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 }
                     Err(error) => {
                         errors.push(format!("video mode: {error}"));
-                        restart_preview(device, video::current_mode(device));
                     }
                 }
             },
