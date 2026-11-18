@@ -101,10 +101,13 @@ selector `0x06` for the 60-byte status block.
   camera GET_CUR and fall back to the last successfully submitted local
   value only if read-back is unavailable. Each setter first reads the
   current 60-byte block, changes only its own byte, and writes the full
-  block back so unrelated settings are preserved. Microphone disable is
-  newly implemented; app-side hardware validation is pending. The
-  restart mechanism and any additional restart-related commands remain
-  uninvestigated.
+  block back so unrelated settings are preserved. Disable microphone
+  uses its separately captured 60-byte command payload, prefix
+  `1c 01 <state>` (0=disabled, 1=enabled), with remaining bytes zero.
+  Its state is remembered locally because matching GET_CUR read-back
+  has not been established. App-side hardware validation is pending;
+  the restart mechanism and any additional restart-related commands
+  remain uninvestigated.
 - LED: one setting control with Off and brightness levels 1, 2, and 3.
   Selector `0x06`, tag `0x1A`, uses raw values 0 through 3 directly.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
