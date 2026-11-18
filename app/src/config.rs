@@ -210,6 +210,8 @@ mod tests {
         assert!(config.hdr_enabled.is_none());
         assert!(config.auto_exposure_mode.is_none());
         assert!(config.exposure_compensation_position.is_none());
+        assert!(config.audio_auto_gain.is_none());
+        assert!(config.audio_noise_reduction.is_none());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
         assert!(!config.compact_mode);
@@ -238,6 +240,8 @@ mod tests {
         config.focus_mode = Some("face".into());
         config.auto_exposure_mode = Some("global".into());
         config.exposure_compensation_position = Some(18);
+        config.audio_auto_gain = Some(true);
+        config.audio_noise_reduction = Some(3);
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
         config.joystick_sensitivity_percent = 135;
@@ -266,6 +270,8 @@ mod tests {
         assert_eq!(decoded.focus_mode.as_deref(), Some("face"));
         assert_eq!(decoded.auto_exposure_mode.as_deref(), Some("global"));
         assert_eq!(decoded.exposure_compensation_position, Some(18));
+        assert_eq!(decoded.audio_auto_gain, Some(true));
+        assert_eq!(decoded.audio_noise_reduction, Some(3));
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
         assert_eq!(decoded.joystick_sensitivity_percent, 135);
