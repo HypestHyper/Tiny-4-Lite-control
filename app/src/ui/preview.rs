@@ -29,6 +29,14 @@ impl PreviewContext {
         }
     }
 
+    pub fn unavailable(&self, message: &str) {
+        self.stop();
+        self.picture.set_pixbuf(None);
+        self.placeholder.set_text(message);
+        self.placeholder.set_visible(true);
+        self.status.set_text("Preview unavailable");
+    }
+
     pub fn start(&self, device: &str, mode: &VideoMode) {
         self.stop();
         self.picture.set_pixbuf(None);
@@ -71,13 +79,13 @@ impl PreviewContext {
         let picture = self.picture.clone();
         let placeholder = self.placeholder.clone();
         let status = self.status.clone();
-        glib::timeout_add_local(Duration::from_millis(30), move || {
+        gtk::glib::timeout_add_local(Duration::from_millis(30), move || {
             let mut latest = None;
             loop {
                 match receiver.try_recv() {
                     Ok(frame) => latest = Some(frame),
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return glib::ControlFlow::Break,
+                    Err(TryRecvError::Disconnected) => return gtk::glib::ControlFlow::Break,
                 }
             }
             if let Some(frame) = latest {
@@ -163,7 +171,7 @@ fn decode_frame(frame: &[u8], mode: &VideoMode) -> Option<Pixbuf> {
             rgb.extend_from_slice(&[r, g, b]);
         }
     }
-    let bytes = glib::Bytes::from_owned(rgb);
+    let bytes = gtk::glib::Bytes::from_owned(rgb);
     Some(Pixbuf::from_bytes(
         &bytes, Colorspace::Rgb, false, 8,
         mode.width as i32, mode.height as i32, mode.width as i32 * 3,
