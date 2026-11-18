@@ -486,6 +486,7 @@ fn xu_status(device: &str) -> Result<[u8; 60], String> {
 const XU_AUDIO_NOISE_REDUCTION_OFFSET: usize = 8;
 const XU_AUDIO_AUTO_GAIN_OFFSET: usize = 25;
 const XU_AUDIO_MICROPHONE_DISABLED_OFFSET: usize = 2;
+const XU_AUDIO_RADIO_DISTANCE_OFFSET: usize = 2;
 
 fn microphone_disabled_wire_value(disabled: bool) -> u8 {
     if disabled { 0 } else { 1 }
@@ -525,6 +526,25 @@ fn set_microphone_disabled(device: &str, disabled: bool) -> Result<(), String> {
     data[XU_AUDIO_MICROPHONE_DISABLED_OFFSET] = microphone_disabled_wire_value(disabled);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_microphone_disabled = Some(disabled));
+    Ok(())
+}
+
+fn radio_distance_label(distance: u8) -> &'static str {
+    match distance { 0 => "Close", 1 => "Standard", 2 => "Far", _ => "Unknown" }
+}
+
+fn radio_distance_payload(distance: u8) -> Result<[u8; 60], String> {
+    if distance > 2 { return Err("Radio distance must be Close, Standard, or Far.".into()); }
+    let mut data = [0u8; 60];
+    data[..2].copy_from_slice(&[0x1b, 0x01]);
+    data[XU_AUDIO_RADIO_DISTANCE_OFFSET] = distance;
+    Ok(data)
+}
+
+fn set_radio_distance(device: &str, distance: u8) -> Result<(), String> {
+    let mut data = radio_distance_payload(distance)?;
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.audio_radio_distance = Some(distance));
     Ok(())
 }
 
@@ -673,8 +693,55 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     noise_row.append(&noise_level);
     layout.append(&noise_row);
 
+    let radio_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    radio_row.add_css_class("adaptive-row");
+    let radio_label = gtk::Label::new(Some("Radio distance"));
+    radio_label.set_xalign(0.0);
+    radio_label.set_hexpand(true);
+    let radio_distance = gtk::ComboBoxText::new();
+    for (value, label) in [(0, "Close"), (1, "Standard"), (2, "Far")] {
+        radio_distance.append(Some(&value.to_string()), label);
+    }
+    let initial_radio_distance = current_config().audio_radio_distance.filter(|value| *value <= 2);
+    if let Some(distance) = initial_radio_distance {
+        radio_distance.set_active_id(Some(&distance.to_string()));
+    } else {
+        radio_distance.set_tooltip_text(Some("Camera read-back is unavailable. Choose a value to submit it; the last successful selection is saved locally."));
+    }
+    let radio_device = device.to_string();
+    let radio_status = status.clone();
+    let radio_last = Rc::new(Cell::new(initial_radio_distance));
+    let radio_guard = Rc::new(Cell::new(false));
+    let radio_last_change = radio_last.clone();
+    let radio_changing = radio_guard.clone();
+    let radio_restore = radio_distance.clone();
+    radio_distance.connect_changed(move |selection| {
+        if radio_changing.get() { return; }
+        let Some(id) = selection.active_id() else { return; };
+        let Ok(distance) = id.parse::<u8>() else { return; };
+        match set_radio_distance(&radio_device, distance) {
+            Ok(()) => {
+                radio_last_change.set(Some(distance));
+                radio_status.set_text(&format!("Microphone radio distance set to {}.", radio_distance_label(distance)));
+            }
+            Err(error) => {
+                radio_changing.set(true);
+                if let Some(previous) = radio_last_change.get() {
+                    radio_restore.set_active_id(Some(&previous.to_string()));
+                } else {
+                    radio_restore.set_active(None);
+                }
+                radio_changing.set(false);
+                radio_status.set_text(&format!("Could not change radio distance: {error}"));
+            }
+        }
+    });
+    radio_row.append(&radio_label);
+    radio_row.append(&radio_distance);
+    layout.append(&radio_row);
+
     let note = gtk::Label::new(Some(
-        "These settings use the camera's 60-byte Extension Unit configuration block. Each change reads the current block and modifies only its own verified byte, preserving all other settings."
+        "Auto gain and noise reduction read the current 60-byte configuration block and modify only their verified byte. Radio distance uses a separate fixed 60-byte command (1b 01 <value>); camera read-back is not established, so the last successful selection is saved locally."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
@@ -2172,6 +2239,23 @@ mod xu_protocol_tests {
         assert_eq!(microphone_disabled_wire_value(false), 0x01);
 
         let mut status = [0u8; 60];
+    }
+
+    #[test]
+    fn radio_distance_payload_matches_tiny_2_lite_capture() {
+        for (distance, expected) in [
+            (0, [0x1b, 0x01, 0x00]),
+            (1, [0x1b, 0x01, 0x01]),
+            (2, [0x1b, 0x01, 0x02]),
+        ] {
+            let payload = radio_distance_payload(distance).unwrap();
+            assert_eq!(&payload[..3], &expected);
+            assert!(payload[3..].iter().all(|byte| *byte == 0));
+        }
+        assert_eq!(radio_distance_label(0), "Close");
+        assert_eq!(radio_distance_label(1), "Standard");
+        assert_eq!(radio_distance_label(2), "Far");
+        assert!(radio_distance_payload(3).is_err());
     }
 
     #[test]
