@@ -45,10 +45,11 @@ selector `0x06` for the 60-byte status block.
 - AI tracking modes: Off, Normal, Upper Body, Close-up, Headless, Lower
   Body, and Group. Desk, Whiteboard and Hand are intentionally excluded
   from the supported app scope.
-- Tracking speed: Standard and Sport. Sport encoding is
+- Tracking speed: Standard and Sport. Both modes have been physically
+  confirmed working on the user's Tiny 2 Lite. Sport encoding is
   firmware-sensitive; the current implementation sends the documented
   `0x02` value and does not automatically choose the older reported
-  `0x21` encoding.
+  `0x21` encoding. Compatibility with older firmware remains unverified.
 - Gestures: Target selection, Zoom/L-pose, Dynamic Zoom, and Dynamic
   Zoom Direction. All four gesture behaviours have been physically confirmed. Dynamic
   Zoom Direction reverses the direction of the Dynamic Zoom gesture, so
