@@ -61,6 +61,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     add_camera_settings(container, device, window, status);
     add_ai_controls(container, device, status);
     ui::presets::append(container, device, status);
+    ui::video::append(container, device, status);
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
     let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
