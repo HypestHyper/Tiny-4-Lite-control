@@ -1213,7 +1213,7 @@ fn save_theme_mode(mode: ui::design::ThemeMode) {
 
 fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
     if let Some(container) = widget.downcast_ref::<gtk::Box>() {
-        if container.has_css_class("adaptive-row") {
+        if container.has_css_class("adaptive-row") && !container.has_css_class("app-header") {
             container.set_orientation(if compact { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal });
         }
     }
@@ -1511,6 +1511,8 @@ fn build_ui(app: &gtk::Application) {
     let navigation_responsive = navigation.clone();
     let switcher_responsive = switcher.clone();
     let root_responsive = root.clone();
+    let theme_responsive = theme.clone();
+    let compact_settings_responsive = compact_settings.clone();
     let compact_state_width = compact_mode_state.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
         let width = window.width();
@@ -1519,6 +1521,8 @@ fn build_ui(app: &gtk::Application) {
         let compact_layout = width < 680 || compact_mode_active;
         navigation_responsive.set_visible(!compact_mode_active && wide);
         switcher_responsive.set_visible(!compact_mode_active && !wide);
+        theme_responsive.set_visible(!compact_mode_active);
+        compact_settings_responsive.set_visible(!compact_mode_active);
         root_responsive.set_margin_top(if compact_layout { 6 } else { 12 });
         root_responsive.set_margin_bottom(if compact_layout { 6 } else { 12 });
         apply_compact_layout(root_responsive.upcast_ref(), compact_layout);
@@ -1527,6 +1531,8 @@ fn build_ui(app: &gtk::Application) {
     let initial_wide = initial_width >= 900 && !loaded_config.compact_mode;
     navigation.set_visible(!loaded_config.compact_mode && initial_wide);
     switcher.set_visible(!loaded_config.compact_mode && !initial_wide);
+    theme.set_visible(!loaded_config.compact_mode);
+    compact_settings.set_visible(!loaded_config.compact_mode);
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     content.add_css_class("adaptive-row");
@@ -1566,6 +1572,8 @@ fn build_ui(app: &gtk::Application) {
         let stack_mode = stack.clone();
         let controls_mode = controls_box.clone();
         let status_mode = status.clone();
+        let theme_mode = theme.clone();
+        let compact_settings_mode = compact_settings.clone();
         button.connect_toggled(move |selected| {
             if !selected.is_active() { return; }
             if let Err(error) = update_config_checked(|config| config.compact_mode = compact_value) {
@@ -1582,6 +1590,8 @@ fn build_ui(app: &gtk::Application) {
             let wide = width >= 900 && !compact_value;
             navigation_mode.set_visible(!compact_value && wide);
             switcher_mode.set_visible(!compact_value && !wide);
+            theme_mode.set_visible(!compact_value);
+            compact_settings_mode.set_visible(!compact_value);
             apply_compact_layout(root_mode.upcast_ref(), compact_value || width < 680);
             let config = current_config();
             ui::layout::apply_compact_visibility(
