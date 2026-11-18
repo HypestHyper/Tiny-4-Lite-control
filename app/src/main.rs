@@ -1461,7 +1461,7 @@ fn build_ui(app: &gtk::Application) {
     title.set_xalign(0.0);
     let refresh = gtk::Button::with_label("Refresh camera");
     refresh.add_css_class("suggested-action");
-     let theme = gtk::ComboBoxText::new();
+    let theme = gtk::ComboBoxText::new();
     theme.append(Some("system"), "System");
     theme.append(Some("light"), "Light");
     theme.append(Some("dark"), "Dark");
@@ -1476,7 +1476,7 @@ fn build_ui(app: &gtk::Application) {
     header.append(&app_icon);
     header.append(&title);
     header.append(&theme);
-     header.append(&refresh);
+    header.append(&refresh);
     root.append(&header);
 
     let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -1539,145 +1539,6 @@ fn build_ui(app: &gtk::Application) {
     page_column.append(&stack);
     root.append(&page_column);
 
-    
-    preview_picture.set_can_shrink(true);
-    preview_picture.set_keep_aspect_ratio(true);
-    preview_picture.set_hexpand(true);
-    preview_picture.set_vexpand(true);
-    preview_picture.set_size_request(240, 135);
-    let preview_placeholder = gtk::Label::new(Some("Connect OBSBOT Tiny 2 Lite to start the live preview."));
-    preview_placeholder.set_wrap(true);
-    preview_placeholder.set_halign(gtk::Align::Center);
-    preview_placeholder.set_valign(gtk::Align::Center);
-    preview_placeholder.add_css_class("dim-label");
-    let preview_overlay = gtk::Overlay::new();
-    preview_overlay.set_child(Some(&preview_picture));
-    preview_overlay.add_overlay(&preview_placeholder);
-    let preview_status = gtk::Label::new(Some("Preview waiting for camera"));
-    preview_status.set_xalign(0.0);
-    preview_status.add_css_class("dim-label");
-    let preview_heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    preview_heading.add_css_class("preview-heading");
-    let preview_title = gtk::Label::new(Some("LIVE PREVIEW"));
-    preview_title.add_css_class("eyebrow");
-    preview_title.set_xalign(0.0);
-    preview_title.set_hexpand(true);
-    let preview_ratio = gtk::Label::new(Some("ASPECT RATIO PRESERVED"));
-    preview_ratio.add_css_class("preview-meta");
-    preview_heading.append(&preview_title);
-    preview_heading.append(&preview_ratio);
-    let preview_layout = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    preview_layout.set_margin_top(10);
-    preview_layout.set_margin_bottom(10);
-    preview_layout.set_margin_start(10);
-    preview_layout.set_margin_end(10);
-    preview_layout.append(&preview_heading);
-    preview_layout.append(&preview_overlay);
-    preview_layout.append(&preview_status);
-    let preview_frame = gtk::Frame::new(None);
-    preview_frame.add_css_class("preview-panel");
-    preview_frame.set_size_request(320, 220);
-    preview_frame.set_child(Some(&preview_layout));
-    let preview_context = ui::preview::PreviewContext::new(
-        preview_picture.clone(), preview_placeholder.clone(), preview_status.clone(),
-    );
-    PREVIEW_CONTEXT.with(|context| *context.borrow_mut() = Some(preview_context.clone()));
-
- let compact_mode_state = Rc::new(Cell::new(loaded_config.compact_mode));
-    let navigation_responsive = navigation.clone();
-    let switcher_responsive = switcher.clone();
-    let root_responsive = root.clone();
-    let theme_responsive = theme.clone();
-    let compact_settings_responsive = compact_settings.clone();
-    let paned_responsive = main_paned.clone();
-    let preview_responsive = preview_frame.clone();
-    let content_responsive = content.clone();
-    let compact_state_width = compact_mode_state.clone();
-    window.connect_notify_local(Some("width"), move |window, _| {
-        let width = window.width();
-        let compact_mode_active = compact_state_width.get();
-        let wide = width >= 1100 && !compact_mode_active;
-        let compact_layout = compact_mode_active || width < 680;
-        navigation_responsive.set_visible(!compact_mode_active && wide);
-        switcher_responsive.set_visible(!compact_mode_active && !wide);
-        theme_responsive.set_visible(!compact_mode_active);
-        compact_settings_responsive.set_visible(!compact_mode_active);
-        root_responsive.set_margin_top(if compact_layout { 6 } else { 12 });
-        root_responsive.set_margin_bottom(if compact_layout { 6 } else { 12 });
-        apply_compact_layout(root_responsive.upcast_ref(), compact_layout);
-        configure_workspace(
-            &paned_responsive, &preview_responsive, &content_responsive,
-            compact_mode_active, width,
-        );
-    });
-    let initial_width = window.width();
-    let initial_wide = initial_width >= 1100 && !loaded_config.compact_mode;
-    navigation.set_visible(!loaded_config.compact_mode && initial_wide);
-    switcher.set_visible(!loaded_config.compact_mode && !initial_wide);
-    theme.set_visible(!loaded_config.compact_mode);
-    compact_settings.set_visible(!loaded_config.compact_mode);
-
-    let controls_for_compact = controls_box.clone();
-    let window_for_compact = window.clone();
-    let status_for_compact = status.clone();
-    let device_for_compact = devices.clone();
-    compact_settings.connect_clicked(move |_| {
-        let Some(device) = device_for_compact.active_id().map(|id| id.to_string()) else {
-            status_for_compact.set_text("Connect the camera before configuring Compact mode controls.");
-            return;
-        };
-        show_compact_settings(&window_for_compact, &device, &controls_for_compact, &status_for_compact);
-    });
-
-    for (button, compact_value) in [(full_mode.clone(), false), (compact_mode.clone(), true)] {
-        let compact_state = compact_mode_state.clone();
-        let window_mode = window.clone();
-        let root_mode = root.clone();
-        let navigation_mode = navigation.clone();
-        let switcher_mode = switcher.clone();
-        let stack_mode = stack.clone();
-        let controls_mode = controls_box.clone();
-        let status_mode = status.clone();
-        let theme_mode = theme.clone();
-        let compact_settings_mode = compact_settings.clone();
-        let devices_mode = devices.clone();
-        let paned_mode = main_paned.clone();
-        let preview_mode = preview_frame.clone();
-        let content_mode = content.clone();
-        button.connect_toggled(move |selected| {
-            if !selected.is_active() { return; }
-            if let Err(error) = update_config_checked(|config| config.compact_mode = compact_value) {
-                status_mode.set_text(&format!("Could not save layout mode: {error}"));
-                return;
-            }
-            compact_state.set(compact_value);
-            if compact_value {
-                stack_mode.set_visible_child_name("controls");
-            }
-            window_mode.set_default_size(if compact_value { 420 } else { 1280 }, if compact_value { 760 } else { 820 });
-            window_mode.set_size_request(if compact_value { 340 } else { 760 }, if compact_value { 480 } else { 500 });
-            let width = window_mode.width();
-            let wide = width >= 1100 && !compact_value;
-            navigation_mode.set_visible(!compact_value && wide);
-            switcher_mode.set_visible(!compact_value && !wide);
-            theme_mode.set_visible(!compact_value);
-            compact_settings_mode.set_visible(!compact_value);
-            apply_compact_layout(root_mode.upcast_ref(), compact_value || width < 680);
-            configure_workspace(
-                &paned_mode, &preview_mode, &content_mode, compact_value, width,
-            );
-            let config = current_config();
-            ui::layout::apply_compact_visibility(
-                controls_mode.upcast_ref(),
-                compact_value,
-                &config.compact_controls,
-            );
-            if let Some(device) = devices_mode.active_id() {
-                ui::controls::populate_controls(&device, &controls_mode, &window_mode, &status_mode);
-            }
-        });
-    }
-
     let footer = gtk::Label::new(Some(
         "Pan and tilt controls move the physical gimbal. USB capture requires tshark and pkexec."
     ));
@@ -1699,12 +1560,10 @@ fn build_ui(app: &gtk::Application) {
         if let Some(id) = combo.active_id() {
             let restore_message = apply_saved_video_mode(&id);
             ui::controls::populate_controls(&id, &controls, &win, &status_select);
-            
             if let Some(message) = restore_message {
                 status_select.set_text(&message);
             }
         } else {
-            
         }
     });
 
@@ -1720,8 +1579,7 @@ fn build_ui(app: &gtk::Application) {
             devices_refresh.set_active_id(Some(first));
         } else {
             clear_box(&controls_refresh);
-            
-            if usb_camera_present() {
+                if usb_camera_present() {
                 status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
             } else {
                 status_refresh.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera.");
@@ -1732,7 +1590,6 @@ fn build_ui(app: &gtk::Application) {
     if let Some(first) = nodes.first() {
         let restore_message = apply_saved_video_mode(first);
         ui::controls::populate_controls(first, &controls_box, &window, &status);
-        
         if let Some(message) = restore_message {
             status.set_text(&message);
         }
@@ -1745,7 +1602,7 @@ fn build_ui(app: &gtk::Application) {
             status.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera. Expected USB ID: 3564:fef9.");
         }
     }
-     window.present();
+    window.present();
 }
 
 
