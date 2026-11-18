@@ -488,7 +488,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
                 led_slider_for_toggle.set_sensitive(!enabled);
             }
         }
-        glib::Propagation::Proceed
+        gtk::glib::Propagation::Proceed
     });
 
     let led_note = gtk::Label::new(Some("Brightness changes apply immediately while the LED is enabled. The camera reports brightness at status byte 0x20; it does not separately report the LED power switch state."));
@@ -967,7 +967,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
                         switch.set_active(!enabled);
                     }
                 }
-                glib::Propagation::Proceed
+                gtk::glib::Propagation::Proceed
             });
             row.append(&title);
             row.append(&toggle);
