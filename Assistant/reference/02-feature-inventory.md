@@ -371,10 +371,12 @@ indicator.
 protocol-mapped from controlled Tiny 2 Lite Linux captures. App-side
 hardware validation is pending.
 
-All three settings use Extension Unit 2, selector `0x06`, with a
-60-byte configuration block returned by GET_CUR.
+All three settings use Extension Unit 2, selector `0x06`, but
+Disable microphone uses a distinct fixed command payload rather than
+the GET_CUR status block. Auto gain and noise reduction are fields in
+the 60-byte GET_CUR configuration block.
 
-| Setting | Byte offset (zero-based) | Values |
+| Setting | Payload byte offset (zero-based) | Values |
 |---|---:|---|
 | Disable microphone | 2 | 0 = Disabled, 1 = Enabled |
 | Noise reduction | 8 | 0 = Off, 1 = Weak, 2 = Medium, 3 = Strong |
