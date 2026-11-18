@@ -1436,11 +1436,11 @@ fn build_ui(app: &gtk::Application) {
 
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control")
-        .default_width(if loaded_config.compact_mode { 420 } else { 960 })
-        .default_height(if loaded_config.compact_mode { 760 } else { 720 })
+        .default_width(if loaded_config.compact_mode { 420 } else { 1280 })
+        .default_height(if loaded_config.compact_mode { 760 } else { 820 })
         .build();
     window.set_size_request(
-        if loaded_config.compact_mode { 340 } else { 620 },
+        if loaded_config.compact_mode { 340 } else { 760 },
         if loaded_config.compact_mode { 480 } else { 500 },
     );
     window.add_css_class("tiny4-window");
@@ -1676,6 +1676,7 @@ fn build_ui(app: &gtk::Application) {
         let status_mode = status.clone();
         let theme_mode = theme.clone();
         let compact_settings_mode = compact_settings.clone();
+        let devices_mode = devices.clone();
         let paned_mode = main_paned.clone();
         let preview_mode = preview_frame.clone();
         let content_mode = content.clone();
@@ -1690,7 +1691,7 @@ fn build_ui(app: &gtk::Application) {
                 stack_mode.set_visible_child_name("controls");
             }
             window_mode.set_default_size(if compact_value { 420 } else { 960 }, if compact_value { 760 } else { 720 });
-            window_mode.set_size_request(if compact_value { 340 } else { 620 }, if compact_value { 480 } else { 500 });
+            window_mode.set_size_request(if compact_value { 340 } else { 760 }, if compact_value { 480 } else { 500 });
             let width = window_mode.width();
             let wide = width >= 1100 && !compact_value;
             navigation_mode.set_visible(!compact_value && wide);
@@ -1707,6 +1708,9 @@ fn build_ui(app: &gtk::Application) {
                 compact_value,
                 &config.compact_controls,
             );
+            if let Some(device) = devices_mode.active_id() {
+                ui::controls::populate_controls(&device, &controls_mode, &window_mode, &status_mode);
+            }
         });
     }
 
