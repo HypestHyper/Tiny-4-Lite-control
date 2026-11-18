@@ -392,11 +392,14 @@ Medium, with the corresponding byte values read back. Auto gain was
 captured through Off → On → Off → On, also with matching read-backs.
 These mappings are independent in the observed traces.
 
-The app reads the current 60-byte block before each write, modifies
-only the selected setting's byte, and sends the full block with SET_CUR.
-This read-modify-write approach preserves unrelated fields. The UI
-initializes from camera read-back and uses the last successful local
-setting only when GET_CUR is unavailable. A successful ioctl is host
+Auto gain and noise reduction use read-modify-write: the app reads
+the current status block, changes only the selected setting's byte, and
+sends the full block with SET_CUR. This preserves unrelated fields.
+Disable microphone uses a distinct captured 60-byte command payload
+with prefix `1c 01 <state>` (0 = disabled, 1 = enabled) and zero-filled
+remaining bytes. It is not the GET_CUR status block. No matching
+read-back has been established, so the app displays only the last
+successfully submitted local state. A successful ioctl is host
 transport evidence, not independent proof that the camera applied the
 change.
 
