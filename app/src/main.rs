@@ -1,6 +1,6 @@
 mod capture;
 mod config;
-mod design;
+mod ui;
 
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -973,6 +973,7 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
 }
 
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
+    let scroll_position = ui::layout::capture_scroll_position(container.upcast_ref());
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
         Ok(v) => v, Err(e) => { status.set_text(&format!("Could not read controls: {e}")); return; }
@@ -1144,6 +1145,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
+    ui::layout::restore_scroll_position(scroll_position);
 }
 
 
@@ -1330,7 +1332,7 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
 }
 
 
-fn save_theme_mode(mode: design::ThemeMode) {
+fn save_theme_mode(mode: ui::design::ThemeMode) {
     update_config(|config| config.theme = mode.name().to_string());
 }
 
@@ -1362,12 +1364,13 @@ fn build_ui(app: &gtk::Application) {
         Err(error) => { eprintln!("Settings load warning: {error}"); config::AppConfig::default() }
     };
     APP_CONFIG.with(|current| *current.borrow_mut() = loaded_config.clone());
-    let theme_provider = design::install();
-    let initial_theme = design::ThemeMode::from_name(&loaded_config.theme);
-    design::apply_theme(&theme_provider, initial_theme);
+    let theme_provider = ui::design::install();
+    let initial_theme = ui::design::ThemeMode::from_name(&loaded_config.theme);
+    ui::design::apply_theme(&theme_provider, initial_theme);
 
     let window = gtk::ApplicationWindow::builder().application(app)
-        .title("Tiny 2 Lite Control").default_width(1040).default_height(780).build();
+        .title("Tiny 2 Lite Control").default_width(960).default_height(720).build();
+    window.set_size_request(620, 500);
     window.add_css_class("tiny4-window");
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -1397,8 +1400,8 @@ fn build_ui(app: &gtk::Application) {
     theme.set_tooltip_text(Some("Choose whether the app follows the desktop theme or uses a fixed theme."));
     let theme_provider_change = theme_provider.clone();
     theme.connect_changed(move |combo| {
-        let mode = design::ThemeMode::from_name(combo.active_id().as_deref().unwrap_or("system"));
-        design::apply_theme(&theme_provider_change, mode);
+        let mode = ui::design::ThemeMode::from_name(combo.active_id().as_deref().unwrap_or("system"));
+        ui::design::apply_theme(&theme_provider_change, mode);
         save_theme_mode(mode);
     });
     header.append(&app_icon);
@@ -1469,8 +1472,8 @@ fn build_ui(app: &gtk::Application) {
     let root_responsive = root.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
         let width = window.width();
-        let wide = width >= 760;
-        let compact = width < 620;
+        let wide = width >= 900;
+        let compact = width < 680;
         navigation_responsive.set_visible(wide);
         switcher_responsive.set_visible(!wide);
         root_responsive.set_margin_top(if compact { 6 } else { 12 });
