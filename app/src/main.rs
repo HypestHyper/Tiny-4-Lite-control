@@ -1650,6 +1650,7 @@ fn build_ui(app: &gtk::Application) {
     });
 
     if let Some(first) = nodes.first() {
+        ui::controls::populate_controls(first, &controls_box, &window, &status);
         restart_preview(first, video::current_mode(first));
     }
     if nodes.is_empty() {
