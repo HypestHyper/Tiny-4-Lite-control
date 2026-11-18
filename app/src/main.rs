@@ -521,7 +521,8 @@ fn set_microphone_disabled(device: &str, disabled: bool) -> Result<(), String> {
     // Unlike the GET_CUR status block, this captured command has its own
     // fixed 60-byte payload. Its first three bytes are 1c 01 <state>.
     let mut data = [0u8; 60];
-    data[..3].copy_from_slice(&[0x1c, 0x01, microphone_disabled_wire_value(disabled)]);
+    data[..2].copy_from_slice(&[0x1c, 0x01]);
+    data[XU_AUDIO_MICROPHONE_DISABLED_OFFSET] = microphone_disabled_wire_value(disabled);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_microphone_disabled = Some(disabled));
     Ok(())
