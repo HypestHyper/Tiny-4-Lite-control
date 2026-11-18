@@ -229,15 +229,19 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             let window_refresh = window.clone();
             let refresh_device = dev.clone();
             toggle.connect_state_set(move |switch, active| {
-                let result = set_control(&dev, &name, if active { 1 } else { 0 });
-                let succeeded = result.is_ok();
-                status_label.set_text(&result.map(|_| format!("{name}: {}", if active { "On" } else { "Off" }))
-                    .unwrap_or_else(|error| format!("Could not set {name}: {error}")));
-                if succeeded && matches!(name.as_str(), "white_balance_automatic" | "focus_automatic_continuous") {
-                    populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+                match set_control(&dev, &name, if active { 1 } else { 0 }) {
+                    Ok(()) => {
+                        status_label.set_text(&format!("{name}: {}", if active { "On" } else { "Off" }));
+                        if matches!(name.as_str(), "white_balance_automatic" | "focus_automatic_continuous") {
+                            populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+                        }
+                    }
+                    Err(error) => {
+                        status_label.set_text(&format!("Could not set {name}: {error}"));
+                        switch.set_active(!active);
+                    }
                 }
-                switch.set_state(active);
-                glib::Propagation::Stop
+                gtk::glib::Propagation::Proceed
             });
             row.append(&toggle);
         } else if control.kind.contains("menu") && !control.menu.is_empty() {
