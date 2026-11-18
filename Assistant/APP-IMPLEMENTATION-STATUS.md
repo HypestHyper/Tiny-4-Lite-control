@@ -112,11 +112,11 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Tracking speed
 
-- Standard and Sport commands are implemented.
+- Standard and Sport commands are implemented and both modes have now been physically confirmed working on the user's Tiny 2 Lite.
 - Sport encoding `0x02` is associated with firmware 6.2.5.x in the research.
 - An older/legacy value `0x21` has been observed/reported for older firmware.
 - Current app sends the documented Sport command but does not automatically identify firmware or choose the legacy encoding.
-- Always verify the resulting status byte after a command. Firmware compatibility remains an open validation item.
+- Hardware behaviour is confirmed on the tested camera/firmware. Cross-firmware compatibility remains an open research item, not a pending basic hardware test.
 
 ### Gesture commands
 
