@@ -422,67 +422,84 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     fov_note.add_css_class("dim-label");
     layout.append(&fov_note);
 
-    let led_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    led_row.add_css_class("adaptive-row");
+    let led_frame = gtk::Frame::new(Some("LED illumination"));
+    let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let led_power_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    led_power_row.add_css_class("adaptive-row");
     let led_label = gtk::Label::new(Some("LED power"));
-    led_label.set_width_chars(22);
     led_label.set_xalign(0.0);
-    let led_on = gtk::Button::with_label("On");
-    let dev_on = device.to_string();
-    let intensity_on = gtk::ComboBoxText::new();
-    intensity_on.append(Some("1"), "1");
-    intensity_on.append(Some("2"), "2");
-    intensity_on.append(Some("3"), "3");
-    intensity_on.set_active_id(Some("1"));
-    if let Ok(current) = xu_status(device) {
-        if (1..=3).contains(&current[0x20]) {
-            intensity_on.set_active_id(Some(&current[0x20].to_string()));
+    led_label.set_hexpand(true);
+
+    let initial_led = xu_status(device).ok().map(|data| data[0x20]).unwrap_or(0);
+    let led_enabled = initial_led > 0;
+    let led_toggle = gtk::Switch::new();
+    led_toggle.set_active(led_enabled);
+    led_toggle.set_valign(gtk::Align::Center);
+    led_power_row.append(&led_label);
+    led_power_row.append(&led_toggle);
+    led_layout.append(&led_power_row);
+
+    let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    led_level_row.add_css_class("adaptive-row");
+    let led_level_label = gtk::Label::new(Some("Brightness"));
+    led_level_label.set_width_chars(22);
+    led_level_label.set_xalign(0.0);
+    let led_level = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 3.0, 1.0);
+    led_level.set_digits(0);
+    led_level.set_draw_value(true);
+    led_level.set_hexpand(true);
+    led_level.add_mark(1.0, gtk::PositionType::Bottom, Some("1"));
+    led_level.add_mark(2.0, gtk::PositionType::Bottom, Some("2"));
+    led_level.add_mark(3.0, gtk::PositionType::Bottom, Some("3"));
+    led_level.set_value(if (1..=3).contains(&initial_led) { initial_led as f64 } else { 1.0 });
+    led_level.set_sensitive(led_enabled);
+    led_level_row.append(&led_level_label);
+    led_level_row.append(&led_level);
+    led_layout.append(&led_level_row);
+
+    let led_slider_status = status.clone();
+    let led_slider_device = device.to_string();
+    led_level.connect_value_changed(move |scale| {
+        if !scale.is_sensitive() { return; }
+        let level = scale.value().round() as u8;
+        let result = set_led_brightness(&led_slider_device, level);
+        led_slider_status.set_text(&result.map(|_| format!("LED brightness set to level {level}."))
+            .unwrap_or_else(|e| format!("Could not set LED brightness: {e}")));
+    });
+
+    let led_slider_for_toggle = led_level.clone();
+    let led_status_toggle = status.clone();
+    let led_device_toggle = device.to_string();
+    led_toggle.connect_state_set(move |switch, enabled| {
+        led_slider_for_toggle.set_sensitive(enabled);
+        let result = if enabled {
+            let level = led_slider_for_toggle.value().round() as u8;
+            set_led_brightness(&led_device_toggle, level)
+                .and_then(|_| set_led_power(&led_device_toggle, true))
+                .map(|_| format!("LED enabled at brightness level {level}."))
+        } else {
+            set_led_power(&led_device_toggle, false).map(|_| "LED disabled.".to_string())
+        };
+        match result {
+            Ok(message) => led_status_toggle.set_text(&message),
+            Err(error) => {
+                led_status_toggle.set_text(&format!("LED power change failed: {error}"));
+                switch.set_active(!enabled);
+                led_slider_for_toggle.set_sensitive(!enabled);
+            }
         }
-    }
-    intensity_on.set_hexpand(true);
-    let intensity_for_on = intensity_on.clone();
-    let status_on = status.clone();
-    led_on.connect_clicked(move |_| {
-        let result = intensity_for_on.active_id()
-            .ok_or_else(|| "Select an LED brightness level first.".to_string())
-            .and_then(|id| id.parse::<u8>().map_err(|_| "Invalid LED brightness.".to_string()))
-            .and_then(|level| {
-                set_led_brightness(&dev_on, level)?;
-                set_led_power(&dev_on, true)?;
-                let actual = xu_status(&dev_on)?[0x20];
-                if actual == level {
-                    Ok(format!("LED on. Brightness level {level} (raw {actual}) confirmed."))
-                } else {
-                    Err(format!("LED switched on at level {level}, but brightness status reports raw value {actual}."))
-                }
-            });
-        status_on.set_text(&result.unwrap_or_else(|e| format!("LED power change failed: {e}")));
+        glib::Propagation::Proceed
     });
-    let led_off = gtk::Button::with_label("Off");
-    let dev_off = device.to_string();
-    let status_off = status.clone();
-    led_off.connect_clicked(move |_| {
-        let result = set_led_power(&dev_off, false)
-            .map(|_| "LED off command sent.".to_string());
-        status_off.set_text(&result.unwrap_or_else(|e| format!("LED power change failed: {e}")));
-    });
-    led_row.append(&led_label);
-    led_row.append(&intensity_on);
-    led_row.append(&led_on);
-    led_row.append(&led_off);
-    layout.append(&led_row);
 
-    let led_brightness = gtk::Label::new(Some("LED brightness status unavailable"));
-    led_brightness.set_xalign(0.0);
-    led_brightness.add_css_class("dim-label");
-    if let Ok(current) = xu_status(device) {
-        let level = current[0x20];
-        let state = match level { 0 => "Off", 1 => "Level 1", 2 => "Level 2", 3 => "Level 3", _ => "Unknown" };
-        led_brightness.set_text(&format!("LED status: {state} (status 0x20 = {level})"));
-    }
-    layout.append(&led_brightness);
+    let led_note = gtk::Label::new(Some("Brightness changes apply immediately while the LED is enabled. The camera reports brightness at status byte 0x20; it does not separately report the LED power switch state."));
+    led_note.set_wrap(true);
+    led_note.set_xalign(0.0);
+    led_note.add_css_class("dim-label");
+    led_layout.append(&led_note);
+    led_frame.set_child(Some(&led_layout));
+    layout.append(&led_frame);
 
-    let note = gtk::Label::new(Some("LED power uses selector 0x06 tag 0x18. Brightness uses tag 0x1A with three levels. The capture confirms status byte 0x20 reports 0 when off and 1–3 for brightness levels 1–3. FOV read-back uses status byte 0x11."));
+    let note = gtk::Label::new(Some("FOV read-back uses status byte 0x11."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -530,49 +547,40 @@ fn set_focus_mode(device: &str, mode: FocusMode) -> Result<(), String> {
 fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Autofocus mode"));
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("adaptive-row");
     row.set_margin_top(8);
     row.set_margin_bottom(8);
     row.set_margin_start(10);
     row.set_margin_end(10);
 
-    let label = gtk::Label::new(Some("Focus area"));
-    label.set_width_chars(22);
-    label.set_xalign(0.0);
-    let mode = gtk::ComboBoxText::new();
-    mode.append(Some("global"), "Global Focus");
-    mode.append(Some("face"), "Face Focus");
-    mode.set_hexpand(true);
+    let global = gtk::CheckButton::with_label("Global Focus");
+    let face = gtk::CheckButton::with_label("Face Focus");
+    face.set_group(Some(&global));
+    // The capture baseline was Global; the camera provides no read-back.
+    global.set_active(true);
 
-    let apply = gtk::Button::with_label("Apply");
-    let selected = mode.clone();
-    let dev = device.to_string();
-    let status_mode = status.clone();
-    apply.connect_clicked(move |_| {
-        let result = selected.active_id()
-            .and_then(|id| match id.as_str() {
-                "global" => Some(FocusMode::Global),
-                "face" => Some(FocusMode::Face),
-                _ => None,
-            })
-            .ok_or_else(|| "Select Global Focus or Face Focus first.".to_string())
-            .and_then(|value| set_focus_mode(&dev, value)
-                .map(|_| format!("{} command sent. The camera does not expose focus-mode read-back; verify the behavior.", value.label())));
-        status_mode.set_text(&result.unwrap_or_else(|error| format!("Focus-mode change failed: {error}")));
+    let dev_global = device.to_string();
+    let status_global = status.clone();
+    global.connect_toggled(move |button| {
+        if button.is_active() {
+            let result = set_focus_mode(&dev_global, FocusMode::Global);
+            status_global.set_text(&result.map(|_| "Global Focus selected.".to_string())
+                .unwrap_or_else(|e| format!("Could not select Global Focus: {e}")));
+        }
+    });
+    let dev_face = device.to_string();
+    let status_face = status.clone();
+    face.connect_toggled(move |button| {
+        if button.is_active() {
+            let result = set_focus_mode(&dev_face, FocusMode::Face);
+            status_face.set_text(&result.map(|_| "Face Focus selected.".to_string())
+                .unwrap_or_else(|e| format!("Could not select Face Focus: {e}")));
+        }
     });
 
-    row.append(&label);
-    row.append(&mode);
-    row.append(&apply);
+    row.append(&global);
+    row.append(&face);
     frame.set_child(Some(&row));
-
-    let note = gtk::Label::new(Some("Global and Face are mutually exclusive autofocus modes. The selector starts unselected because the camera does not report the current mode."));
-    note.set_wrap(true);
-    note.set_xalign(0.0);
-    note.add_css_class("dim-label");
-
     container.append(&frame);
-    container.append(&note);
 }
 
 fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
@@ -840,19 +848,15 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     ratio_scale.set_draw_value(true);
     ratio_scale.set_hexpand(true);
     ratio_scale.set_value_pos(gtk::PositionType::Right);
-    let ratio_apply = gtk::Button::with_label("Apply ratio");
     let dev_ratio = device.to_string();
-    let ratio_control = ratio_scale.clone();
     let status_ratio = status.clone();
-    ratio_apply.connect_clicked(move |_| {
-        let ratio = ratio_control.value() as f32;
+    ratio_scale.connect_value_changed(move |slider| {
+        let ratio = slider.value() as f32;
         let result = set_gesture_zoom_ratio(&dev_ratio, ratio);
-        status_ratio.set_text(&result.map(|_| format!(
-            "Gesture zoom ratio command sent: {ratio:.2}×. The camera does not expose confirmed ratio read-back."
-        )).unwrap_or_else(|e| format!("Could not set gesture zoom ratio: {e}")));
+        status_ratio.set_text(&result.map(|_| format!("Gesture zoom ratio set to {ratio:.2}×."))
+            .unwrap_or_else(|e| format!("Could not set gesture zoom ratio: {e}")));
     });
     ratio_row.append(&ratio_scale);
-    ratio_row.append(&ratio_apply);
     ratio_layout.append(&ratio_row);
     ratio_frame.set_child(Some(&ratio_layout));
     layout.append(&ratio_frame);
@@ -931,11 +935,45 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         .find(|c| c.name == "focus_automatic_continuous")
         .map(|c| c.value != 0)
         .unwrap_or(false);
+    let total = controls.len();
     if autofocus_enabled {
         add_focus_mode_control(container, device, status);
     }
-    let total = controls.len();
     for control in controls {
+        if autofocus_enabled && control.name == "focus_absolute" { continue; }
+        if control.name == "focus_automatic_continuous" {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            row.add_css_class("adaptive-row");
+            let title = gtk::Label::new(Some("Autofocus"));
+            title.set_width_chars(22);
+            title.set_xalign(0.0);
+            title.set_hexpand(true);
+            let toggle = gtk::Switch::new();
+            toggle.set_active(control.value != 0);
+            toggle.set_valign(gtk::Align::Center);
+            let dev = device.to_string();
+            let controls_refresh = container.clone();
+            let window_refresh = window.clone();
+            let status_refresh = status.clone();
+            let name = control.name.clone();
+            toggle.connect_state_set(move |switch, enabled| {
+                match set_control(&dev, &name, if enabled { 1 } else { 0 }) {
+                    Ok(()) => {
+                        status_refresh.set_text(if enabled { "Autofocus enabled. Choose Global or Face Focus." } else { "Autofocus disabled. Manual focus is available." });
+                        populate_controls(&dev, &controls_refresh, &window_refresh, &status_refresh);
+                    }
+                    Err(error) => {
+                        status_refresh.set_text(&format!("Could not change autofocus: {error}"));
+                        switch.set_active(!enabled);
+                    }
+                }
+                glib::Propagation::Proceed
+            });
+            row.append(&title);
+            row.append(&toggle);
+            container.append(&row);
+            continue;
+        }
         if (control.disabled && control.name != "zoom_absolute" && control.name != "focus_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.add_css_class("adaptive-row");
