@@ -371,10 +371,10 @@ indicator.
 distance are protocol-mapped from controlled Tiny 2 Lite Linux
 captures. App-side hardware validation is pending.
 
-All three settings use Extension Unit 2, selector `0x06`, but
-Disable microphone uses a distinct fixed command payload rather than
-the GET_CUR status block. Auto gain and noise reduction are fields in
-the 60-byte GET_CUR configuration block.
+All four controls use Extension Unit 2, selector `0x06`, but they do
+not all share one payload format. Disable microphone and radio distance
+use distinct fixed command payloads; auto gain and noise reduction are
+fields in the 60-byte GET_CUR configuration block.
 
 | Setting | Payload byte offset (zero-based) | Values |
 |---|---:|---|
