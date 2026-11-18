@@ -188,6 +188,7 @@ mod tests {
         assert!(!config.service.auto_sleep_enabled);
         assert_eq!(config.service.auto_sleep_timeout_minutes, 10);
         assert!(config.v4l2_controls.is_empty());
+        assert!(config.hdr_enabled.is_none());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
         assert!(!config.compact_mode);
