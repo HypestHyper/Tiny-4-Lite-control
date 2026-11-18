@@ -210,14 +210,14 @@ for raw request details and the accompanying zoom correlation.
 
 ### 4.10 LED power and brightness
 
-**Status:** Brightness command family recovered, but current app implementation is defective and the separate tag 0x18 behaviour is unresolved. Do not describe the LED power switch as verified.
+**Status:** Four settings are confirmed: Off plus brightness levels 1–3. The tag 0x1A setting command is implemented with raw values 0=Off and 1–3=brightness levels. Tag 0x18 behaviour remains unresolved and is excluded from the current UI.
 
-- Selector `0x06`, tag `0x1A`, payload `[0x1A, 0x01, raw]` = brightness.
-- The four user-facing brightness levels map to raw values 0, 1, 2, 3.
-- Status byte `0x21` reports raw brightness; it does not establish LED power.
-- Tag `0x18` has independent 0/1 writes in the capture, but its semantics are not settled. The current app assumed Off/On; live user testing found that the On command makes the LED blink and the Off command leaves it continuously lit. This conflicts with a simple power-switch interpretation. It may control a blink/indicator mode, but that is only a hypothesis.
+- Selector `0x06`, tag `0x1A`, payload `[0x1A, 0x01, raw]` selects the LED setting.
+- Raw `0` = Off; raw `1`, `2`, and `3` = brightness levels 1, 2, and 3.
+- Status byte `0x21` reports the selected setting.
+- Tag `0x18` has separate 0/1 writes in the capture, but its semantics are unresolved. The user's live test found that the On command makes the LED blink and the Off command leaves it continuously lit. It is not verified as LED power and is not used by the current UI.
 
-The current app implementation has three definite defects: it exposes only three brightness levels instead of four, reads `data[0x20]` instead of status byte `data[0x21]`, and derives the power-switch initial state from brightness. The current ordering also sends a brightness write before tag `0x18` when enabling. Do not change tag `0x18` semantics or claim it is power until a controlled capture isolates the command and its visible effect. Do not interpret brightness raw value 0 as LED power-off.
+The earlier app implementation subtracted one from the selected brightness level, so level 1 sent raw `0` and switched the LED Off. It also sent tag `0x18` as if it were a power switch. The corrected UI exposes a single Off/1/2/3 setting control and sends the selected raw value directly. Do not reinterpret tag `0x18` without evidence.
 
 ### 4.11 Status block and read-back
 
