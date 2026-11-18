@@ -56,6 +56,49 @@ fn restart_preview(device: &str, mode: Option<video::VideoMode>) {
     });
 }
 
+/// Restore the remembered host capture mode only when this camera still
+/// advertises it. This does not replay camera movement or vendor settings.
+fn apply_saved_video_mode(device: &str) -> Option<String> {
+    let saved = current_config().video_mode?;
+    let mode = video::VideoMode {
+        width: saved.width,
+        height: saved.height,
+        pixel_format: saved.pixel_format,
+        frame_rate_milli: saved.frame_rate_milli,
+    };
+    let capabilities = match video::capabilities(device) {
+        Ok(value) => value,
+        Err(error) => return Some(format!("Could not check the saved video mode: {error}")),
+    };
+    let supported = capabilities.iter().any(|capability|
+        capability.pixel_format == mode.pixel_format
+            && capability.width == mode.width
+            && capability.height == mode.height
+            && capability.frame_rates_milli.contains(&mode.frame_rate_milli)
+    );
+    if !supported {
+        return Some(format!(
+            "Saved capture mode {} × {} · {} · {:.3} fps is no longer advertised; keeping the camera's current mode.",
+            mode.width, mode.height, mode.pixel_format, mode.frame_rate_milli as f64 / 1000.0
+        ));
+    }
+    let current = video::current_mode(device);
+    if current.as_ref() == Some(&mode) { return None; }
+    stop_preview();
+    match video::set_mode(device, &mode) {
+        Ok(()) => Some(format!(
+            "Restored capture mode {} × {} · {} · {:.3} fps.",
+            mode.width, mode.height, mode.pixel_format, mode.frame_rate_milli as f64 / 1000.0
+        )),
+        Err(error) => {
+            if let Some(previous) = current {
+                let _ = video::set_mode(device, &previous);
+            }
+            Some(format!("Could not restore the saved capture mode: {error}"))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Control {
     name: String, kind: String, min: i64, max: i64, step: i64,
@@ -1625,8 +1668,12 @@ fn build_ui(app: &gtk::Application) {
     let status_select = status.clone();
     devices.connect_changed(move |combo| {
         if let Some(id) = combo.active_id() {
+            let restore_message = apply_saved_video_mode(&id);
             ui::controls::populate_controls(&id, &controls, &win, &status_select);
             restart_preview(&id, video::current_mode(&id));
+            if let Some(message) = restore_message {
+                status_select.set_text(&message);
+            }
         } else {
             restart_preview("", None);
         }
@@ -1654,8 +1701,12 @@ fn build_ui(app: &gtk::Application) {
     });
 
     if let Some(first) = nodes.first() {
+        let restore_message = apply_saved_video_mode(first);
         ui::controls::populate_controls(first, &controls_box, &window, &status);
         restart_preview(first, video::current_mode(first));
+        if let Some(message) = restore_message {
+            status.set_text(&message);
+        }
     }
     if nodes.is_empty() {
         restart_preview("", None);
