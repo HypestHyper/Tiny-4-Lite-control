@@ -27,7 +27,7 @@ pub fn restore_scroll_position(position: Option<(gtk::Adjustment, f64)>) {
 
 /// Mark a control row or section as selectable in Compact mode.
 pub fn mark_compact_item(widget: &gtk::Widget, key: &str) {
-    let class = format!("compact-item-{}", key.replace(':', "-").replace('_', "-"));
+    let class = format!("compact-item-{}", key.replace(':', "--").replace('_', "-"));
     widget.add_css_class(&class);
 }
 
@@ -37,7 +37,7 @@ pub fn apply_compact_visibility(widget: &gtk::Widget, compact: bool, selected: &
     let classes = widget.css_classes();
     let item_key = classes.iter().find_map(|class| {
         class.as_str().strip_prefix("compact-item-").map(|suffix| {
-            suffix.replace('-', ":")
+            suffix.replace("--", ":").replace('-', "_")
         })
     });
     if let Some(key) = item_key {
