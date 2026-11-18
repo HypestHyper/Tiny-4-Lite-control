@@ -34,6 +34,14 @@ not the final UI. UI redesign is deferred.
   Selection is tracked locally as the last successfully submitted
   command, not actual camera state. This is distinct from face-priority
   auto-exposure.
+- Auto Exposure priority has its own grouped Global / Face control, shown
+  only when V4L2 `auto_exposure` is Auto (menu value 0). The 2026-11-18
+  Linux capture identified selector `0x06` SET_CUR payloads:
+  Face = `03 01 00`, Global = `03 01 01`, padded to 60 bytes with
+  zeros. This is not the autofocus command. The last submitted selection
+  is persisted locally, but no reliable device read-back is known.
+  Exposure compensation (−3 to +3) is not implemented yet; its command
+  encoding is pending capture analysis.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
   (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
