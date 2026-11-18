@@ -75,6 +75,7 @@ impl PreviewContext {
         let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(2);
         let mode_reader = mode.clone();
         thread::spawn(move || read_frames(stdout, sender, mode_reader));
+        let mode_display = mode.clone();
 
         let picture = self.picture.clone();
         let placeholder = self.placeholder.clone();
@@ -89,13 +90,13 @@ impl PreviewContext {
                 }
             }
             if let Some(frame) = latest {
-                if let Some(pixbuf) = decode_frame(&frame, mode) {
+                if let Some(pixbuf) = decode_frame(&frame, &mode_display) {
                     picture.set_pixbuf(Some(&pixbuf));
                     placeholder.set_visible(false);
                     status.set_text(&format!(
                         "Live preview · {} × {} · {} · {:.3} fps",
-                        mode.width, mode.height, mode.pixel_format,
-                        mode.frame_rate_milli as f64 / 1000.0
+                        mode_display.width, mode_display.height, mode_display.pixel_format,
+                        mode_display.frame_rate_milli as f64 / 1000.0
                     ));
                 }
             }
