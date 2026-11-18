@@ -43,7 +43,7 @@ fn v4l2_control_group(name: &str) -> &'static str {
     }
 }
 
-fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
+pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let scroll_position = ui::layout::capture_scroll_position(container.upcast_ref());
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
