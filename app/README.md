@@ -159,10 +159,18 @@ The Capture page:
 - Finds the camera's USB bus/device address directly through sysfs.
 - Records continuous `usbmonN` traffic using `tshark`; elevated capture
   access is requested through `pkexec` when needed.
-- Supports timestamped baseline/change checkpoints.
-- Produces a raw `.pcapng` and a text report with checkpoint times,
+- Supports a baseline plus bracketed action windows. Enter the intended
+  state, click **Begin action**, switch to OBSBOT Center and perform the
+  change, then return and click **End action**. This records the interval
+  around the action rather than requiring a simultaneous checkpoint click.
+- Each action window stores both monotonic elapsed time and Unix epoch
+  timestamps. The decoded packet rows include `frame.time_epoch`, allowing
+  USB requests to be matched against the action window even after switching
+  between applications. `frame.time_relative` is retained as well.
+- Produces a raw `.pcapng` and a text report with baseline/action windows,
   transfer summaries, decoded control-transfer fields, URB IDs/status,
-  and payload bytes when TShark exposes them.
+  absolute and relative packet timestamps, and payload bytes when TShark
+  exposes them.
 - Includes a browser for saved reports and their matching raw captures.
 
 Capture output is saved under:
