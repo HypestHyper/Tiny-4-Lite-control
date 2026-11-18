@@ -445,13 +445,13 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
 // Tiny 2 Lite HDR control, captured as a 60-byte selector 0x06 SET_CUR.
 // The third byte is inverted: 0x00 enables HDR, 0x01 disables it.
 fn hdr_payload(enabled: bool) -> [u8; 3] {
-    [0x01, 0x01, if enabled { 0x00 } else { 0x01 }]
+    [0x01, 0x01, if enabled { 0x01 } else { 0x00 }]
 }
 
 fn hdr_state_from_status(status: &[u8; 60]) -> Option<bool> {
     match status[0x06] {
-        0x00 => Some(true),
-        0x01 => Some(false),
+        0x00 => Some(false),
+        0x01 => Some(true),
         _ => None,
     }
 }
@@ -1735,14 +1735,14 @@ mod xu_protocol_tests {
 
     #[test]
     fn hdr_payload_and_status_mapping_match_tiny_2_lite_capture() {
-        assert_eq!(hdr_payload(true), [0x01, 0x01, 0x00]);
-        assert_eq!(hdr_payload(false), [0x01, 0x01, 0x01]);
+        assert_eq!(hdr_payload(true), [0x01, 0x01, 0x01]);
+        assert_eq!(hdr_payload(false), [0x01, 0x01, 0x00]);
 
         let mut status = [0u8; 60];
         status[0x06] = 0x00;
-        assert_eq!(hdr_state_from_status(&status), Some(true));
-        status[0x06] = 0x01;
         assert_eq!(hdr_state_from_status(&status), Some(false));
+        status[0x06] = 0x01;
+        assert_eq!(hdr_state_from_status(&status), Some(true));
         status[0x06] = 0xff;
         assert_eq!(hdr_state_from_status(&status), None);
     }
