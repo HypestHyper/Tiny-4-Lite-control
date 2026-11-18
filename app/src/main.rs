@@ -363,7 +363,7 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
-fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) {
+fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera settings"));
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
     layout.set_margin_top(8);
@@ -384,11 +384,14 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
         let button = gtk::Button::with_label(label);
         let dev = device.to_string();
         let status_label = status.clone();
+        let controls_refresh = container.clone();
+        let window_refresh = window.clone();
+        let refresh_device = dev.clone();
         button.connect_clicked(move |_| {
-            let result = set_control(&dev, "zoom_absolute", value)
-                .and_then(|_| get_control(&dev, "zoom_absolute"))
-                .map(|actual| format!("Zoom preset requested: {label}. Camera reports zoom_absolute={actual}."));
-            status_label.set_text(&result.unwrap_or_else(|e| format!("Could not apply zoom preset: {e}")));
+            match set_control(&dev, "zoom_absolute", value) {
+                Ok(()) => populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label),
+                Err(error) => status_label.set_text(&format!("Could not apply zoom preset: {error}")),
+            }
         });
         zoom_presets.append(&button);
     }
@@ -904,7 +907,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
     container.append(&heading);
 
     add_sleep_controls(container, device, status);
-    add_camera_settings(container, device, status);
+    add_camera_settings(container, device, window, status);
     add_ai_controls(container, device, status);
 
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
