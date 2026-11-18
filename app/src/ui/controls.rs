@@ -23,7 +23,7 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
         }
         _ => {}
     }
-    if control.disabled && blockers.is_empty() {
+    if control.disabled {
         blockers.push(if control.kind.contains("read-only") {
             "The V4L2 driver marks this control read-only".to_string()
         } else {
@@ -145,27 +145,39 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             for (value, label) in &control.menu { combo.append(Some(&value.to_string()), label); }
             combo.set_active_id(Some(&control.value.to_string()));
             combo.set_sensitive(!unavailable);
-            let combo_apply = combo.clone();
-            let apply = gtk::Button::with_label("Apply");
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
             let controls_refresh = container.clone();
             let window_refresh = window.clone();
             let refresh_device = dev.clone();
-            apply.connect_clicked(move |_| {
-                if let Some(id) = combo_apply.active_id() {
-                    let value = id.parse::<i64>().unwrap_or_default();
-                    let result = set_control(&dev, &name, value);
-                    let succeeded = result.is_ok();
-                    status_label.set_text(&result.map(|_| format!("{name} updated")).unwrap_or_else(|e| e));
-                    if succeeded && name == "auto_exposure" {
-                        populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+            let last_value = Rc::new(Cell::new(control.value));
+            let changing = Rc::new(Cell::new(false));
+            let last_value_change = last_value.clone();
+            let changing_state = changing.clone();
+            let combo_restore = combo.clone();
+            combo.connect_changed(move |selection| {
+                if changing_state.get() { return; }
+                let Some(id) = selection.active_id() else { return; };
+                let Ok(value) = id.parse::<i64>() else { return; };
+                let result = set_control(&dev, &name, value);
+                match result {
+                    Ok(()) => {
+                        last_value_change.set(value);
+                        status_label.set_text(&format!("{name} set to {value}."));
+                        if name == "auto_exposure" {
+                            populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+                        }
+                    }
+                    Err(error) => {
+                        changing_state.set(true);
+                        combo_restore.set_active_id(Some(&last_value_change.get().to_string()));
+                        changing_state.set(false);
+                        status_label.set_text(&format!("Could not set {name}: {error}"));
                     }
                 }
             });
             row.append(&combo);
-            row.append(&apply);
         } else {
             let scale = gtk::Scale::with_range(
                 gtk::Orientation::Horizontal,
