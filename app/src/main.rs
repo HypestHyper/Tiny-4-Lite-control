@@ -1477,6 +1477,7 @@ fn show_compact_settings(
         ("obsbot:zoom_presets", "Zoom presets"),
         ("obsbot:led_brightness", "LED brightness"),
         ("obsbot:focus_mode", "Autofocus priority · Global / Face"),
+        ("obsbot:auto_exposure_mode", "Auto Exposure priority · Global / Face"),
         ("obsbot:ai_tracking_mode", "AI tracking mode"),
         ("obsbot:tracking_speed", "Tracking speed"),
         ("obsbot:target_selection", "Target selection gesture"),
