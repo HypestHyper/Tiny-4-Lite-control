@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 thread_local! {
     static APP_CONFIG: RefCell<config::AppConfig> = RefCell::new(config::AppConfig::default());
+    static PREVIEW_CONTEXT: RefCell<Option<ui::preview::PreviewContext>> = const { RefCell::new(None) };
 }
 
 fn update_config_checked(update: impl FnOnce(&mut config::AppConfig)) -> Result<(), String> {
@@ -34,6 +35,16 @@ fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
 
 fn current_config() -> config::AppConfig {
     APP_CONFIG.with(|value| value.borrow().clone())
+}
+
+fn restart_preview(device: &str, mode: Option<video::VideoMode>) {
+    PREVIEW_CONTEXT.with(|context| {
+        let Some(preview) = context.borrow().as_ref().cloned() else { return; };
+        match mode {
+            Some(mode) => preview.start(device, &mode),
+            None => preview.unavailable("No readable video capture mode on this camera node."),
+        }
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -1418,6 +1429,34 @@ fn build_ui(app: &gtk::Application) {
     stack.set_transition_type(gtk::StackTransitionType::Crossfade);
     stack.set_transition_duration(160);
 
+    let preview_picture = gtk::Picture::new();
+    preview_picture.set_can_shrink(true);
+    preview_picture.set_content_fit(gtk::ContentFit::Contain);
+    preview_picture.set_hexpand(true);
+    preview_picture.set_vexpand(true);
+    preview_picture.set_size_request(320, 160);
+    let preview_placeholder = gtk::Label::new(Some("Connect OBSBOT Tiny 2 Lite to start the live preview."));
+    preview_placeholder.set_wrap(true);
+    preview_placeholder.set_halign(gtk::Align::Center);
+    preview_placeholder.set_valign(gtk::Align::Center);
+    preview_placeholder.add_css_class("dim-label");
+    let preview_overlay = gtk::Overlay::new();
+    preview_overlay.set_child(Some(&preview_picture));
+    preview_overlay.add_overlay(&preview_placeholder);
+    let preview_status = gtk::Label::new(Some("Preview waiting for camera"));
+    preview_status.set_xalign(0.0);
+    preview_status.add_css_class("dim-label");
+    let preview_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    preview_layout.append(&preview_overlay);
+    preview_layout.append(&preview_status);
+    let preview_frame = gtk::Frame::new(Some("Camera preview"));
+    preview_frame.set_size_request(-1, 190);
+    preview_frame.set_child(Some(&preview_layout));
+    let preview_context = ui::preview::PreviewContext::new(
+        preview_picture.clone(), preview_placeholder.clone(), preview_status.clone(),
+    );
+    PREVIEW_CONTEXT.with(|context| *context.borrow_mut() = Some(preview_context.clone()));
+
     let controls_scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never).build();
     let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -1477,7 +1516,20 @@ fn build_ui(app: &gtk::Application) {
     content.set_vexpand(true);
     content.append(&navigation);
     content.append(&stack);
-    root.append(&content);
+
+    // A vertical paned keeps the preview visible on every page. Users can
+    // drag the divider to resize it; GtkPicture contains the feed without
+    // stretching its native aspect ratio.
+    let main_paned = gtk::Paned::new(gtk::Orientation::Vertical);
+    main_paned.set_start_child(Some(&preview_frame));
+    main_paned.set_end_child(Some(&content));
+    main_paned.set_resize_start_child(true);
+    main_paned.set_resize_end_child(true);
+    main_paned.set_shrink_start_child(true);
+    main_paned.set_shrink_end_child(false);
+    main_paned.set_position(250);
+    main_paned.set_vexpand(true);
+    root.append(&main_paned);
 
     let controls_for_compact = controls_box.clone();
     let window_for_compact = window.clone();
@@ -1542,6 +1594,9 @@ fn build_ui(app: &gtk::Application) {
     devices.connect_changed(move |combo| {
         if let Some(id) = combo.active_id() {
             ui::controls::populate_controls(&id, &controls, &win, &status_select);
+            restart_preview(&id, video::current_mode(&id));
+        } else {
+            restart_preview("", None);
         }
     });
 
@@ -1556,6 +1611,7 @@ fn build_ui(app: &gtk::Application) {
             devices_refresh.set_active_id(Some(first));
         } else {
             clear_box(&controls_refresh);
+            restart_preview("", None);
             if usb_camera_present() {
                 status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
             } else {
@@ -1564,13 +1620,22 @@ fn build_ui(app: &gtk::Application) {
         }
     });
 
+    if let Some(first) = nodes.first() {
+        restart_preview(first, video::current_mode(first));
+    }
     if nodes.is_empty() {
+        restart_preview("", None);
         if usb_camera_present() {
             status.set_text("USB camera detected (3564:fef9), but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
         } else {
             status.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera. Expected USB ID: 3564:fef9.");
         }
     }
+    let preview_on_close = preview_context.clone();
+    window.connect_close_request(move |_| {
+        preview_on_close.stop();
+        gtk::glib::Propagation::Proceed
+    });
     window.present();
 }
 
