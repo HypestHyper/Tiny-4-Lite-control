@@ -85,7 +85,7 @@ impl PreviewContext {
                 match receiver.try_recv() {
                     Ok(frame) => latest = Some(frame),
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return gtk::glib::ControlFlow::Break,
+                    Err(TryRecvError::Disconnected) => return gtk::gtk::glib::ControlFlow::Break,
                 }
             }
             if let Some(frame) = latest {
@@ -99,7 +99,7 @@ impl PreviewContext {
                     ));
                 }
             }
-            glib::ControlFlow::Continue
+            gtk::glib::ControlFlow::Continue
         });
     }
 }
