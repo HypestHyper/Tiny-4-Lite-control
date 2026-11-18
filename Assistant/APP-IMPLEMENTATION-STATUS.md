@@ -62,7 +62,7 @@ Implemented XU operations:
 - Read the tracking-speed status byte at `0x24`.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
-- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction.
+- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The mapping is supported by three repeated transitions in the 2026-11-18 Tiny 2 Lite capture. The fourth inspected packet uses group `0a 04 44 33` (Dynamic Zoom), not the direction group `0a 04 c4 33`, and is not used as direction evidence.
 
 Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Preset mutation is not implemented.
 
@@ -115,12 +115,12 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Gesture commands
 
-Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction remains unknown: the gesture is functional, but the direction mapping has not been established. These are live hardware observations, not protocol read-back.
+Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction gesture is functional. The 2026-11-18 capture established the ON/OFF wire-state mapping and it is now implemented; device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
 
 - Target selection: `0a 04 c4 30 01 00`
 - Zoom/L-pose: `0a 04 44 31 01 00`
 - Dynamic zoom: `0a 04 44 33 01 00`
-- Dynamic zoom direction: `0a 04 c4 33 01 00`
+- Dynamic zoom direction: `0a 04 c4 33 01 00`; unlike the other gesture commands, its wire-state payload is inverted: OFF = `27 ff 01 00`, ON = `e6 3f 00 00`. Unit tests compare both complete frame prefixes, including sequence and CRC, against the 2026-11-18 capture.
 
 Enable/disable frames are built with the current frame builder. The status block does not provide reliable per-gesture read-back, so a successful ioctl only confirms that the request was accepted by the host driver, not that the camera applied the feature. Capture-based validation is still required.
 
