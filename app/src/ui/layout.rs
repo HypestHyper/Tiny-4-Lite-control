@@ -53,15 +53,21 @@ pub fn apply_compact_visibility(widget: &gtk::Widget, compact: bool, selected: &
     }
 
     if widget.has_css_class("compact-group") {
-        let mut any_visible = false;
-        let mut child = widget.first_child();
-        while let Some(current) = child {
-            if current.is_visible() {
-                any_visible = true;
-                break;
-            }
-            child = current.next_sibling();
-        }
-        widget.set_visible(!compact || any_visible);
+        widget.set_visible(!compact || has_visible_compact_item(widget));
     }
+}
+
+fn has_visible_compact_item(widget: &gtk::Widget) -> bool {
+    if widget.is_visible() && widget.css_classes().iter()
+        .any(|class| class.as_str().starts_with("compact-item-")) {
+        return true;
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if has_visible_compact_item(&current) {
+            return true;
+        }
+        child = current.next_sibling();
+    }
+    false
 }
