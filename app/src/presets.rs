@@ -188,11 +188,13 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 Ok(()) => {
                     restart_preview(device, Some(mode.clone()));
                     applied += 1;
-                    update_config(|config| config.video_mode = Some(config::VideoModeConfig {
+                    if let Err(error) = update_config_checked(|config| config.video_mode = Some(config::VideoModeConfig {
                         width: mode.width, height: mode.height,
                         pixel_format: mode.pixel_format.clone(),
                         frame_rate_milli: mode.frame_rate_milli,
-                    }));
+                    })) {
+                        errors.push(format!("video mode applied but could not be saved: {error}"));
+                    }
                 }
                     Err(error) => {
                         errors.push(format!("video mode: {error}"));
