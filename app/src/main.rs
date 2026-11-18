@@ -485,6 +485,19 @@ fn xu_status(device: &str) -> Result<[u8; 60], String> {
 
 const XU_AUDIO_NOISE_REDUCTION_OFFSET: usize = 8;
 const XU_AUDIO_AUTO_GAIN_OFFSET: usize = 25;
+const XU_AUDIO_MICROPHONE_DISABLED_OFFSET: usize = 2;
+
+fn microphone_disabled_wire_value(disabled: bool) -> u8 {
+    if disabled { 0 } else { 1 }
+}
+
+fn microphone_disabled_from_status(data: &[u8; 60]) -> Option<bool> {
+    match data[XU_AUDIO_MICROPHONE_DISABLED_OFFSET] {
+        0 => Some(true),
+        1 => Some(false),
+        _ => None,
+    }
+}
 
 fn audio_noise_reduction_label(level: u8) -> &'static str {
     match level {
@@ -511,6 +524,16 @@ fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), Stri
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
+fn set_microphone_disabled(device: &str, disabled: bool) -> Result<(), String> {
+    set_xu_status_byte(
+        device,
+        XU_AUDIO_MICROPHONE_DISABLED_OFFSET,
+        microphone_disabled_wire_value(disabled),
+    )?;
+    update_config(|config| config.audio_microphone_disabled = Some(disabled));
+    Ok(())
+}
+
 fn set_auto_gain(device: &str, enabled: bool) -> Result<(), String> {
     set_xu_status_byte(device, XU_AUDIO_AUTO_GAIN_OFFSET, u8::from(enabled))?;
     update_config(|config| config.audio_auto_gain = Some(enabled));
@@ -534,6 +557,43 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     layout.set_margin_bottom(8);
     layout.set_margin_start(10);
     layout.set_margin_end(10);
+
+    let microphone_disabled_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    microphone_disabled_row.add_css_class("adaptive-row");
+    let microphone_disabled_label = gtk::Label::new(Some("Disable microphone"));
+    microphone_disabled_label.set_xalign(0.0);
+    microphone_disabled_label.set_hexpand(true);
+    let microphone_disabled = gtk::Switch::new();
+    microphone_disabled.set_valign(gtk::Align::Center);
+    let camera_microphone_disabled = xu_status(device).ok()
+        .and_then(|data| microphone_disabled_from_status(&data));
+    let initial_microphone_disabled = camera_microphone_disabled
+        .or(current_config().audio_microphone_disabled);
+    if let Some(disabled) = initial_microphone_disabled {
+        microphone_disabled.set_active(disabled);
+    } else {
+        microphone_disabled.set_sensitive(false);
+        microphone_disabled.set_tooltip_text(Some("Microphone disable state could not be read from the camera."));
+    }
+    let microphone_device = device.to_string();
+    let microphone_status = status.clone();
+    microphone_disabled.connect_state_set(move |switch, disabled| {
+        match set_microphone_disabled(&microphone_device, disabled) {
+            Ok(()) => microphone_status.set_text(if disabled {
+                "Camera microphone disabled. The camera may restart."
+            } else {
+                "Camera microphone enabled. The camera may restart."
+            }),
+            Err(error) => {
+                switch.set_active(!disabled);
+                microphone_status.set_text(&format!("Could not change microphone state: {error}"));
+            }
+        }
+        gtk::glib::Propagation::Proceed
+    });
+    microphone_disabled_row.append(&microphone_disabled_label);
+    microphone_disabled_row.append(&microphone_disabled);
+    layout.append(&microphone_disabled_row);
 
     let auto_gain_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     auto_gain_row.add_css_class("adaptive-row");
@@ -2110,6 +2170,21 @@ mod xu_protocol_tests {
         assert_eq!(&global[..4], &[0x03, 0x01, 0x01, 0x00]);
         assert!(face[3..].iter().all(|byte| *byte == 0));
         assert!(global[3..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn microphone_disable_mapping_matches_tiny_2_lite_capture() {
+        assert_eq!(XU_AUDIO_MICROPHONE_DISABLED_OFFSET, 2);
+        assert_eq!(microphone_disabled_wire_value(true), 0x00);
+        assert_eq!(microphone_disabled_wire_value(false), 0x01);
+
+        let mut status = [0u8; 60];
+        status[2] = 0x00;
+        assert_eq!(microphone_disabled_from_status(&status), Some(true));
+        status[2] = 0x01;
+        assert_eq!(microphone_disabled_from_status(&status), Some(false));
+        status[2] = 0xff;
+        assert_eq!(microphone_disabled_from_status(&status), None);
     }
 
     #[test]
