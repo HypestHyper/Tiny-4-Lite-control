@@ -349,30 +349,17 @@ fn set_fov(device: &str, mode: u8) -> Result<(), String> {
 }
 
 fn led_brightness_payload(level: u8) -> Result<[u8; 3], String> {
-    if !(1..=3).contains(&level) {
-        return Err("LED brightness must be between 1 and 3.".into());
+    if level > 3 {
+        return Err("LED setting must be Off (0) or brightness level 1–3.".into());
     }
-    // Captures confirm three user-facing brightness levels. The write
-    // payload uses zero-based values 0, 1, 2 for levels 1, 2, 3.
-    // Read-back is a separate status field at byte 0x20: 1, 2, 3.
-    // LED power is controlled independently by tag 0x18.
-    Ok([0x1a, 0x01, level - 1])
+    // The captured selector 0x06/tag 0x1A values are the four settings:
+    // raw 0 = Off; raw 1, 2, 3 = brightness levels 1, 2, 3.
+    // Do not subtract one: that incorrectly turns level 1 into Off.
+    Ok([0x1a, 0x01, level])
 }
 
 fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     let payload = led_brightness_payload(level)?;
-    let mut data = [0u8; 60];
-    data[..payload.len()].copy_from_slice(&payload);
-    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
-}
-
-fn led_power_payload(enabled: bool) -> [u8; 3] {
-    // Captured selector 0x06 tag 0x18 is the independent LED power switch.
-    [0x18, 0x01, u8::from(enabled)]
-}
-
-fn set_led_power(device: &str, enabled: bool) -> Result<(), String> {
-    let payload = led_power_payload(enabled);
     let mut data = [0u8; 60];
     data[..payload.len()].copy_from_slice(&payload);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
@@ -424,35 +411,21 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
 
     let led_frame = gtk::Frame::new(Some("LED illumination"));
     let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let led_power_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    led_power_row.add_css_class("adaptive-row");
-    let led_label = gtk::Label::new(Some("LED power"));
-    led_label.set_xalign(0.0);
-    led_label.set_hexpand(true);
-
-    let initial_led = xu_status(device).ok().map(|data| data[0x20]).unwrap_or(0);
-    let led_enabled = initial_led > 0;
-    let led_toggle = gtk::Switch::new();
-    led_toggle.set_active(led_enabled);
-    led_toggle.set_valign(gtk::Align::Center);
-    led_power_row.append(&led_label);
-    led_power_row.append(&led_toggle);
-    led_layout.append(&led_power_row);
-
     let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     led_level_row.add_css_class("adaptive-row");
-    let led_level_label = gtk::Label::new(Some("Brightness"));
+    let led_level_label = gtk::Label::new(Some("LED setting"));
     led_level_label.set_width_chars(22);
     led_level_label.set_xalign(0.0);
-    let led_level = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 3.0, 1.0);
+    let led_level = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 3.0, 1.0);
     led_level.set_digits(0);
     led_level.set_draw_value(true);
     led_level.set_hexpand(true);
+    led_level.add_mark(0.0, gtk::PositionType::Bottom, Some("Off"));
     led_level.add_mark(1.0, gtk::PositionType::Bottom, Some("1"));
     led_level.add_mark(2.0, gtk::PositionType::Bottom, Some("2"));
     led_level.add_mark(3.0, gtk::PositionType::Bottom, Some("3"));
-    led_level.set_value(if (1..=3).contains(&initial_led) { initial_led as f64 } else { 1.0 });
-    led_level.set_sensitive(led_enabled);
+    let initial_led = xu_status(device).ok().map(|data| data[0x20]).unwrap_or(0);
+    led_level.set_value(if initial_led <= 3 { initial_led as f64 } else { 0.0 });
     led_level_row.append(&led_level_label);
     led_level_row.append(&led_level);
     led_layout.append(&led_level_row);
@@ -460,38 +433,17 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     let led_slider_status = status.clone();
     let led_slider_device = device.to_string();
     led_level.connect_value_changed(move |scale| {
-        if !scale.is_sensitive() { return; }
-        let level = scale.value().round() as u8;
-        let result = set_led_brightness(&led_slider_device, level);
-        led_slider_status.set_text(&result.map(|_| format!("LED brightness set to level {level}."))
-            .unwrap_or_else(|e| format!("Could not set LED brightness: {e}")));
-    });
-
-    let led_slider_for_toggle = led_level.clone();
-    let led_status_toggle = status.clone();
-    let led_device_toggle = device.to_string();
-    led_toggle.connect_state_set(move |switch, enabled| {
-        led_slider_for_toggle.set_sensitive(enabled);
-        let result = if enabled {
-            let level = led_slider_for_toggle.value().round() as u8;
-            set_led_brightness(&led_device_toggle, level)
-                .and_then(|_| set_led_power(&led_device_toggle, true))
-                .map(|_| format!("LED enabled at brightness level {level}."))
-        } else {
-            set_led_power(&led_device_toggle, false).map(|_| "LED disabled.".to_string())
+        let setting = scale.value().round() as u8;
+        let result = set_led_brightness(&led_slider_device, setting);
+        let description = match setting {
+            0 => "Off".to_string(),
+            n => format!("brightness level {n}"),
         };
-        match result {
-            Ok(message) => led_status_toggle.set_text(&message),
-            Err(error) => {
-                led_status_toggle.set_text(&format!("LED power change failed: {error}"));
-                switch.set_active(!enabled);
-                led_slider_for_toggle.set_sensitive(!enabled);
-            }
-        }
-        gtk::glib::Propagation::Proceed
+        led_slider_status.set_text(&result.map(|_| format!("LED setting: {description}."))
+            .unwrap_or_else(|e| format!("Could not change LED setting: {e}")));
     });
 
-    let led_note = gtk::Label::new(Some("Brightness changes apply immediately while the LED is enabled. The camera reports brightness at status byte 0x20; it does not separately report the LED power switch state."));
+    let led_note = gtk::Label::new(Some("Off plus three brightness levels. Each position sends selector 0x06, tag 0x1A directly. The separate tag 0x18 command is intentionally not used here because its observed effect is blink/steady behaviour, not a verified power switch."));
     led_note.set_wrap(true);
     led_note.set_xalign(0.0);
     led_note.add_css_class("dim-label");
@@ -1543,18 +1495,12 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn led_brightness_payload_matches_lite_capture() {
-        assert_eq!(led_brightness_payload(1).unwrap(), [0x1a, 0x01, 0x00]);
-        assert_eq!(led_brightness_payload(2).unwrap(), [0x1a, 0x01, 0x01]);
-        assert_eq!(led_brightness_payload(3).unwrap(), [0x1a, 0x01, 0x02]);
-        assert!(led_brightness_payload(0).is_err());
+    fn led_setting_payload_matches_off_and_three_brightness_levels() {
+        assert_eq!(led_brightness_payload(0).unwrap(), [0x1a, 0x01, 0x00]);
+        assert_eq!(led_brightness_payload(1).unwrap(), [0x1a, 0x01, 0x01]);
+        assert_eq!(led_brightness_payload(2).unwrap(), [0x1a, 0x01, 0x02]);
+        assert_eq!(led_brightness_payload(3).unwrap(), [0x1a, 0x01, 0x03]);
         assert!(led_brightness_payload(4).is_err());
-    }
-
-    #[test]
-    fn led_power_payload_matches_lite_capture() {
-        assert_eq!(led_power_payload(false), [0x18, 0x01, 0x00]);
-        assert_eq!(led_power_payload(true), [0x18, 0x01, 0x01]);
     }
 
     #[test]
