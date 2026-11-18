@@ -629,14 +629,31 @@ fn set_gesture_zoom_ratio(device: &str, ratio: f32) -> Result<(), String> {
     xu_send_frame(device, 0x0069, group, command)
 }
 
-fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
-    let (sequence, command) = if enabled {
+fn gesture_command(group: [u8; 6], enabled: bool) -> (u16, [u8; 6]) {
+    // Dynamic Zoom Direction uses the same XU command group for both states,
+    // but its captured wire values are inverted relative to the other gestures.
+    // Captured Tiny 2 Lite transitions:
+    //   OFF: sequence 0x000f, payload 27 ff 01 00
+    //   ON:  sequence 0x0010, payload e6 3f 00 00
+    if group == [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] {
+        return if enabled {
+            (0x0010, [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00])
+        } else {
+            (0x000f, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00])
+        };
+    }
+
+    if enabled {
         (match group[3] { 0x30 => 0x0009, 0x31 => 0x000b, 0x33 if group[2] == 0x44 => 0x000d, _ => 0x000f },
          [0x27, 0xff, 0x01, 0x00, 0x00, 0x00])
     } else {
         (match group[3] { 0x30 => 0x0008, 0x31 => 0x000a, 0x33 if group[2] == 0x44 => 0x000c, _ => 0x000e },
          [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00])
-    };
+    }
+}
+
+fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
+    let (sequence, command) = gesture_command(group, enabled);
     xu_send_frame(device, sequence, group, command)
 }
 
@@ -1424,6 +1441,20 @@ mod xu_protocol_tests {
         let on = obsbot_frame(0x0009, group, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
         assert_eq!(&off[..18], hex("aa2508000c002b5a0a04c4300100e63f0000").as_slice());
         assert_eq!(&on[..18], hex("aa2509000c007a9f0a04c430010027ff0100").as_slice());
+    }
+
+    #[test]
+    fn dynamic_zoom_direction_frames_match_lite_capture() {
+        let group = [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00];
+        let (off_sequence, off_command) = gesture_command(group, false);
+        let (on_sequence, on_command) = gesture_command(group, true);
+        let off = obsbot_frame(off_sequence, group, off_command);
+        let on = obsbot_frame(on_sequence, group, on_command);
+
+        assert_eq!(&off[..18], hex("aa250f000c00da810a04c433010027ff0100").as_slice());
+        assert_eq!(&on[..18], hex("aa2510000c00eb240a04c4330100e63f0000").as_slice());
+        assert_eq!(gesture_command(group, false).0, 0x000f);
+        assert_eq!(gesture_command(group, true).0, 0x0010);
     }
 
     #[test]
