@@ -170,7 +170,8 @@ The Capture page:
 - Produces a raw `.pcapng` and a text report with baseline/action windows,
   transfer summaries, decoded control-transfer fields, URB IDs/status,
   absolute and relative packet timestamps, and payload bytes when TShark
-  exposes them.
+  exposes them. The report also lists decoded control-transfer rows whose
+  absolute timestamps fall inside each completed action window.
 - Includes a browser for saved reports and their matching raw captures.
 
 Capture output is saved under:
