@@ -107,9 +107,17 @@ stacksidebar row:hover {{ background: @tiny_surface_high; color: @tiny_on_surfac
 stacksidebar row:selected {{ background: @tiny_selected; color: @tiny_selected_text; }}
 stacksidebar row:focus-visible {{ outline: 2px solid @tiny_primary; outline-offset: 1px; }}
 .content-stack {{ background: transparent; }}
+.workspace-content {{ min-width: 0; }}
 .content-page {{ padding: 16px; color: @tiny_on_surface; }}
-frame {{ background: @tiny_surface; border: none; border-radius: 28px; padding: 14px; }}
-frame > label {{ color: @tiny_on_surface; font-weight: 650; }}
+.preview-panel {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.22); border-radius: 28px; padding: 6px; }}
+.preview-panel > border {{ border-radius: 24px; }}
+.preview-heading {{ min-height: 28px; }}
+.eyebrow {{ color: @tiny_on_surface; font-size: 11px; font-weight: 800; letter-spacing: 1.1px; }}
+.preview-meta {{ color: @tiny_on_surface_variant; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }}
+.preview-panel picture {{ border-radius: 18px; background: #100e0d; }}
+.preview-panel .dim-label {{ font-size: 12px; }}
+frame {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.16); border-radius: 24px; padding: 12px; }}
+frame > label {{ color: @tiny_on_surface; font-weight: 700; }}
 button {{ min-height: 40px; padding: 6px 16px; border: 1px solid transparent; border-radius: 20px; background: @tiny_surface_high; color: @tiny_on_surface; font-weight: 600; }}
 button:hover {{ background: @tiny_surface_highest; }}
 button:active {{ border-radius: 10px; background: @tiny_surface_low; }}
@@ -133,6 +141,9 @@ separator {{ background: alpha(@tiny_outline, 0.24); }}
 /* Compact utility styling for tiled Hyprland windows. */
 .tiny4-root {{ padding: 8px; }}
 .content-page {{ padding: 12px 10px; }}
+.preview-panel {{ border-radius: 20px; padding: 4px; }}
+.preview-panel picture {{ border-radius: 14px; }}
+.preview-meta {{ font-size: 8px; }}
 frame {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.20); border-radius: 20px; padding: 10px; }}
 frame > label {{ color: @tiny_on_surface; font-weight: 650; padding: 0 6px; }}
 .adaptive-row {{ min-height: 38px; }}
