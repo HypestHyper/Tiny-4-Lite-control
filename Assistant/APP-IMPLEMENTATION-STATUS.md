@@ -115,12 +115,12 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Gesture commands
 
-Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction gesture is functional. The 2026-11-18 capture established the inverted ON/OFF payload mapping and the rolling frame sequence behavior; both are implemented. Device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
+Four command groups are encoded. The user has physically confirmed Target selection (open palm/fingers spread enables normal tracking), Zoom/L-pose, and Dynamic Zoom (both hands form L shapes and move apart/together). The 2026-11-18 capture establishes the Direction Flip wire payload mapping, which is implemented, but the corrected direction reversal has not yet been tested on the camera. Device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
 
 - Target selection: `0a 04 c4 30 01 00`
 - Zoom/L-pose: `0a 04 44 31 01 00`
 - Dynamic zoom: `0a 04 44 33 01 00`
-- Dynamic zoom direction: `0a 04 c4 33 01 00`; unlike the other gesture commands, its wire-state payload is inverted: OFF = `27 ff 01 00`, ON = `e6 3f 00 00`. Unit tests compare both complete frame prefixes, including sequence and CRC, against the 2026-11-18 capture.
+- Dynamic zoom direction: `0a 04 c4 33 01 00`; unlike the other gesture commands, its wire-state payload is inverted: OFF = `27 ff 01 00`, ON = `e6 3f 00 00`. Unit tests check both payload choices and rolling sequence increments. The capture-derived full frame prefixes are recorded in the evidence section below.
 
 Enable/disable frames are built with the current frame builder. The status block does not provide reliable per-gesture read-back, so a successful ioctl only confirms that the request was accepted by the host driver, not that the camera applied the feature. Capture-based validation is still required.
 
@@ -148,7 +148,7 @@ Enable/disable frames are built with the current frame builder. The status block
 - No reliable per-gesture state read-back. Dynamic Zoom Direction's inverted ON/OFF wire payloads are mapped from the 2026-11-18 capture, but the corrected implementation still needs live hardware confirmation that the direction visibly reverses.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
-- GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging, not live hardware validation of the new diagnostics reads.
+- GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging for that earlier revision only. The later sequence-counter code commit `dbe37f0` has no confirmed CI result in the available status check; do not treat the latest source as build-verified until its workflow succeeds.
 
 ## 5. Evidence status and next investigation
 
