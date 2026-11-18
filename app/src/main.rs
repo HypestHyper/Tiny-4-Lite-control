@@ -1203,6 +1203,122 @@ fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
     }
 }
 
+
+fn show_compact_settings(
+    parent: &gtk::ApplicationWindow,
+    device: &str,
+    controls_box: &gtk::Box,
+    status: &gtk::Label,
+) {
+    let dialog = gtk::Window::builder()
+        .transient_for(parent)
+        .modal(true)
+        .title("Compact mode controls")
+        .default_width(420)
+        .default_height(620)
+        .build();
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    root.set_margin_top(16);
+    root.set_margin_bottom(16);
+    root.set_margin_start(16);
+    root.set_margin_end(16);
+    let intro = gtk::Label::new(Some("Choose the controls shown in Compact mode. Full mode always keeps the complete control set."));
+    intro.set_wrap(true);
+    intro.set_xalign(0.0);
+    intro.add_css_class("dim-label");
+    root.append(&intro);
+
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let mut options: Vec<(String, String)> = Vec::new();
+    if let Ok(output) = run_v4l2(device, "--list-ctrls-menus") {
+        for control in parse_controls(&output) {
+            if control.kind == "button" || matches!(control.name.as_str(), "zoom_continuous" | "pan_speed" | "tilt_speed") {
+                continue;
+            }
+            let key = format!("v4l2:{}", control.name);
+            let label = format!("Camera · {}", control.name.replace('_', " "));
+            options.push((key, label));
+        }
+    }
+    let custom = [
+        ("obsbot:zoom_presets", "Zoom presets"),
+        ("obsbot:led_brightness", "LED brightness"),
+        ("obsbot:focus_mode", "Autofocus priority · Global / Face"),
+        ("obsbot:ai_tracking_mode", "AI tracking mode"),
+        ("obsbot:tracking_speed", "Tracking speed"),
+        ("obsbot:target_selection", "Target selection gesture"),
+        ("obsbot:zoom_l_pose", "Zoom · L-pose gesture"),
+        ("obsbot:dynamic_zoom", "Dynamic zoom gesture"),
+        ("obsbot:dynamic_zoom_direction", "Dynamic zoom direction"),
+        ("obsbot:gesture_zoom_ratio", "Gesture zoom ratio"),
+        ("camera:pan_tilt_joystick", "Pan / tilt joystick"),
+        ("camera:gimbal_movement", "Pan / tilt step controls"),
+        ("camera:power", "Camera sleep / wake"),
+        ("camera:presets", "Camera presets"),
+    ];
+    options.extend(custom.iter().map(|(key, label)| (key.to_string(), label.to_string())));
+    options.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let selected = current_config().compact_controls;
+    let mut checkboxes: Vec<(String, gtk::CheckButton)> = Vec::new();
+    for (key, label) in options {
+        let check = gtk::CheckButton::with_label(&label);
+        check.set_active(selected.contains(&key));
+        list.append(&check);
+        checkboxes.push((key, check));
+    }
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(360)
+        .build();
+    scroll.set_child(Some(&list));
+    root.append(&scroll);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let save = gtk::Button::with_label("Save selection");
+    save.add_css_class("suggested-action");
+    actions.append(&cancel);
+    actions.append(&save);
+    root.append(&actions);
+    dialog.set_child(Some(&root));
+
+    let dialog_close = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_close.close());
+
+    let dialog_save = dialog.clone();
+    let device_save = device.to_string();
+    let controls_save = controls_box.clone();
+    let parent_save = parent.clone();
+    let status_save = status.clone();
+    save.connect_clicked(move |_| {
+        let selection: Vec<String> = checkboxes.iter()
+            .filter(|(_, check)| check.is_active())
+            .map(|(key, _)| key.clone())
+            .collect();
+        match update_config_checked(|config| config.compact_controls = selection) {
+            Ok(()) => {
+                let config = current_config();
+                ui::layout::apply_compact_visibility(
+                    controls_save.upcast_ref(),
+                    config.compact_mode,
+                    &config.compact_controls,
+                );
+                ui::controls::populate_controls(&device_save, &controls_save, &parent_save, &status_save);
+                status_save.set_text("Compact mode controls updated.");
+                dialog_save.close();
+            }
+            Err(error) => status_save.set_text(&format!("Could not save Compact mode selection: {error}")),
+        }
+    });
+
+    dialog.present();
+}
+
 fn build_ui(app: &gtk::Application) {
     let loaded_config = match config::load() {
         Ok(value) => value,
