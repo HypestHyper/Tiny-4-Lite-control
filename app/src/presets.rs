@@ -45,7 +45,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     let output = run_v4l2(device, "--list-ctrls-menus")?;
     let mut settings = BTreeMap::new();
     for control in parse_controls(&output) {
-        if !MOVEMENT_CONTROLS.contains(&control.name.as_str()) && control.kind != "button" {
+        if !control.disabled && !MOVEMENT_CONTROLS.contains(&control.name.as_str()) && control.kind != "button" {
             settings.insert(format!("v4l2:{}", control.name), control.value);
         }
     }
