@@ -116,6 +116,12 @@ button:active {{ border-radius: 10px; background: @tiny_surface_low; }}
 button:focus-visible {{ outline: 2px solid @tiny_primary; outline-offset: 2px; }}
 button.suggested-action {{ background: @tiny_primary; color: @tiny_on_primary; }}
 button.suggested-action:hover {{ background: @tiny_primary_hover; }}
+.linked button {{ border-radius: 0; border-right-width: 0; }}
+.linked button:first-child {{ border-radius: 999px 0 0 999px; }}
+.linked button:last-child {{ border-radius: 0 999px 999px 0; border-right-width: 1px; }}
+.linked button:checked {{ background: @tiny_selected; color: @tiny_selected_text; }}
+.linked button:checked:hover {{ background: @tiny_primary; color: @tiny_on_primary; }}
+
 entry, combobox, dropdown, spinbutton {{ min-height: 40px; border-radius: 12px; background: @tiny_surface_high; color: @tiny_on_surface; }}
 scale trough {{ min-height: 6px; border-radius: 99px; background: @tiny_surface_highest; }}
 scale highlight {{ background: @tiny_primary; }}
