@@ -412,6 +412,7 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
 
 fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera settings"));
+    frame.add_css_class("compact-group");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
@@ -779,6 +780,7 @@ fn ai_mode_label(status: &[u8; 60]) -> &'static str {
 
 fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("AI tracking and gestures"));
+    frame.add_css_class("compact-group");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
