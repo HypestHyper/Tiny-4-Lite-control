@@ -1,5 +1,6 @@
 mod capture;
 mod config;
+mod presets;
 mod ui;
 
 use gtk::prelude::*;
@@ -15,17 +16,19 @@ thread_local! {
     static APP_CONFIG: RefCell<config::AppConfig> = RefCell::new(config::AppConfig::default());
 }
 
-fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
-    APP_CONFIG.with(|current| {
-        let snapshot = {
-            let mut value = current.borrow_mut();
-            update(&mut value);
-            value.clone()
-        };
-        if let Err(error) = config::save(&snapshot) {
-            eprintln!("Could not save settings: {error}");
-        }
+fn update_config_checked(update: impl FnOnce(&mut config::AppConfig)) -> Result<(), String> {
+    let snapshot = APP_CONFIG.with(|current| {
+        let mut value = current.borrow_mut();
+        update(&mut value);
+        value.clone()
     });
+    config::save(&snapshot)
+}
+
+fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
+    if let Err(error) = update_config_checked(update) {
+        eprintln!("Could not save settings: {error}");
+    }
 }
 
 fn current_config() -> config::AppConfig {
