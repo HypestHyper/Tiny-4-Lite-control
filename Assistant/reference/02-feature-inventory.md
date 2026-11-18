@@ -261,9 +261,45 @@ keeps it separate from the framed `CAM_SET_FACE_FOCUS` autofocus
 priority command. No reliable GET_CUR read-back mapping has been
 established, so the app remembers only the last successful local write.
 
-Exposure compensation is a separate slider reported by OBSBOT Center
-as −3 through +3. Its XU payload and encoding are not yet known;
-do not infer them from the Face/Global command.
+**2026-11-18 Tiny 2 Lite Linux capture: exposure compensation**
+
+Exposure compensation is a UVC Processing Unit control, not an OBSBOT
+Extension Unit command and not a V4L2 exposure-bias control. The camera
+descriptor identifies Processing Unit entity 3; selector 1 is
+Backlight Compensation. The controlled capture correlates the 19
+OBSBOT Center positions with these two-byte little-endian values:
+
+| OBSBOT Center | PU value | Payload |
+|---:|---:|---:|
+| −3.0 | 1 | 01 00 |
+| −2.7 | 2 | 02 00 |
+| −2.3 | 3 | 03 00 |
+| −2.0 | 4 | 04 00 |
+| −1.7 | 5 | 05 00 |
+| −1.3 | 6 | 06 00 |
+| −1.0 | 7 | 07 00 |
+| −0.7 | 8 | 08 00 |
+| −0.3 | 9 | 09 00 |
+| 0.0 | 10 | 0a 00 |
+| +0.3 | 11 | 0b 00 |
+| +0.7 | 12 | 0c 00 |
+| +1.0 | 13 | 0d 00 |
+| +1.3 | 14 | 0e 00 |
+| +1.7 | 15 | 0f 00 |
+| +2.0 | 16 | 10 00 |
+| +2.3 | 17 | 11 00 |
+| +2.7 | 18 | 12 00 |
+| +3.0 | 19 | 13 00 |
+
+The captured USB setup fields are bmRequestType=0x21,
+bRequest=0x01 (SET_CUR), wValue=0x0100, wIndex=0x0300,
+wLength=2. The high byte of wIndex selects entity 3 and the low
+byte selects VideoControl interface 0. In the UVC ioctl query, use
+unit 3, selector 1, SET_CUR, and a two-byte little-endian payload.
+The app exposes this slider only when V4L2 Auto Exposure is Auto and
+uses GET_CUR to initialize it when the driver supports read-back.
+The last successful slider selection is persisted locally; it is not
+automatically replayed to the camera on startup.
 
 See [2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
 for raw request details and the accompanying zoom correlation.
