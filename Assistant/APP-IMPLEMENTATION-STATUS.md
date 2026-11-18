@@ -33,6 +33,37 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 - Excludes regular Tiny 2 (`3564:fef8`).
 - Reads control metadata from the selected node at runtime using `v4l2-ctl`.
 
+### Persistent settings and runtime architecture
+
+- Added `app/src/config.rs`, a versioned TOML configuration module using
+  Serde/TOML. The file is stored at
+  `${XDG_CONFIG_HOME:-~/.config}/tiny4lite-control/config.toml`.
+- The application loads the config at startup and creates a default file
+  on first launch. If the legacy `settings.conf` theme file exists, its
+  System/Light/Dark value is migrated without deleting the old file.
+- Successful setting changes are persisted: supported V4L2 control
+  values, LED brightness, AI tracking mode, tracking speed, Global/Face
+  focus selection, gesture toggles, gesture zoom ratio, theme, and
+  joystick sensitivity.
+- Transient commands are deliberately excluded: pan/tilt position and
+  speed movement, joystick motion, and Sleep/Wake are actions, not
+  persistent preferences.
+- The config is versioned, defaults missing fields, rejects config
+  versions newer than the app supports, clamps joystick sensitivity to
+  10–200%, rejects invalid gesture zoom ratios, and writes via a
+  temporary file followed by rename. Unit tests cover safe defaults and
+  round-tripping persisted settings.
+- `apply_on_connect` is reserved and defaults to `false`. Loading
+  settings does not send camera commands or move the gimbal. Camera
+  read-back remains authoritative where available; locally saved
+  gesture/focus values represent the last successfully submitted
+  setting where the camera has no reliable read-back.
+- This is the persistence foundation, not yet the complete service
+  architecture. A dedicated in-process camera service for serialized
+  device ownership, monitoring, disconnect/reconnect handling, and
+  optional restore-on-connect has not been implemented. No separately
+  installed system daemon is planned.
+
 ### Standard V4L2 control path
 
 - Lists controls and menu metadata from `v4l2-ctl --list-ctrls-menus`.
@@ -45,10 +76,15 @@ The application is a Rust + GTK4 test bench. Current source of truth:
   and preset values Wide=0 (1.00×), Medium=5 (1.15×), Narrow=15
   (1.47×), with 100 as maximum. The GTK app has three preset buttons
   that write `zoom_absolute` and read it back, plus the generic
-  device-reported slider. `zoom_continuous` and the separate vendor
+  device-reported slider. After the preset callback was fixed to refresh
+  the controls, the user confirmed that the slider displays 0, 5, and
+  15 after selecting Wide, Medium, and Narrow respectively. `zoom_continuous` and the separate vendor
   FOV setter are intentionally unused.
 - Uses the device-reported ranges, steps, menu entries, and defaults rather than assuming one fixed set of controls.
-- Provides pan/tilt speed control and bounded absolute pan/tilt steps. The joystick sends neutral speed on release.
+- Pan/tilt use standard V4L2 controls: `pan_absolute`,
+  `tilt_absolute`, `pan_speed`, and `tilt_speed`. Provides speed
+  joystick control and bounded absolute steps. The joystick sends
+  neutral speed on release.
 
 ### Vendor UVC Extension Unit path
 
@@ -153,7 +189,18 @@ Enable/disable frames are built with the current frame builder. The status block
 - No reliable per-gesture state read-back. The user has physically confirmed all four exposed gesture behaviours, including Direction Flip reversing Dynamic Zoom.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
-- GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging for that earlier revision only. The later sequence-counter code commit `dbe37f0` has no confirmed CI result in the available status check; do not treat the latest source as build-verified until its workflow succeeds.
+- GitHub Actions AppImage build passed for zoom-slider refresh commit
+  `e9df89705798070d7409f3d98d2268b2e8ceccc7` (run
+  [44226690186](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44226690186)).
+  The config wiring commits `ee85464` and `f7cc6cb` also passed
+  AppImage builds (runs
+  [44227385377](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44227385377)
+  and
+  [44227463033](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44227463033)).
+  The latest config-initialization change `27af898` and subsequent
+  documentation commits still require their own final build result.
+  Do not treat the newest branch head as build-verified until its
+  workflow succeeds.
 
 ## 5. Evidence status and next investigation
 
