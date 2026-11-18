@@ -4,4 +4,5 @@ pub mod controls;
 pub mod design;
 pub mod layout;
 pub mod presets;
+pub mod preview;
 pub mod video;
