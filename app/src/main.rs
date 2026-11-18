@@ -37,6 +37,14 @@ fn current_config() -> config::AppConfig {
     APP_CONFIG.with(|value| value.borrow().clone())
 }
 
+fn stop_preview() {
+    PREVIEW_CONTEXT.with(|context| {
+        if let Some(preview) = context.borrow().as_ref() {
+            preview.stop();
+        }
+    });
+}
+
 fn restart_preview(device: &str, mode: Option<video::VideoMode>) {
     PREVIEW_CONTEXT.with(|context| {
         let Some(preview) = context.borrow().as_ref().cloned() else { return; };
