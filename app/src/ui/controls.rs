@@ -246,7 +246,9 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
-    let config = current_config();
-    ui::layout::apply_compact_visibility(container.upcast_ref(), config.compact_mode, &config.compact_controls);
+    // The test app intentionally exposes the complete control set. Ignore
+    // any compact-mode preference persisted by older builds, otherwise it
+    // silently hides controls with no remaining UI to restore them.
+    ui::layout::apply_compact_visibility(container.upcast_ref(), false, &[]);
     ui::layout::restore_scroll_position(scroll_position);
 }
