@@ -145,6 +145,14 @@ Implemented XU operations:
   captured fixed command payload. App-side hardware validation remains
   pending; successful ioctl completion alone is not proof of the
   camera's applied state.
+- Radio distance is implemented through XU unit 2 / selector 0x06
+  using a separate fixed 60-byte SET_CUR payload. The 2026-11-19
+  controlled capture maps Close = `1b 01 00`, Standard = `1b 01 01`,
+  and Far = `1b 01 02`; bytes 3–59 are zero. The GET_CUR responses
+  observed around all three writes were identical, so no reliable
+  camera read-back is established. The UI persists the last successful
+  local selection and does not claim that it reflects a queried camera
+  state.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
 - Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture checkpoints show Direction Flip OFF at baseline, ON at 17.37s, OFF at 35.15s, then Dynamic Zoom OFF at 54.78s. The user has physically confirmed that Target Selection, Zoom/L-pose, Dynamic Zoom and Direction Flip all work on the Tiny 2 Lite. Direction Flip is the direction modifier for the Dynamic Zoom gesture and is intended to be used together with Dynamic Zoom; it does not change the separate Zoom/L-pose gesture or autofocus Global/Face priority. The corresponding SET_CUR packets are frames 13247, 72265, 170871, and 179033. The first three use direction group `0a 04 c4 33` and alternate payloads `27 ff 01 00`, `e6 3f 00 00`, `27 ff 01 00`. The fourth uses Dynamic Zoom group `0a 04 44 33` and is the separate Dynamic Zoom disable command, not a Direction Flip transition. The sequence values progress `0x000f`, `0x0010`, `0x0011`, `0x0012` across these commands. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The observed initial value `0x000f` is capture context; the required sequence seed on a fresh camera/app session is not established. The implementation currently initializes its process-local counter to zero and increments it for each framed XU write.
