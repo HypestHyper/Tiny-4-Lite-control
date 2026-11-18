@@ -940,6 +940,38 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 }
 
 
+
+fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
+    let value = |name: &str| controls.iter().find(|item| item.name == name).map(|item| item.value);
+    let mut blockers = Vec::new();
+    match control.name.as_str() {
+        "red_balance" | "blue_balance" | "white_balance_temperature" => {
+            if value("white_balance_automatic").unwrap_or(0) != 0 {
+                blockers.push("Auto white balance is enabled".to_string());
+            }
+        }
+        "exposure_time_absolute" => {
+            if value("auto_exposure").is_some_and(|mode| mode != 1) {
+                blockers.push("Exposure mode is not Manual".to_string());
+            }
+        }
+        "focus_absolute" => {
+            if value("focus_automatic_continuous").unwrap_or(0) != 0 {
+                blockers.push("Autofocus is enabled".to_string());
+            }
+        }
+        _ => {}
+    }
+    if control.disabled && blockers.is_empty() {
+        blockers.push(if control.kind.contains("read-only") {
+            "The V4L2 driver marks this control read-only".to_string()
+        } else {
+            "The V4L2 driver reports this control as inactive or disabled".to_string()
+        });
+    }
+    blockers
+}
+
 fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     clear_box(container);
     let output = match run_v4l2(device, "--list-ctrls-menus") {
@@ -999,10 +1031,11 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         add_focus_mode_control(container, device, status);
     }
 
-    for control in controls {
+    for control in controls.iter().cloned() {
         if control.name == "focus_automatic_continuous" { continue; }
-        if autofocus_enabled && control.name == "focus_absolute" { continue; }
-        if (control.disabled && control.name != "zoom_absolute" && control.name != "focus_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if (control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        let blockers = control_blockers(&control, &controls);
+        let unavailable = control.disabled || !blockers.is_empty();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.add_css_class("adaptive-row");
         row.set_margin_top(3);
@@ -1016,6 +1049,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         if control.kind == "bool" || (!control.kind.contains("menu") && control.min == 0 && control.max == 1) {
             let toggle = gtk::CheckButton::new();
             toggle.set_active(control.value != 0);
+            toggle.set_sensitive(!unavailable);
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
@@ -1028,7 +1062,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
                 let succeeded = result.is_ok();
                 status_label.set_text(&result.map(|_| format!("{name}: {value}"))
                     .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
-                if succeeded && name == "focus_automatic_continuous" {
+                if succeeded && matches!(name.as_str(), "white_balance_automatic" | "focus_automatic_continuous") {
                     populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
                 }
             });
@@ -1037,16 +1071,24 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             let combo = gtk::ComboBoxText::new();
             for (value, label) in &control.menu { combo.append(Some(&value.to_string()), label); }
             combo.set_active_id(Some(&control.value.to_string()));
+            combo.set_sensitive(!unavailable);
             let combo_apply = combo.clone();
             let apply = gtk::Button::with_label("Apply");
             let dev = device.to_string();
             let name = control.name.clone();
             let status_label = status.clone();
+            let controls_refresh = container.clone();
+            let window_refresh = window.clone();
+            let refresh_device = dev.clone();
             apply.connect_clicked(move |_| {
                 if let Some(id) = combo_apply.active_id() {
                     let value = id.parse::<i64>().unwrap_or_default();
                     let result = set_control(&dev, &name, value);
+                    let succeeded = result.is_ok();
                     status_label.set_text(&result.map(|_| format!("{name} updated")).unwrap_or_else(|e| e));
+                    if succeeded && name == "auto_exposure" {
+                        populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
+                    }
                 }
             });
             row.append(&combo);
@@ -1055,22 +1097,19 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             let scale = gtk::Scale::with_range(
                 gtk::Orientation::Horizontal,
                 control.min as f64,
-                control.max.max(control.min + control.step) as f64,
+                control.max.max(control.min) as f64,
                 control.step as f64,
             );
             scale.set_value(control.value.clamp(control.min, control.max.max(control.min)) as f64);
             scale.set_draw_value(true);
             scale.set_digits(0);
             scale.set_hexpand(true);
-            if control.name == "focus_absolute" {
-                scale.set_sensitive(!autofocus_enabled);
-            }
+            scale.set_sensitive(!unavailable);
             scale.add_mark(control.default_value as f64, gtk::PositionType::Bottom,
                 Some(&format!("Default: {}", control.default_value)));
 
             let reset = gtk::Button::with_label("Reset");
-            reset.set_sensitive(control.value != control.default_value
-                && !(control.name == "focus_absolute" && autofocus_enabled));
+            reset.set_sensitive(!unavailable && control.value != control.default_value);
             let reset_scale = scale.clone();
             reset.connect_clicked(move |_| {
                 reset_scale.set_value(control.default_value as f64);
@@ -1093,6 +1132,15 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
             row.append(&reset);
         }
         container.append(&row);
+        if unavailable {
+            let note = gtk::Label::new(Some(&format!("Unavailable: {}.", blockers.join("; "))));
+            note.set_wrap(true);
+            note.set_xalign(0.0);
+            note.add_css_class("dim-label");
+            note.set_margin_start(8);
+            note.set_margin_bottom(4);
+            container.append(&note);
+        }
         container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
