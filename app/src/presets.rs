@@ -29,6 +29,17 @@ fn ai_mode_payload(id: i64) -> Option<(u8, u8)> {
     }
 }
 
+fn fourcc_to_i64(value: &str) -> Option<i64> {
+    let bytes: [u8; 4] = value.as_bytes().try_into().ok()?;
+    Some(u32::from_le_bytes(bytes) as i64)
+}
+
+fn fourcc_from_i64(value: i64) -> Option<String> {
+    let bytes = u32::try_from(value).ok()?.to_le_bytes();
+    if !bytes.iter().all(u8::is_ascii_graphic) { return None; }
+    Some(String::from_utf8(bytes.to_vec()).ok()?)
+}
+
 fn gesture_group(name: &str) -> Option<[u8; 6]> {
     match name {
         "target_selection" => Some([0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00]),
@@ -47,6 +58,15 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     for control in parse_controls(&output) {
         if !control.disabled && !MOVEMENT_CONTROLS.contains(&control.name.as_str()) && control.kind != "button" {
             settings.insert(format!("v4l2:{}", control.name), control.value);
+        }
+    }
+
+    if let Some(mode) = video::current_mode(device) {
+        settings.insert("video:width".into(), mode.width as i64);
+        settings.insert("video:height".into(), mode.height as i64);
+        settings.insert("video:frame_rate_milli".into(), mode.frame_rate_milli as i64);
+        if let Some(code) = fourcc_to_i64(&mode.pixel_format) {
+            settings.insert("video:pixel_format".into(), code);
         }
     }
 
@@ -142,6 +162,36 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         }
     }
 
+    let video_keys = [
+        preset.settings.get("video:width"),
+        preset.settings.get("video:height"),
+        preset.settings.get("video:frame_rate_milli"),
+        preset.settings.get("video:pixel_format"),
+    ];
+    if let [Some(width), Some(height), Some(rate), Some(format)] = video_keys {
+        let mode = (|| Some(video::VideoMode {
+            width: u32::try_from(*width).ok()?,
+            height: u32::try_from(*height).ok()?,
+            frame_rate_milli: u32::try_from(*rate).ok()?,
+            pixel_format: fourcc_from_i64(*format)?,
+        }))();
+        match mode {
+            Some(mode) => match video::set_mode(device, &mode) {
+                Ok(()) => {
+                    restart_preview(device, Some(mode));
+                    applied += 1;
+                    update_config(|config| config.video_mode = Some(config::VideoModeConfig {
+                        width: mode.width, height: mode.height,
+                        pixel_format: mode.pixel_format.clone(),
+                        frame_rate_milli: mode.frame_rate_milli,
+                    }));
+                }
+                Err(error) => errors.push(format!("video mode: {error}")),
+            },
+            None => errors.push("video mode: invalid preset capture settings".into()),
+        }
+    }
+
     if errors.is_empty() {
         Ok(format!("Applied {applied} settings from preset '{}'.", preset.name))
     } else {
@@ -177,5 +227,12 @@ mod tests {
         assert!(MOVEMENT_CONTROLS.contains(&"tilt_speed"));
         assert!(!MOVEMENT_CONTROLS.contains(&"pan_absolute"));
         assert!(!MOVEMENT_CONTROLS.contains(&"tilt_absolute"));
+    }
+
+    #[test]
+    fn pixel_format_round_trips_as_a_fourcc() {
+        assert_eq!(fourcc_from_i64(fourcc_to_i64("MJPG").unwrap()).as_deref(), Some("MJPG"));
+        assert_eq!(fourcc_from_i64(fourcc_to_i64("YUYV").unwrap()).as_deref(), Some("YUYV"));
+        assert!(fourcc_to_i64("MJ").is_none());
     }
 }
