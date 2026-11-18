@@ -561,12 +561,12 @@ fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
     // Power-state verification is deliberately separate: the camera's
     // status byte may lag behind the command.
     let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
-    let (sequence, command) = if sleep {
-        (0x0042, [0x00, 0x00, 0x01, 0x00, 0x00, 0x00])
+    let command = if sleep {
+        [0x00, 0x00, 0x01, 0x00, 0x00, 0x00]
     } else {
-        (0x00a5, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        [0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
     };
-    xu_send_frame(device, sequence, group, command)
+    xu_send_frame(device, group, command)
 }
 
 fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
