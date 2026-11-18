@@ -367,9 +367,9 @@ indicator.
 
 ### 4.12 Microphone processing
 
-**Status:** Disable microphone, auto gain, and noise reduction are
-protocol-mapped from controlled Tiny 2 Lite Linux captures. App-side
-hardware validation is pending.
+**Status:** Disable microphone, auto gain, noise reduction, and radio
+distance are protocol-mapped from controlled Tiny 2 Lite Linux
+captures. App-side hardware validation is pending.
 
 All three settings use Extension Unit 2, selector `0x06`, but
 Disable microphone uses a distinct fixed command payload rather than
@@ -405,9 +405,29 @@ successfully submitted local state. A successful ioctl is host
 transport evidence, not independent proof that the camera applied the
 change.
 
-Other audio controls, including microphone during sleep, radio distance,
-and pop filter, remain unimplemented until their fields are independently
-isolated and mapped.
+### Radio distance
+
+A controlled 2026-11-19 capture isolated three OBSBOT Center selections.
+Each selection sent one 60-byte SET_CUR payload to Extension Unit 2,
+selector `0x06`. The payload begins with `1b 01`; byte 2 (zero-based)
+encodes the distance:
+
+| OBSBOT Center setting | Byte 2 | Payload prefix |
+|---|---:|---|
+| Close | `00` | `1b 01 00` |
+| Standard | `01` | `1b 01 01` |
+| Far | `02` | `1b 01 02` |
+
+Bytes 3–59 were zero in all three captured writes. The GET_CUR
+responses surrounding the writes were identical, so this is a separate
+fixed command payload, not a verified field in the shared status block.
+No reliable camera read-back is established. The app exposes a
+Close / Standard / Far selector and remembers only the last successful
+local submission. A successful ioctl is transport evidence, not
+independent proof that the camera applied the setting.
+
+Microphone during sleep and pop filter remain unimplemented until their
+fields are independently isolated and mapped.
 
 ------------------------------------------------------------------------
 
