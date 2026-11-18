@@ -109,7 +109,7 @@ all firmware.
 
 ### 4.6 Gestures
 
-**Status:** Target selection, Zoom/L-pose, and Dynamic Zoom have all been physically verified on the user's Tiny 2 Lite. Target selection is triggered by an open palm/fingers spread and enables normal tracking. Zoom uses the L-pose gesture. Dynamic Zoom uses both hands in L shapes moved apart/together. Direction Flip has an identified wire-state mapping from a controlled 2026-11-18 capture; the corrected app implementation still needs live confirmation that it reverses the visible direction.
+**Status:** Target selection, Zoom/L-pose, Dynamic Zoom, and Direction Flip have all been physically verified on the user's Tiny 2 Lite. Target selection is triggered by an open palm/fingers spread and enables normal tracking. Zoom uses the L-pose gesture. Dynamic Zoom uses both hands in L shapes moved apart/together. Direction Flip changes the direction in which the Dynamic Zoom gesture responds. These two controls work together: enable Dynamic Zoom to use the two-hand gesture, then use Direction Flip to reverse its direction. Direction Flip is not a separate gesture and does not affect Zoom/L-pose or Global/Face autofocus priority.
 
 Available controls: - Target selection - Zoom - Dynamic zoom - Dynamic
 zoom direction (Direction Flip)
