@@ -649,7 +649,7 @@ pub fn build_page() -> gtk::Box {
     let list_clear = saved_list.clone();
     let paths_clear = saved_paths.clone();
     clear.connect_clicked(move |_| {
-        if let Some(active) = session_clear.borrow_mut().take() {
+        if let Some(mut active) = session_clear.borrow_mut().take() {
             let raw_path = active.pcap_path.clone();
             status_clear.set_text("Stopping and discarding the active capture…");
             clear_button.set_sensitive(false);
