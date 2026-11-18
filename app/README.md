@@ -109,6 +109,11 @@ selector `0x06` for the 60-byte status block.
   has not been established. App-side hardware validation is pending;
   the restart mechanism and any additional restart-related commands
   remain uninvestigated.
+- Radio distance: Close, Standard, and Far. XU unit 2 / selector 0x06
+  sends a separate fixed 60-byte command with prefix
+  `1b 01 <value>` (Close=0, Standard=1, Far=2), zero-filled
+  remainder. No GET_CUR read-back is established; the app remembers the
+  last successful local selection.
 - LED: one setting control with Off and brightness levels 1, 2, and 3.
   Selector `0x06`, tag `0x1A`, uses raw values 0 through 3 directly.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
