@@ -367,6 +367,116 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
     Ok(())
 }
 
+fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
+        .map_err(|e| format!("Cannot open {device} for UVC Processing Unit controls: {e}"))?;
+    let mut query = UvcXuControlQuery {
+        unit: 3, selector, query: request, _pad: 0,
+        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
+    };
+    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
+    if result < 0 {
+        return Err(format!("UVC Processing Unit 3 selector 0x{selector:02x} request 0x{request:02x}: {}",
+            std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], String> {
+    if position > 18 {
+        return Err("Exposure compensation position must be between 0 and 18.".into());
+    }
+    Ok(((position as u16) + 1).to_le_bytes())
+}
+
+fn exposure_compensation_position(payload: [u8; 2]) -> Option<u8> {
+    let raw = u16::from_le_bytes(payload);
+    (1..=19).contains(&raw).then_some((raw - 1) as u8)
+}
+
+fn get_exposure_compensation(device: &str) -> Result<u8, String> {
+    let mut data = [0u8; 2];
+    pu_query(device, 0x01, UVC_GET_CUR, &mut data)?;
+    exposure_compensation_position(data)
+        .ok_or_else(|| format!("Camera returned unsupported exposure compensation value {}.", u16::from_le_bytes(data)))
+}
+
+fn set_exposure_compensation(device: &str, position: u8) -> Result<(), String> {
+    let mut data = exposure_compensation_payload(position)?;
+    pu_query(device, 0x01, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.exposure_compensation_position = Some(position));
+    Ok(())
+}
+
+fn exposure_compensation_label(position: u8) -> String {
+    if position == 9 { "0.0".into() }
+    else { format!("{:+.1}", -3.0 + position as f64 / 3.0) }
+}
+
+fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Exposure compensation"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:exposure_compensation");
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let saved = current_config().exposure_compensation_position.filter(|value| *value <= 18);
+    let initial = get_exposure_compensation(device).ok().or(saved);
+    let position = initial.unwrap_or(9);
+    let value_label = gtk::Label::new(Some(&initial.map(exposure_compensation_label)
+        .unwrap_or_else(|| "0.0 · camera value unavailable".into())));
+    value_label.set_xalign(0.0);
+
+    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 18.0, 1.0);
+    scale.set_digits(0);
+    scale.set_draw_value(false);
+    scale.set_hexpand(true);
+    scale.add_mark(0.0, gtk::PositionType::Bottom, Some("−3"));
+    scale.add_mark(9.0, gtk::PositionType::Bottom, Some("0"));
+    scale.add_mark(18.0, gtk::PositionType::Bottom, Some("+3"));
+    scale.set_value(position as f64);
+
+    let last = Rc::new(Cell::new(position));
+    let updating = Rc::new(Cell::new(false));
+    let dev = device.to_string();
+    let status_label = status.clone();
+    let last_position = last.clone();
+    let guard = updating.clone();
+    let value = value_label.clone();
+    scale.connect_value_changed(move |slider| {
+        if guard.get() { return; }
+        let requested = slider.value().round().clamp(0.0, 18.0) as u8;
+        match set_exposure_compensation(&dev, requested) {
+            Ok(()) => {
+                last_position.set(requested);
+                value.set_text(&exposure_compensation_label(requested));
+                status_label.set_text(&format!("Exposure compensation set to {}.", exposure_compensation_label(requested)));
+            }
+            Err(error) => {
+                guard.set(true);
+                slider.set_value(last_position.get() as f64);
+                guard.set(false);
+                status_label.set_text(&format!("Could not set exposure compensation: {error}"));
+            }
+        }
+    });
+
+    let note = gtk::Label::new(Some(
+        "19 positions from −3.0 to +3.0. This is the UVC Processing Unit Backlight Compensation control, not a V4L2 exposure-bias control."
+    ));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&value_label);
+    layout.append(&scale);
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn xu_status(device: &str) -> Result<[u8; 60], String> {
     let mut data = [0u8; 60];
     xu_query(device, 0x06, UVC_GET_CUR, &mut data)?;
@@ -1777,6 +1887,22 @@ mod xu_protocol_tests {
         assert_eq!(next_xu_sequence(&sequence), 0x0010);
         assert_eq!(next_xu_sequence(&sequence), 0x0011);
         assert_eq!(next_xu_sequence(&sequence), 0x0012);
+    }
+
+    #[test]
+    #[test]
+    fn exposure_compensation_maps_all_nineteen_positions() {
+        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0100").as_slice());
+        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0a00").as_slice());
+        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1300").as_slice());
+        for position in 0..=18 {
+            let payload = exposure_compensation_payload(position).unwrap();
+            assert_eq!(exposure_compensation_position(payload), Some(position));
+        }
+        assert!(exposure_compensation_payload(19).is_err());
+        assert_eq!(exposure_compensation_label(0), "-3.0");
+        assert_eq!(exposure_compensation_label(9), "0.0");
+        assert_eq!(exposure_compensation_label(18), "+3.0");
     }
 
     #[test]
