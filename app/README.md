@@ -27,10 +27,11 @@ not the final UI. UI redesign is deferred.
   is inferred from paired transitions in the recording and still needs
   physical confirmation. Selection is tracked locally because camera-side
   read-back is unavailable. This is distinct from face-priority auto-exposure.
-- Exposes the camera-reported `zoom_absolute` as a position slider.
-  `zoom_continuous` is currently suppressed. A hold-to-zoom control
-  with release-to-stop is not implemented; do not assume the current
-  slider resolves the earlier zoom-continuation issue.
+- Uses `zoom_absolute` as the only manual zoom/FOV path. The user
+  confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
+  (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
+  this same V4L2 control and read its value back. `zoom_continuous` and
+  the separate vendor FOV setter are not used.
 - Provides pan/tilt speed joystick control with sensitivity adjustment.
   Releasing the joystick sends neutral speed. Bounded absolute pan/tilt
   step controls are also available and move the physical gimbal
@@ -42,9 +43,8 @@ The XU transport uses unit 2, selector `0x02` for framed commands and
 selector `0x06` for the 60-byte status block.
 
 - AI tracking modes: Off, Normal, Upper Body, Close-up, Headless, Lower
-  Body, Group, Desk, Whiteboard, and Hand. The Hand setter uses the
-  Lite-tested tuple `03 00`; the status decoder accepts both `03 00`
-  and `06 00` because the observed representations differ.
+  Body, and Group. Desk, Whiteboard and Hand are intentionally excluded
+  from the supported app scope.
 - Tracking speed: Standard and Sport. Sport encoding is
   firmware-sensitive; the current implementation sends the documented
   `0x02` value and does not automatically choose the older reported
@@ -63,9 +63,9 @@ selector `0x06` for the 60-byte status block.
   initializes it to zero.
 - Sleep and wake are explicit user actions. Both have been physically
   tested. The separate power-status read-back has also been tested.
-- FOV: Wide, Normal, and Narrow have all been visually confirmed. Some
-  AI tracking modes are incompatible with FOV changes; the exact
-  combinations are not yet mapped.
+- FOV presets are implemented through V4L2 `zoom_absolute`, not a
+  separate vendor command: Wide=0, Medium=5, Narrow=15. The generic
+  V4L2 slider covers 0–100.
 - LED: one setting control with Off and brightness levels 1, 2, and 3.
   Selector `0x06`, tag `0x1A`, uses raw values 0 through 3 directly.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
@@ -150,9 +150,10 @@ revision as build-verified.
 - There is no separately installed background daemon or automatic
   sleep/wake service. The longer-term service/config architecture is
   still a design direction, not an implemented feature.
-- Zoom hold/release stop behaviour, Global / Face focus mode hardware confirmation/read-back, reliable
+- Global / Face focus mode hardware confirmation/read-back, reliable
   gesture read-back, automatic firmware detection, live pan/tilt
-  telemetry, and preset mutation remain unimplemented or unverified.
+  telemetry, HDR setter verification, mirror support, and preset
+  mutation remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
   capture evidence and explicit hardware validation.
 
