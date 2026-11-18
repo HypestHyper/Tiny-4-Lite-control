@@ -1890,7 +1890,6 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    #[test]
     fn exposure_compensation_maps_all_nineteen_positions() {
         assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0100").as_slice());
         assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0a00").as_slice());
