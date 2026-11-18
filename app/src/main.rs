@@ -348,12 +348,13 @@ fn set_fov(device: &str, mode: u8) -> Result<(), String> {
 }
 
 fn led_brightness_payload(level: u8) -> Result<[u8; 3], String> {
-    if !(1..=4).contains(&level) {
-        return Err("LED brightness must be between 1 and 4.".into());
+    if !(1..=3).contains(&level) {
+        return Err("LED brightness must be between 1 and 3.".into());
     }
-    // The capture contains four brightness values on tag 0x1A:
-    // raw 0, 1, 2, 3 map to user-facing levels 1, 2, 3, 4.
-    // Power is controlled independently by tag 0x18.
+    // Captures confirm three user-facing brightness levels. The write
+    // payload uses zero-based values 0, 1, 2 for levels 1, 2, 3.
+    // Read-back is a separate status field at byte 0x20: 1, 2, 3.
+    // LED power is controlled independently by tag 0x18.
     Ok([0x1a, 0x01, level - 1])
 }
 
@@ -431,7 +432,6 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     intensity_on.append(Some("1"), "1");
     intensity_on.append(Some("2"), "2");
     intensity_on.append(Some("3"), "3");
-    intensity_on.append(Some("4"), "4");
     intensity_on.set_active_id(Some("1"));
     if let Ok(current) = xu_status(device) {
         if current[0x21] <= 3 {
@@ -448,8 +448,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
             .and_then(|level| {
                 set_led_brightness(&dev_on, level)?;
                 set_led_power(&dev_on, true)?;
-                let actual = xu_status(&dev_on)?[0x21];
-                if actual == level - 1 {
+                let actual = xu_status(&dev_on)?[0x20];
+                if actual == level {
                     Ok(format!("LED on. Brightness level {level} (raw {actual}) confirmed."))
                 } else {
                     Err(format!("LED switched on at level {level}, but brightness status reports raw value {actual}."))
@@ -481,7 +481,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     }
     layout.append(&led_brightness);
 
-    let note = gtk::Label::new(Some("LED power uses selector 0x06 tag 0x18. Brightness uses tag 0x1A with four levels: raw 0–3 map to levels 1–4. Status byte 0x21 reports brightness, not power state. FOV read-back uses status byte 0x11."));
+    let note = gtk::Label::new(Some("LED power uses selector 0x06 tag 0x18. Brightness uses tag 0x1A with three levels. The capture confirms status byte 0x20 reports 0 when off and 1–3 for brightness levels 1–3. FOV read-back uses status byte 0x11."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -1403,9 +1403,8 @@ mod xu_protocol_tests {
         assert_eq!(led_brightness_payload(1).unwrap(), [0x1a, 0x01, 0x00]);
         assert_eq!(led_brightness_payload(2).unwrap(), [0x1a, 0x01, 0x01]);
         assert_eq!(led_brightness_payload(3).unwrap(), [0x1a, 0x01, 0x02]);
-        assert_eq!(led_brightness_payload(4).unwrap(), [0x1a, 0x01, 0x03]);
         assert!(led_brightness_payload(0).is_err());
-        assert!(led_brightness_payload(5).is_err());
+        assert!(led_brightness_payload(4).is_err());
     }
 
     #[test]
