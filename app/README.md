@@ -24,9 +24,12 @@ not the final UI. UI redesign is deferred.
   Global / Face options send the framed XU `CAM_SET_FACE_FOCUS`
   command (`0x3602`, receiver `0x02`) using captured Tiny 2 Lite
   payloads: Global `be 07 00 00`, Face `bf fb 01 00`. Their assignment
-  is inferred from paired transitions in the recording and still needs
-  physical confirmation. Selection is tracked locally because camera-side
-  read-back is unavailable. This is distinct from face-priority auto-exposure.
+  is inferred from imperfectly correlated capture checkpoints. The user
+  tested both options and reports that neither currently produces the
+  expected focus behavior. Treat Global/Face as not working/unverified;
+  the UI confirms only command submission, not camera behavior. Selection
+  is tracked locally because camera-side read-back is unavailable. This
+  is distinct from face-priority auto-exposure.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
   (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
@@ -79,9 +82,14 @@ selector `0x06` for the 60-byte status block.
 
 The selector `0x06` status block provides AI tracking state/mode and
 selected settings where documented, but it does not provide reliable
-per-gesture read-back. A successful ioctl only confirms host-side
-request completion; use observable device behaviour or independent
-read-back to validate state changes.
+per-gesture read-back for Target Selection, Dynamic Zoom, or Direction
+Flip. These controls show **Unknown** on startup unless a previously
+successful local setting is saved; the first click from Unknown sends
+Enable. Zoom/L-pose has a status-byte read-back. Unknown describes the
+app's inability to determine the starting state, not a camera-reported
+error. A successful ioctl only confirms host-side request completion;
+use observable device behaviour or independent read-back to validate
+state changes.
 
 ## Persistent configuration
 
@@ -183,8 +191,10 @@ revision as build-verified.
   sleep/wake service. Persistent TOML configuration is implemented;
   the in-process camera service and optional restore-on-connect behavior
   are still future work.
-- Global / Face focus mode hardware confirmation/read-back, reliable
-  gesture read-back, automatic firmware detection, live pan/tilt
+- Global / Face autofocus priority is currently not working in the
+  user's hardware test; the capture-derived payload assignment and
+  camera-side effect remain unverified. Reliable read-back for most
+  gesture states, automatic firmware detection, live pan/tilt
   telemetry, HDR setter verification, mirror support, and preset
   mutation remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
