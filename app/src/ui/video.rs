@@ -1,7 +1,7 @@
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use crate::{current_config, update_config_checked, video};
+use crate::{update_config_checked, video};
 
 fn fill_resolutions(
     combo: &gtk::ComboBoxText,
