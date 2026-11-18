@@ -220,8 +220,8 @@ The user recorded HDR Off at baseline and toggled HDR repeatedly. Four outgoing 
 
 | Frame | Relative time | 60-byte payload prefix | State indicated |
 |---:|---:|---|---|
-| 46349 | 9.001861s | `01 01 01` | Off |
-| 104351 | 20.272726s | `01 01 00` | On |
+| 46349 | 9.001861s | `01 01 01` | On |
+| 104351 | 20.272726s | `01 01 00` | Off |
 | 138985 | 26.969341s | `01 01 01` | Off |
 | 174385 | 33.842670s | `01 01 00` | On |
 
@@ -235,10 +235,10 @@ The selector `0x06` status response independently tracks the same state at byte 
 | 27.535419s | `01` | On |
 | 35.685629s | `00` | Off |
 
-The status-byte sequence is the inverse of the outgoing command's third byte: status `00` means HDR Off and status `01` means HDR On. The user checkpoints and the packet/status sequence establish the command mapping used by the app:
+The outgoing command's third byte and status byte `0x06` agree: `00` means HDR Off and `01` means HDR On. The packet/status sequence establishes the command mapping used by the app:
 
-- HDR On: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 00`.
-- HDR Off: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 01`.
+- HDR On: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 01`.
+- HDR Off: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 00`.
 
 The last user checkpoint recorded HDR Off, but no corresponding outgoing command appears after the final HDR-On write. The user considers that last click likely not recorded. The repeated command alternation and matching status responses provide sufficient evidence for the mapping; the absent final write is retained as a capture omission, not used to reject the mapping.
 
