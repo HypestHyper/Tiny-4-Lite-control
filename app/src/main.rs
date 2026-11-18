@@ -1559,7 +1559,10 @@ fn build_ui(app: &gtk::Application) {
     let status_for_compact = status.clone();
     let device_for_compact = devices.clone();
     compact_settings.connect_clicked(move |_| {
-        let device = device_for_compact.active_id().map(|id| id.to_string()).unwrap_or_default();
+        let Some(device) = device_for_compact.active_id().map(|id| id.to_string()) else {
+            status_for_compact.set_text("Connect the camera before configuring Compact mode controls.");
+            return;
+        };
         show_compact_settings(&window_for_compact, &device, &controls_for_compact, &status_for_compact);
     });
 
