@@ -2,6 +2,7 @@ mod capture;
 mod config;
 mod presets;
 mod ui;
+mod video;
 
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
