@@ -538,14 +538,12 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
 }
 
 // Tiny 2 Lite focus-priority command (wire command 0x3602, Camera receiver 0x02).
-// The earlier 0/1 Boolean payload was borrowed from a different implementation
-// and is contradicted by the Lite capture. The captured values correlate with
-// Face then Global transitions: Face = BF FB 01 00; Global = BE 07 00 00.
-// The capture does not provide reliable read-back, so the mapping remains
-// hardware-testable rather than claiming device-side confirmation.
+// The Nov 18 capture correlates Global -> Face with BE 07 00 00 and
+// Face -> Global with BF FB 01 00. The camera does not provide reliable
+// read-back, so this records the last successfully submitted command.
 fn face_focus_payload(face_priority: bool) -> [u8; 4] {
-    if face_priority { [0xbf, 0xfb, 0x01, 0x00] }
-    else { [0xbe, 0x07, 0x00, 0x00] }
+    if face_priority { [0xbe, 0x07, 0x00, 0x00] }
+    else { [0xbf, 0xfb, 0x01, 0x00] }
 }
 
 fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
@@ -591,16 +589,18 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
         Some("global") => Some(false),
         _ => None,
     }));
-    let updating = Rc::new(Cell::new(false));
+    // Dispatch from the clicked segment, not both buttons' toggled signals.
+    // A grouped ToggleButton emits toggled for the segment being deselected as
+    // well as the one being selected. Handling only a user click guarantees one
+    // command for the newly selected priority and avoids depending on signal order.
     for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
         let dev = device.to_string();
         let status_label = status.clone();
         let current = current_face.clone();
-        let updating_state = updating.clone();
         let global_restore = global.clone();
         let face_restore = face.clone();
-        button.connect_toggled(move |selected| {
-            if updating_state.get() || !selected.is_active() {
+        button.connect_clicked(move |selected| {
+            if !selected.is_active() {
                 return;
             }
             let previous = current.get();
@@ -614,10 +614,8 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
                     });
                 }
                 Err(error) => {
-                    updating_state.set(true);
                     global_restore.set_active(previous == Some(false));
                     face_restore.set_active(previous == Some(true));
-                    updating_state.set(false);
                     status_label.set_text(&format!("Could not change autofocus priority: {error}"));
                 }
             }
@@ -1633,20 +1631,20 @@ mod xu_protocol_tests {
     #[test]
     fn face_focus_frames_match_tiny_2_lite_capture_values() {
         let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
-        assert_eq!(face_focus_payload(true), hex("bffb0100").as_slice());
-        assert_eq!(face_focus_payload(false), hex("be070000").as_slice());
+        assert_eq!(face_focus_payload(true), hex("be070000").as_slice());
+        assert_eq!(face_focus_payload(false), hex("bffb0100").as_slice());
 
         let mut face_command = [0u8; 6];
         face_command[2..6].copy_from_slice(&face_focus_payload(true));
         let face = obsbot_frame(0x0040, group, face_command);
         assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&face[16..20], hex("bffb0100").as_slice());
+        assert_eq!(&face[16..20], hex("be070000").as_slice());
 
         let mut global_command = [0u8; 6];
         global_command[2..6].copy_from_slice(&face_focus_payload(false));
         let global = obsbot_frame(0x0041, group, global_command);
         assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&global[16..20], hex("be070000").as_slice());
+        assert_eq!(&global[16..20], hex("bffb0100").as_slice());
     }
 
     #[test]
