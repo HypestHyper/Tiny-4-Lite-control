@@ -185,6 +185,7 @@ fn decode_frame(frame: &[u8], mode: &VideoMode) -> Option<Pixbuf> {
                 }
                 rgb
             }
+            _ => return None,
         };
         if rgb.len() != width * height * 3 { return None; }
         let bytes = gtk::glib::Bytes::from_owned(rgb);
