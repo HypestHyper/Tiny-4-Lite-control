@@ -76,6 +76,11 @@ pub fn load() -> Result<AppConfig, String> {
                     }
                 }
             }
+            // Create the first config file on first launch, preserving any
+            // migrated theme. Failure to persist defaults must not block startup.
+            if let Err(error) = save(&config) {
+                eprintln!("Could not create initial settings file: {error}");
+            }
             Ok(config)
         }
         Err(error) => Err(format!("Could not read {}: {error}", path.display())),
