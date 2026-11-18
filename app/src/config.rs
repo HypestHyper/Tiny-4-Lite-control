@@ -29,6 +29,7 @@ pub struct AppConfig {
     pub theme: String,
     pub v4l2_controls: BTreeMap<String, i64>,
     pub led_brightness: Option<u8>,
+    pub hdr_enabled: Option<bool>,
     pub ai_tracking_mode: Option<String>,
     pub tracking_speed: Option<String>,
     pub focus_mode: Option<String>,
@@ -74,6 +75,7 @@ impl Default for AppConfig {
             theme: "system".into(),
             v4l2_controls: BTreeMap::new(),
             led_brightness: None,
+            hdr_enabled: None,
             ai_tracking_mode: None,
             tracking_speed: None,
             focus_mode: None,
@@ -208,6 +210,7 @@ mod tests {
         config.theme = "dark".into();
         config.v4l2_controls.insert("zoom_absolute".into(), 15);
         config.led_brightness = Some(2);
+        config.hdr_enabled = Some(true);
         config.ai_tracking_mode = Some("upper".into());
         config.tracking_speed = Some("sport".into());
         config.focus_mode = Some("face".into());
@@ -233,6 +236,7 @@ mod tests {
         let decoded: AppConfig = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded.v4l2_controls.get("zoom_absolute"), Some(&15));
         assert_eq!(decoded.led_brightness, Some(2));
+        assert_eq!(decoded.hdr_enabled, Some(true));
         assert_eq!(decoded.ai_tracking_mode.as_deref(), Some("upper"));
         assert_eq!(decoded.tracking_speed.as_deref(), Some("sport"));
         assert_eq!(decoded.focus_mode.as_deref(), Some("face"));
