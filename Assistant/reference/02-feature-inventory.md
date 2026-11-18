@@ -98,17 +98,16 @@ order.
 
 ### 4.5 Tracking speed
 
-**Status:** Lite-confirmed, firmware-sensitive.
+**Status:** Both Standard and Sport have been physically confirmed working on the user's Tiny 2 Lite. Firmware compatibility remains a separate concern.
 
--   Standard
--   Sport
+-   Standard: physically confirmed.
+-   Sport: physically confirmed.
 
 On firmware 6.2.5.x, Sport value is `0x02`. Older firmware may use
-`0x21`.
-
-Read device firmware/version where possible and verify the accepted
-value before sending. Do not assume a single enum mapping works across
-all firmware.
+`0x21`. The current app sends the documented `0x02` value and does not
+automatically identify firmware or select the legacy encoding. The
+hardware test confirms both modes on the tested camera/firmware; it
+does not establish compatibility across older firmware.
 
 ### 4.6 Gestures
 
