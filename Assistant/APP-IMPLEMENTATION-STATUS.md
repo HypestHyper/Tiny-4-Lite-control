@@ -62,7 +62,7 @@ Implemented XU operations:
 - Read the tracking-speed status byte at `0x24`.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
-- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The mapping is supported by three repeated transitions in the 2026-11-18 Tiny 2 Lite capture. The fourth inspected packet uses group `0a 04 44 33` (Dynamic Zoom), not the direction group `0a 04 c4 33`, and is not used as direction evidence.
+- Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture shows the frame sequence advancing across commands (`0x000f`, `0x0010`, `0x0011`, `0x0012`), including the final, separate Dynamic Zoom disable command. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The counter starts at zero for each app process; the capture establishes incrementing behavior, not a required initial value. The fourth inspected packet uses group `0a 04 44 33` (Dynamic Zoom), not the direction group `0a 04 c4 33`, and is not used as direction-state evidence.
 
 Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Preset mutation is not implemented.
 
@@ -115,7 +115,7 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Gesture commands
 
-Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction gesture is functional. The 2026-11-18 capture established the ON/OFF wire-state mapping and it is now implemented; device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
+Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction gesture is functional. The 2026-11-18 capture established the inverted ON/OFF payload mapping and the rolling frame sequence behavior; both are implemented. Device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
 
 - Target selection: `0a 04 c4 30 01 00`
 - Zoom/L-pose: `0a 04 44 31 01 00`
@@ -145,7 +145,7 @@ Enable/disable frames are built with the current frame builder. The status block
 
 - No automatic byte-diff view or semantic inference for unknown XU records; capture reports now include a transfer summary and pairing aids, while preserving raw decoded rows.
 - No automatic firmware-version identification. USB `bcdDevice` and XU model identity are displayed, but neither is treated as the installed OBSBOT firmware revision.
-- No reliable per-gesture state read-back. Dynamic Zoom direction semantics remain unknown despite the gesture itself being confirmed working.
+- No reliable per-gesture state read-back. Dynamic Zoom direction ON/OFF wire payloads are mapped from the 2026-11-18 capture, but the user-visible direction reversal still needs hardware confirmation.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
 - GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging, not live hardware validation of the new diagnostics reads.
