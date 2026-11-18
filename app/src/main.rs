@@ -442,6 +442,29 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     Ok(())
 }
 
+// Tiny 2 Lite HDR control, captured as a 60-byte selector 0x06 SET_CUR.
+// The third byte is inverted: 0x00 enables HDR, 0x01 disables it.
+fn hdr_payload(enabled: bool) -> [u8; 3] {
+    [0x01, 0x01, if enabled { 0x00 } else { 0x01 }]
+}
+
+fn hdr_state_from_status(status: &[u8; 60]) -> Option<bool> {
+    match status[0x06] {
+        0x00 => Some(true),
+        0x01 => Some(false),
+        _ => None,
+    }
+}
+
+fn set_hdr_enabled(device: &str, enabled: bool) -> Result<(), String> {
+    let payload = hdr_payload(enabled);
+    let mut data = [0u8; 60];
+    data[..payload.len()].copy_from_slice(&payload);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.hdr_enabled = Some(enabled));
+    Ok(())
+}
+
 fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera settings"));
     frame.add_css_class("compact-group");
@@ -484,6 +507,45 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     zoom_layout.append(&zoom_note);
     zoom_frame.set_child(Some(&zoom_layout));
     layout.append(&zoom_frame);
+
+    let hdr_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    hdr_row.add_css_class("adaptive-row");
+    ui::layout::mark_compact_item(hdr_row.upcast_ref(), "obsbot:hdr");
+    let hdr_label = gtk::Label::new(Some("HDR"));
+    hdr_label.set_xalign(0.0);
+    hdr_label.set_hexpand(true);
+    let hdr_switch = gtk::Switch::new();
+    hdr_switch.set_valign(gtk::Align::Center);
+    let initial_hdr = xu_status(device).ok().and_then(|data| hdr_state_from_status(&data))
+        .or_else(|| current_config().hdr_enabled);
+    if let Some(enabled) = initial_hdr {
+        hdr_switch.set_active(enabled);
+    } else {
+        hdr_switch.set_sensitive(false);
+        hdr_switch.set_tooltip_text(Some("HDR state is unavailable from the camera status block."));
+    }
+    let hdr_status = status.clone();
+    let hdr_device = device.to_string();
+    hdr_switch.connect_state_set(move |switch, enabled| {
+        match set_hdr_enabled(&hdr_device, enabled) {
+            Ok(()) => {
+                hdr_status.set_text(if enabled {
+                    "HDR enable command submitted."
+                } else {
+                    "HDR disable command submitted."
+                });
+            }
+            Err(error) => {
+                switch.set_active(!enabled);
+                hdr_status.set_text(&format!("Could not change HDR: {error}"));
+            }
+        }
+        gtk::glib::Propagation::Proceed
+    });
+    hdr_row.append(&hdr_label);
+    hdr_row.append(&hdr_switch);
+    layout.append(&hdr_row);
+
     let led_frame = gtk::Frame::new(Some("LED illumination"));
     let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -1669,6 +1731,20 @@ mod xu_protocol_tests {
         assert_eq!(&sleep[..20], hex("aa2542000c00ea630a02c2a00400bffb01000000").as_slice());
         assert!(wake[20..].iter().all(|byte| *byte == 0));
         assert!(sleep[20..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn hdr_payload_and_status_mapping_match_tiny_2_lite_capture() {
+        assert_eq!(hdr_payload(true), [0x01, 0x01, 0x00]);
+        assert_eq!(hdr_payload(false), [0x01, 0x01, 0x01]);
+
+        let mut status = [0u8; 60];
+        status[0x06] = 0x00;
+        assert_eq!(hdr_state_from_status(&status), Some(true));
+        status[0x06] = 0x01;
+        assert_eq!(hdr_state_from_status(&status), Some(false));
+        status[0x06] = 0xff;
+        assert_eq!(hdr_state_from_status(&status), None);
     }
 
     #[test]
