@@ -194,6 +194,9 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
             Err(error) => {
                 status_apply.set_text(&format!("Could not apply video mode: {error}"));
                 if let Some(previous) = last_apply.borrow().clone() {
+                    // A failed frame-rate change can occur after the format
+                    // has already changed. Best-effort restore the full mode.
+                    let _ = video::set_mode(&device_name, &previous);
                     updating_apply.set(true);
                     format_restore.set_active_id(Some(&previous.pixel_format));
                     fill_resolutions(&size_restore, &modes_apply, &previous.pixel_format, Some((previous.width, previous.height)));
