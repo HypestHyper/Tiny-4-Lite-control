@@ -496,14 +496,18 @@ fn audio_noise_reduction_label(level: u8) -> &'static str {
     }
 }
 
+fn patch_xu_status_byte(mut data: [u8; 60], offset: usize, value: u8) -> Result<[u8; 60], String> {
+    let byte = data.get_mut(offset)
+        .ok_or_else(|| format!("OBSBOT status byte offset {offset} is outside the 60-byte block."))?;
+    *byte = value;
+    Ok(data)
+}
+
 fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), String> {
-    if offset >= 60 {
-        return Err(format!("OBSBOT status byte offset {offset} is outside the 60-byte block."));
-    }
     // GET_CUR returns the current shared configuration block. Preserve every
     // unrelated field and change only the byte established by controlled capture.
-    let mut data = xu_status(device)?;
-    data[offset] = value;
+    let current = xu_status(device)?;
+    let mut data = patch_xu_status_byte(current, offset, value)?;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
@@ -2117,6 +2121,19 @@ mod xu_protocol_tests {
         assert_eq!(audio_noise_reduction_label(2), "Medium");
         assert_eq!(audio_noise_reduction_label(3), "Strong");
         assert_eq!(audio_noise_reduction_label(4), "Unknown");
+    }
+
+    #[test]
+    fn audio_setting_patch_preserves_every_other_status_byte() {
+        let original = [0x5a; 60];
+        let patched = patch_xu_status_byte(original, XU_AUDIO_NOISE_REDUCTION_OFFSET, 3).unwrap();
+        assert_eq!(patched[8], 3);
+        for index in 0..60 {
+            if index != XU_AUDIO_NOISE_REDUCTION_OFFSET {
+                assert_eq!(patched[index], original[index], "byte {index} changed unexpectedly");
+            }
+        }
+        assert!(patch_xu_status_byte(original, 60, 1).is_err());
     }
 
     #[test]
