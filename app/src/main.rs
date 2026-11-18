@@ -345,18 +345,6 @@ fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Res
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
 }
 
-fn set_fov(device: &str, mode: u8) -> Result<(), String> {
-    if mode > 2 { return Err("Unsupported FOV mode.".into()); }
-    // Selector 0x06 tag 0x04: [tag, length=1, mode].
-    // Wire values are 0=Wide, 1=Normal, 2=Narrow. All three modes have
-    // been visually confirmed by the user; status-byte mapping for Narrow
-    // and compatibility with every AI tracking mode remain unverified.
-    let mut data = [0u8; 60];
-    data[0] = 0x04;
-    data[1] = 0x01;
-    data[2] = mode;
-    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
-}
 
 fn led_brightness_payload(level: u8) -> Result<[u8; 3], String> {
     if level > 3 {
@@ -375,50 +363,35 @@ fn set_led_brightness(device: &str, level: u8) -> Result<(), String> {
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
-fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) {
-    let frame = gtk::Frame::new(Some("Camera settings"));
-    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    layout.set_margin_top(8);
-    layout.set_margin_bottom(8);
-    layout.set_margin_start(10);
-    layout.set_margin_end(10);
-
-    let fov_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    fov_row.add_css_class("adaptive-row");
-    let fov_label = gtk::Label::new(Some("Field of view"));
-    fov_label.set_width_chars(22);
-    fov_label.set_xalign(0.0);
-    let fov = gtk::ComboBoxText::new();
-    fov.append(Some("0"), "Wide · 86°");
-    fov.append(Some("1"), "Normal · 78°");
-    fov.append(Some("2"), "Narrow · 65°");
-    fov.set_hexpand(true);
-    if let Ok(current) = xu_status(device) {
-        let selected = match current[0x11] { 1 => Some("0"), 2 => Some("1"), _ => None };
-        if let Some(id) = selected { fov.set_active_id(Some(id)); }
+    // FOV presets are positions on the standard V4L2 zoom_absolute control.
+    let zoom_frame = gtk::Frame::new(Some("Zoom and field of view"));
+    let zoom_layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    zoom_layout.set_margin_top(8);
+    zoom_layout.set_margin_bottom(8);
+    zoom_layout.set_margin_start(10);
+    zoom_layout.set_margin_end(10);
+    let zoom_presets = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    zoom_presets.add_css_class("adaptive-row");
+    for (label, value) in [("Wide · 1.00×", 0_i64), ("Medium · 1.15×", 5), ("Narrow · 1.47×", 15)] {
+        let button = gtk::Button::with_label(label);
+        let dev = device.to_string();
+        let status_label = status.clone();
+        button.connect_clicked(move |_| {
+            let result = set_control(&dev, "zoom_absolute", value)
+                .and_then(|_| get_control(&dev, "zoom_absolute"))
+                .map(|actual| format!("Zoom preset requested: {label}. Camera reports zoom_absolute={actual}."));
+            status_label.set_text(&result.unwrap_or_else(|e| format!("Could not apply zoom preset: {e}")));
+        });
+        zoom_presets.append(&button);
     }
-    let apply_fov = gtk::Button::with_label("Apply");
-    let fov_apply = fov.clone();
-    let dev = device.to_string();
-    let status_fov = status.clone();
-    apply_fov.connect_clicked(move |_| {
-        let result = fov_apply.active_id()
-            .ok_or_else(|| "Could not read current FOV. Select a mode.".to_string())
-            .and_then(|id| id.parse::<u8>().map_err(|_| "Invalid FOV mode.".to_string()))
-            .and_then(|mode| set_fov(&dev, mode));
-        status_fov.set_text(&result.map(|_| "FOV command sent. Some AI tracking modes override FOV; verify the image after applying.".to_string())
-            .unwrap_or_else(|e| format!("FOV change failed: {e}")));
-    });
-    fov_row.append(&fov_label);
-    fov_row.append(&fov);
-    fov_row.append(&apply_fov);
-    layout.append(&fov_row);
-    let fov_note = gtk::Label::new(Some("Some AI tracking modes can override FOV changes. If the view does not change, switch tracking off or select a compatible tracking mode, then apply FOV again."));
-    fov_note.set_wrap(true);
-    fov_note.set_xalign(0.0);
-    fov_note.add_css_class("dim-label");
-    layout.append(&fov_note);
-
+    zoom_layout.append(&zoom_presets);
+    let zoom_note = gtk::Label::new(Some("All zoom uses V4L2 zoom_absolute (0–100). The general slider below provides smooth adjustment; these buttons set common FOV positions. zoom_continuous and the separate vendor FOV command are not used."));
+    zoom_note.set_wrap(true);
+    zoom_note.set_xalign(0.0);
+    zoom_note.add_css_class("dim-label");
+    zoom_layout.append(&zoom_note);
+    zoom_frame.set_child(Some(&zoom_layout));
+    layout.append(&zoom_frame);
     let led_frame = gtk::Frame::new(Some("LED illumination"));
     let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -461,7 +434,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     led_frame.set_child(Some(&led_layout));
     layout.append(&led_frame);
 
-    let note = gtk::Label::new(Some("FOV read-back uses status byte 0x11."));
+    let note = gtk::Label::new(Some("Image controls are discovered from V4L2 metadata; camera-reported ranges, steps, menus and inactive flags are authoritative."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
