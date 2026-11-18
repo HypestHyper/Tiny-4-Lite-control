@@ -139,9 +139,12 @@ number to every framed XU write. Its initial value of zero is an
 implementation choice; the capture does not establish the required
 sequence seed after a fresh connection or app restart.
 
-**Naming trap:** The L-pose gesture is called **Zoom**, not Dynamic
+**Naming and relationship:** The L-pose gesture is called **Zoom**, not Dynamic
 Zoom. Disabling Zoom is the action that stops the L-shaped gesture.
-Dynamic Zoom is a separate two-hand L-shape gesture.
+Dynamic Zoom is a separate two-hand L-shape gesture. Direction Flip is
+not an independent gesture: it modifies the direction of the Dynamic
+Zoom gesture, so the two settings work together. Direction Flip does
+not change the Zoom/L-pose gesture or Global/Face autofocus priority.
 
 The selector 0x06 status block does not provide reliable per-gesture
 read-back. A successful ioctl confirms host-side request completion,
