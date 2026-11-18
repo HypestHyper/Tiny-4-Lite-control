@@ -91,6 +91,17 @@ selector `0x06` for the 60-byte status block.
   separate vendor command: Wide=0, Medium=5, Narrow=15. The generic
   V4L2 slider covers 0–100.
 - HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
+- Microphone processing: Auto gain and Noise reduction are implemented
+  from controlled 2026-11-18 Linux usbmon captures. Both use the
+  60-byte GET_CUR configuration block on XU unit 2 / selector 0x06.
+  Auto gain is byte offset 25 (0=Off, 1=On). Noise reduction is byte
+  offset 8 (0=Off, 1=Weak, 2=Medium, 3=Strong). The controls initialize
+  from camera GET_CUR and fall back to the last successfully submitted
+  local value only if read-back is unavailable. Each setter first reads
+  the current 60-byte block, changes only its own byte, and writes the
+  full block back so unrelated settings are preserved. These two audio
+  settings have been protocol-mapped but still need validation through
+  the app against the physical camera.
 - LED: one setting control with Off and brightness levels 1, 2, and 3.
   Selector `0x06`, tag `0x1A`, uses raw values 0 through 3 directly.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
