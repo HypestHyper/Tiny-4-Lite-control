@@ -180,7 +180,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 stop_preview();
                 match video::set_mode(device, &mode) {
                 Ok(()) => {
-                    restart_preview(device, Some(mode));
+                    restart_preview(device, Some(mode.clone()));
                     applied += 1;
                     update_config(|config| config.video_mode = Some(config::VideoModeConfig {
                         width: mode.width, height: mode.height,
