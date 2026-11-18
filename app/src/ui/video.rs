@@ -171,6 +171,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
             rate_apply.active_id().as_deref().unwrap_or(""),
         ) else { return; };
         if last_apply.borrow().as_ref() == Some(&selected) { return; }
+        crate::stop_preview();
         match video::set_mode(&device_name, &selected) {
             Ok(()) => {
                 *last_apply.borrow_mut() = Some(selected.clone());
@@ -197,12 +198,15 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
                     // A failed frame-rate change can occur after the format
                     // has already changed. Best-effort restore the full mode.
                     let _ = video::set_mode(&device_name, &previous);
+                    crate::restart_preview(&device_name, Some(previous.clone()));
                     updating_apply.set(true);
                     format_restore.set_active_id(Some(&previous.pixel_format));
                     fill_resolutions(&size_restore, &modes_apply, &previous.pixel_format, Some((previous.width, previous.height)));
                     fill_rates(&rate_restore, &modes_apply, &previous.pixel_format,
                         &format!("{}x{}", previous.width, previous.height), Some(previous.frame_rate_milli));
                     updating_apply.set(false);
+                } else {
+                    crate::restart_preview(&device_name, video::current_mode(&device_name));
                 }
             }
         }
