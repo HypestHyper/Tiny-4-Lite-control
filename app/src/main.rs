@@ -1276,6 +1276,37 @@ fn apply_compact_layout(widget: &gtk::Widget, compact: bool) {
     }
 }
 
+/// Arrange the same live preview and page stack for the two intentional
+/// workspaces: a side-by-side desktop layout, or a narrow stacked quick panel.
+fn configure_workspace(
+    paned: &gtk::Paned,
+    preview: &gtk::Frame,
+    content: &gtk::Box,
+    compact: bool,
+    width: i32,
+) {
+    let stacked = compact || width < 820;
+    // Detach both children before swapping their order. GTK widgets cannot
+    // have two parents, even briefly.
+    paned.set_start_child(None::<&gtk::Widget>);
+    paned.set_end_child(None::<&gtk::Widget>);
+    if stacked {
+        paned.set_orientation(gtk::Orientation::Vertical);
+        paned.set_start_child(Some(preview));
+        paned.set_end_child(Some(content));
+        paned.set_position(if compact { 230 } else { 270 });
+    } else {
+        paned.set_orientation(gtk::Orientation::Horizontal);
+        paned.set_start_child(Some(content));
+        paned.set_end_child(Some(preview));
+        paned.set_position((width as f64 * 0.64) as i32);
+    }
+    paned.set_resize_start_child(true);
+    paned.set_resize_end_child(true);
+    paned.set_shrink_start_child(true);
+    paned.set_shrink_end_child(false);
+}
+
 
 fn show_compact_settings(
     parent: &gtk::ApplicationWindow,
@@ -1507,11 +1538,27 @@ fn build_ui(app: &gtk::Application) {
     let preview_status = gtk::Label::new(Some("Preview waiting for camera"));
     preview_status.set_xalign(0.0);
     preview_status.add_css_class("dim-label");
-    let preview_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let preview_heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    preview_heading.add_css_class("preview-heading");
+    let preview_title = gtk::Label::new(Some("LIVE PREVIEW"));
+    preview_title.add_css_class("eyebrow");
+    preview_title.set_xalign(0.0);
+    preview_title.set_hexpand(true);
+    let preview_ratio = gtk::Label::new(Some("ASPECT RATIO PRESERVED"));
+    preview_ratio.add_css_class("preview-meta");
+    preview_heading.append(&preview_title);
+    preview_heading.append(&preview_ratio);
+    let preview_layout = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    preview_layout.set_margin_top(10);
+    preview_layout.set_margin_bottom(10);
+    preview_layout.set_margin_start(10);
+    preview_layout.set_margin_end(10);
+    preview_layout.append(&preview_heading);
     preview_layout.append(&preview_overlay);
     preview_layout.append(&preview_status);
-    let preview_frame = gtk::Frame::new(Some("Camera preview"));
-    preview_frame.set_size_request(-1, 190);
+    let preview_frame = gtk::Frame::new(None);
+    preview_frame.add_css_class("preview-panel");
+    preview_frame.set_size_request(320, 220);
     preview_frame.set_child(Some(&preview_layout));
     let preview_context = ui::preview::PreviewContext::new(
         preview_picture.clone(), preview_placeholder.clone(), preview_status.clone(),
@@ -1550,19 +1597,43 @@ fn build_ui(app: &gtk::Application) {
     switcher.set_halign(gtk::Align::Fill);
     switcher.set_hexpand(true);
     switcher.add_css_class("compact-switcher");
-    root.append(&switcher);
+    let page_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    page_column.set_hexpand(true);
+    page_column.set_vexpand(true);
+    page_column.append(&switcher);
+    page_column.append(&stack);
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    content.add_css_class("workspace-content");
+    content.set_vexpand(true);
+    content.append(&navigation);
+    content.append(&page_column);
+
+    // Full mode gives the preview its own resizable right-hand panel.
+    // Compact mode reuses the same widgets in a narrow vertical workspace.
+    let main_paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+    main_paned.set_vexpand(true);
+    configure_workspace(
+        &main_paned, &preview_frame, &content,
+        loaded_config.compact_mode, window.width(),
+    );
+    root.append(&main_paned);
+
     let compact_mode_state = Rc::new(Cell::new(loaded_config.compact_mode));
     let navigation_responsive = navigation.clone();
     let switcher_responsive = switcher.clone();
     let root_responsive = root.clone();
     let theme_responsive = theme.clone();
     let compact_settings_responsive = compact_settings.clone();
+    let paned_responsive = main_paned.clone();
+    let preview_responsive = preview_frame.clone();
+    let content_responsive = content.clone();
     let compact_state_width = compact_mode_state.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
         let width = window.width();
         let compact_mode_active = compact_state_width.get();
-        let wide = width >= 900 && !compact_mode_active;
-        let compact_layout = width < 680 || compact_mode_active;
+        let wide = width >= 1100 && !compact_mode_active;
+        let compact_layout = compact_mode_active || width < 680;
         navigation_responsive.set_visible(!compact_mode_active && wide);
         switcher_responsive.set_visible(!compact_mode_active && !wide);
         theme_responsive.set_visible(!compact_mode_active);
@@ -1570,33 +1641,17 @@ fn build_ui(app: &gtk::Application) {
         root_responsive.set_margin_top(if compact_layout { 6 } else { 12 });
         root_responsive.set_margin_bottom(if compact_layout { 6 } else { 12 });
         apply_compact_layout(root_responsive.upcast_ref(), compact_layout);
+        configure_workspace(
+            &paned_responsive, &preview_responsive, &content_responsive,
+            compact_mode_active, width,
+        );
     });
     let initial_width = window.width();
-    let initial_wide = initial_width >= 900 && !loaded_config.compact_mode;
+    let initial_wide = initial_width >= 1100 && !loaded_config.compact_mode;
     navigation.set_visible(!loaded_config.compact_mode && initial_wide);
     switcher.set_visible(!loaded_config.compact_mode && !initial_wide);
     theme.set_visible(!loaded_config.compact_mode);
     compact_settings.set_visible(!loaded_config.compact_mode);
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    content.add_css_class("adaptive-row");
-    content.set_vexpand(true);
-    content.append(&navigation);
-    content.append(&stack);
-
-    // A vertical paned keeps the preview visible on every page. Users can
-    // drag the divider to resize it; GtkPicture contains the feed without
-    // stretching its native aspect ratio.
-    let main_paned = gtk::Paned::new(gtk::Orientation::Vertical);
-    main_paned.set_start_child(Some(&preview_frame));
-    main_paned.set_end_child(Some(&content));
-    main_paned.set_resize_start_child(true);
-    main_paned.set_resize_end_child(true);
-    main_paned.set_shrink_start_child(true);
-    main_paned.set_shrink_end_child(false);
-    main_paned.set_position(250);
-    main_paned.set_vexpand(true);
-    root.append(&main_paned);
 
     let controls_for_compact = controls_box.clone();
     let window_for_compact = window.clone();
@@ -1621,6 +1676,9 @@ fn build_ui(app: &gtk::Application) {
         let status_mode = status.clone();
         let theme_mode = theme.clone();
         let compact_settings_mode = compact_settings.clone();
+        let paned_mode = main_paned.clone();
+        let preview_mode = preview_frame.clone();
+        let content_mode = content.clone();
         button.connect_toggled(move |selected| {
             if !selected.is_active() { return; }
             if let Err(error) = update_config_checked(|config| config.compact_mode = compact_value) {
@@ -1634,12 +1692,15 @@ fn build_ui(app: &gtk::Application) {
             window_mode.set_default_size(if compact_value { 420 } else { 960 }, if compact_value { 760 } else { 720 });
             window_mode.set_size_request(if compact_value { 340 } else { 620 }, if compact_value { 480 } else { 500 });
             let width = window_mode.width();
-            let wide = width >= 900 && !compact_value;
+            let wide = width >= 1100 && !compact_value;
             navigation_mode.set_visible(!compact_value && wide);
             switcher_mode.set_visible(!compact_value && !wide);
             theme_mode.set_visible(!compact_value);
             compact_settings_mode.set_visible(!compact_value);
             apply_compact_layout(root_mode.upcast_ref(), compact_value || width < 680);
+            configure_workspace(
+                &paned_mode, &preview_mode, &content_mode, compact_value, width,
+            );
             let config = current_config();
             ui::layout::apply_compact_visibility(
                 controls_mode.upcast_ref(),
