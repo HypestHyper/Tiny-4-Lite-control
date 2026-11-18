@@ -184,7 +184,7 @@ fn decode_frame(frame: &[u8], mode: &VideoMode) -> Option<Pixbuf> {
                     rgb.push(255u16.saturating_sub(pixel[2] as u16 + k).min(255) as u8);
                 }
                 rgb
-            }
+            },
             _ => return None,
         };
         if rgb.len() != width * height * 3 { return None; }
