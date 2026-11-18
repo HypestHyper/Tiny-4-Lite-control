@@ -207,9 +207,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     }
 
     if errors.is_empty() {
-        Ok(format!("Applied {applied} settings from preset '{}'.", preset.name))
+        Ok(format!("Submitted {applied} settings from preset '{}'.", preset.name))
     } else {
-        Err(format!("Applied {applied} settings from '{}'; {} setting(s) failed: {}",
+        Err(format!("Submitted {applied} settings from '{}'; {} setting(s) failed: {}",
             preset.name, errors.len(), errors.join(" · ")))
     }
 }
