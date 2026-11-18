@@ -121,19 +121,24 @@ Implemented XU operations:
 - Read AI status and decode the tracking mode from offsets `0x18` and `0x1c`.
 - Read the tracking-speed status byte at `0x24`.
 - Set HDR through selector `0x06` using the captured 60-byte payload prefix. HDR On is `01 01 01`; HDR Off is `01 01 00`. Status byte `0x06` reports `0x01` for On and `0x00` for Off. The GTK switch initializes from this status byte and persists the last successfully submitted setting as a fallback when status is unavailable.
-- Microphone processing controls are implemented from controlled
-  2026-11-18 Tiny 2 Lite Linux captures. Both use XU unit 2 / selector
-  0x06 and the 60-byte GET_CUR configuration block:
+- Microphone controls use XU unit 2 / selector 0x06 and the
+  60-byte GET_CUR configuration block:
+  - Disable microphone: byte offset 2, 0 = disabled, 1 = enabled.
+    The controlled 2026-11-18 capture recorded Disable microphone
+    On → Off → On, with SET_CUR prefixes `1c 01 00`, `1c 01 01`,
+    `1c 01 00`. The camera restarted after each toggle in OBSBOT
+    Center. The restart mechanism and any additional restart-related
+    commands have not been investigated. The UI exposes a **Disable
+    microphone** switch and persists its last successful selection as
+    a fallback when GET_CUR is unavailable.
   - Auto gain: byte offset 25, Off = 0, On = 1. The capture sequence
     was Off → On → Off → On, with matching read-backs.
   - Noise reduction: byte offset 8, Off = 0, Weak = 1, Medium = 2,
     Strong = 3. All four levels were captured and read back.
-  The UI initializes from camera GET_CUR and uses the persisted last
-  successful selection only as a fallback. Setters perform GET_CUR,
-  modify only the relevant byte, then SET_CUR the complete 60-byte
-  block, preserving all unrelated fields. Physical validation through
-  the app remains pending; successful ioctl completion alone is not
-  proof of the camera's applied state.
+  All setters perform GET_CUR, modify only the relevant byte, then
+  SET_CUR the complete 60-byte block, preserving unrelated fields.
+  App-side hardware validation remains pending; successful ioctl
+  completion alone is not proof of the camera's applied state.
 - Set the AI tracking-mode tuple through selector `0x06`, opcode `0x16`.
 - Send tracking-speed commands.
 - Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture checkpoints show Direction Flip OFF at baseline, ON at 17.37s, OFF at 35.15s, then Dynamic Zoom OFF at 54.78s. The user has physically confirmed that Target Selection, Zoom/L-pose, Dynamic Zoom and Direction Flip all work on the Tiny 2 Lite. Direction Flip is the direction modifier for the Dynamic Zoom gesture and is intended to be used together with Dynamic Zoom; it does not change the separate Zoom/L-pose gesture or autofocus Global/Face priority. The corresponding SET_CUR packets are frames 13247, 72265, 170871, and 179033. The first three use direction group `0a 04 c4 33` and alternate payloads `27 ff 01 00`, `e6 3f 00 00`, `27 ff 01 00`. The fourth uses Dynamic Zoom group `0a 04 44 33` and is the separate Dynamic Zoom disable command, not a Direction Flip transition. The sequence values progress `0x000f`, `0x0010`, `0x0011`, `0x0012` across these commands. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The observed initial value `0x000f` is capture context; the required sequence seed on a fresh camera/app session is not established. The implementation currently initializes its process-local counter to zero and increments it for each framed XU write.
