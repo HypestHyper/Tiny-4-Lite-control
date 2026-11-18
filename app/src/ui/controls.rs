@@ -118,6 +118,9 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     category_switcher.add_css_class("category-switcher");
     category_switcher.set_stack(Some(&page_stack));
     category_switcher.set_hexpand(true);
+    let compact = current_config().compact_mode;
+    category_nav.set_visible(!compact);
+    category_switcher.set_visible(compact);
 
     let heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     heading.add_css_class("controls-toolbar");
