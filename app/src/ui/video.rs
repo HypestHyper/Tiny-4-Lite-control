@@ -174,6 +174,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
         match video::set_mode(&device_name, &selected) {
             Ok(()) => {
                 *last_apply.borrow_mut() = Some(selected.clone());
+                crate::restart_preview(&device_name, Some(selected.clone()));
                 let persist = crate::config::VideoModeConfig {
                     width: selected.width,
                     height: selected.height,
