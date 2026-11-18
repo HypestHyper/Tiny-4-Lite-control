@@ -552,14 +552,21 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     face.set_group(Some(&global));
     global.add_css_class("flat");
     face.add_css_class("flat");
-    let saved_face_priority = current_config().focus_mode.as_deref() == Some("face");
-    global.set_active(!saved_face_priority);
-    face.set_active(saved_face_priority);
+    let saved_focus_mode = current_config().focus_mode;
+    match saved_focus_mode.as_deref() {
+        Some("global") => global.set_active(true),
+        Some("face") => face.set_active(true),
+        _ => {} // No confirmed local selection: leave both segments unselected.
+    }
     selector.append(&global);
     selector.append(&face);
     layout.append(&selector);
 
-    let current_face = Rc::new(Cell::new(saved_face_priority));
+    let current_face = Rc::new(Cell::new(match saved_focus_mode.as_deref() {
+        Some("face") => Some(true),
+        Some("global") => Some(false),
+        _ => None,
+    }));
     let updating = Rc::new(Cell::new(false));
     for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
         let dev = device.to_string();
@@ -575,7 +582,7 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
             let previous = current.get();
             match set_face_focus(&dev, face_priority) {
                 Ok(()) => {
-                    current.set(face_priority);
+                    current.set(Some(face_priority));
                     status_label.set_text(if face_priority {
                         "Face-priority autofocus command submitted. Verify the camera's focus behavior."
                     } else {
@@ -584,8 +591,8 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
                 }
                 Err(error) => {
                     updating_state.set(true);
-                    global_restore.set_active(!previous);
-                    face_restore.set_active(previous);
+                    global_restore.set_active(previous == Some(false));
+                    face_restore.set_active(previous == Some(true));
                     updating_state.set(false);
                     status_label.set_text(&format!("Could not change autofocus priority: {error}"));
                 }
