@@ -1353,6 +1353,19 @@ fn build_ui(app: &gtk::Application) {
     title.set_xalign(0.0);
     let refresh = gtk::Button::with_label("Refresh camera");
     refresh.add_css_class("suggested-action");
+    let mode_selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    mode_selector.add_css_class("linked");
+    let full_mode = gtk::ToggleButton::with_label("Full");
+    let compact_mode = gtk::ToggleButton::with_label("Compact");
+    compact_mode.set_group(Some(&full_mode));
+    full_mode.add_css_class("flat");
+    compact_mode.add_css_class("flat");
+    full_mode.set_active(!loaded_config.compact_mode);
+    compact_mode.set_active(loaded_config.compact_mode);
+    mode_selector.append(&full_mode);
+    mode_selector.append(&compact_mode);
+    let compact_settings = gtk::Button::with_label("Compact controls");
+    compact_settings.set_tooltip_text(Some("Choose which controls appear in Compact mode."));
     let theme = gtk::ComboBoxText::new();
     theme.append(Some("system"), "System");
     theme.append(Some("light"), "Light");
@@ -1368,6 +1381,8 @@ fn build_ui(app: &gtk::Application) {
     header.append(&app_icon);
     header.append(&title);
     header.append(&theme);
+    header.append(&mode_selector);
+    header.append(&compact_settings);
     header.append(&refresh);
     root.append(&header);
 
@@ -1428,19 +1443,26 @@ fn build_ui(app: &gtk::Application) {
     switcher.set_hexpand(true);
     switcher.add_css_class("compact-switcher");
     root.append(&switcher);
+    let compact_mode_state = Rc::new(Cell::new(loaded_config.compact_mode));
     let navigation_responsive = navigation.clone();
     let switcher_responsive = switcher.clone();
     let root_responsive = root.clone();
+    let compact_state_width = compact_mode_state.clone();
     window.connect_notify_local(Some("width"), move |window, _| {
         let width = window.width();
-        let wide = width >= 900;
-        let compact = width < 680;
-        navigation_responsive.set_visible(wide);
-        switcher_responsive.set_visible(!wide);
-        root_responsive.set_margin_top(if compact { 6 } else { 12 });
-        root_responsive.set_margin_bottom(if compact { 6 } else { 12 });
-        apply_compact_layout(root_responsive.upcast_ref(), compact);
+        let compact_mode_active = compact_state_width.get();
+        let wide = width >= 900 && !compact_mode_active;
+        let compact_layout = width < 680 || compact_mode_active;
+        navigation_responsive.set_visible(!compact_mode_active && wide);
+        switcher_responsive.set_visible(!compact_mode_active && !wide);
+        root_responsive.set_margin_top(if compact_layout { 6 } else { 12 });
+        root_responsive.set_margin_bottom(if compact_layout { 6 } else { 12 });
+        apply_compact_layout(root_responsive.upcast_ref(), compact_layout);
     });
+    let initial_width = window.width();
+    let initial_wide = initial_width >= 900 && !loaded_config.compact_mode;
+    navigation.set_visible(!loaded_config.compact_mode && initial_wide);
+    switcher.set_visible(!loaded_config.compact_mode && !initial_wide);
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     content.add_css_class("adaptive-row");
@@ -1448,6 +1470,50 @@ fn build_ui(app: &gtk::Application) {
     content.append(&navigation);
     content.append(&stack);
     root.append(&content);
+
+    let controls_for_compact = controls_box.clone();
+    let window_for_compact = window.clone();
+    let status_for_compact = status.clone();
+    let device_for_compact = devices.clone();
+    compact_settings.connect_clicked(move |_| {
+        let device = device_for_compact.active_id().map(|id| id.to_string()).unwrap_or_default();
+        show_compact_settings(&window_for_compact, &device, &controls_for_compact, &status_for_compact);
+    });
+
+    for (button, compact_value) in [(full_mode.clone(), false), (compact_mode.clone(), true)] {
+        let compact_state = compact_mode_state.clone();
+        let window_mode = window.clone();
+        let root_mode = root.clone();
+        let navigation_mode = navigation.clone();
+        let switcher_mode = switcher.clone();
+        let stack_mode = stack.clone();
+        let controls_mode = controls_box.clone();
+        let status_mode = status.clone();
+        button.connect_toggled(move |selected| {
+            if !selected.is_active() { return; }
+            if let Err(error) = update_config_checked(|config| config.compact_mode = compact_value) {
+                status_mode.set_text(&format!("Could not save layout mode: {error}"));
+                return;
+            }
+            compact_state.set(compact_value);
+            if compact_value {
+                stack_mode.set_visible_child_name("controls");
+            }
+            window_mode.set_default_size(if compact_value { 420 } else { 960 }, if compact_value { 760 } else { 720 });
+            window_mode.set_size_request(if compact_value { 340 } else { 620 }, if compact_value { 480 } else { 500 });
+            let width = window_mode.width();
+            let wide = width >= 900 && !compact_value;
+            navigation_mode.set_visible(!compact_value && wide);
+            switcher_mode.set_visible(!compact_value && !wide);
+            apply_compact_layout(root_mode.upcast_ref(), compact_value || width < 680);
+            let config = current_config();
+            ui::layout::apply_compact_visibility(
+                controls_mode.upcast_ref(),
+                compact_value,
+                &config.compact_controls,
+            );
+        });
+    }
 
     let footer = gtk::Label::new(Some(
         "Pan and tilt controls move the physical gimbal. USB capture requires tshark and pkexec."
