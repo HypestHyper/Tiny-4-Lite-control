@@ -365,6 +365,37 @@ Do not label unknown bytes as facts. Build a diagnostic page that
 displays raw status bytes in hex and decoded fields with a confidence
 indicator.
 
+### 4.12 Microphone processing
+
+**Status:** Auto gain and noise reduction are protocol-mapped from
+controlled Tiny 2 Lite Linux captures. App-side hardware validation is
+pending.
+
+Both settings use Extension Unit 2, selector `0x06`, with a 60-byte
+configuration block returned by GET_CUR.
+
+| Setting | Byte offset (zero-based) | Values |
+|---|---:|---|
+| Noise reduction | 8 | 0 = Off, 1 = Weak, 2 = Medium, 3 = Strong |
+| Auto gain | 25 | 0 = Off, 1 = On |
+
+Noise reduction was captured through Off → Weak → Medium → Strong →
+Medium, with the corresponding byte values read back. Auto gain was
+captured through Off → On → Off → On, also with matching read-backs.
+These mappings are independent in the observed traces.
+
+The app reads the current 60-byte block before either write, modifies
+only the selected setting's byte, and sends the full block with SET_CUR.
+This read-modify-write approach preserves unrelated fields. The UI
+initializes from camera read-back and uses the last successful local
+setting only when GET_CUR is unavailable. A successful ioctl is host
+transport evidence, not independent proof that the camera applied the
+change.
+
+Other audio controls, including microphone during sleep, microphone
+disable, radio distance, and pop filter, remain unimplemented until
+their fields are independently isolated and mapped.
+
 ------------------------------------------------------------------------
 
 ## 5. Features found in other projects but not yet confirmed for Tiny 2 Lite
