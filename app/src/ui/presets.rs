@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use crate::{config, current_config, presets, update_config_checked};
+use crate::{current_config, presets, update_config_checked};
 
 fn refresh(combo: &gtk::ComboBoxText) {
     combo.remove_all();
@@ -58,7 +58,6 @@ pub(crate) fn append(
     layout.append(&actions);
 
     let name_from_selection = name.clone();
-    let selected_presets = combo.clone();
     combo.connect_changed(move |selection| {
         let Some(index) = selection.active_id().and_then(|id| id.parse::<usize>().ok()) else { return; };
         if let Some(preset) = current_config().presets.get(index) {
