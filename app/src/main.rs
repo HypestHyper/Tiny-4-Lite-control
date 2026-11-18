@@ -461,7 +461,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     zoom_layout.set_margin_end(10);
     let zoom_presets = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     zoom_presets.add_css_class("adaptive-row");
-    for (label, value) in [("Wide · 1.00×", 0_i64), ("Medium · 1.15×", 5), ("Narrow · 1.47×", 15)] {
+    for (label, value) in [("86°", 0_i64), ("78°", 5), ("65°", 15)] {
         let button = gtk::Button::with_label(label);
         let dev = device.to_string();
         let status_label = status.clone();
