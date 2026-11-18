@@ -33,6 +33,7 @@ pub struct AppConfig {
     pub ai_tracking_mode: Option<String>,
     pub tracking_speed: Option<String>,
     pub focus_mode: Option<String>,
+    pub auto_exposure_mode: Option<String>,
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
@@ -79,6 +80,7 @@ impl Default for AppConfig {
             ai_tracking_mode: None,
             tracking_speed: None,
             focus_mode: None,
+            auto_exposure_mode: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
@@ -215,6 +217,7 @@ mod tests {
         config.ai_tracking_mode = Some("upper".into());
         config.tracking_speed = Some("sport".into());
         config.focus_mode = Some("face".into());
+        config.auto_exposure_mode = Some("global".into());
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
         config.joystick_sensitivity_percent = 135;
@@ -241,6 +244,7 @@ mod tests {
         assert_eq!(decoded.ai_tracking_mode.as_deref(), Some("upper"));
         assert_eq!(decoded.tracking_speed.as_deref(), Some("sport"));
         assert_eq!(decoded.focus_mode.as_deref(), Some("face"));
+        assert_eq!(decoded.auto_exposure_mode.as_deref(), Some("global"));
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
         assert_eq!(decoded.joystick_sensitivity_percent, 135);
