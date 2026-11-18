@@ -42,6 +42,8 @@ pub struct AppConfig {
     pub audio_microphone_disabled: Option<bool>,
     /// Last successfully submitted microphone noise-reduction level: 0 Off, 1 Weak, 2 Medium, 3 Strong.
     pub audio_noise_reduction: Option<u8>,
+    /// Last successfully submitted radio distance: 0 Close, 1 Standard, 2 Far; no camera read-back is established.
+    pub audio_radio_distance: Option<u8>,
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
@@ -93,6 +95,7 @@ impl Default for AppConfig {
             audio_auto_gain: None,
             audio_microphone_disabled: None,
             audio_noise_reduction: None,
+            audio_radio_distance: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
@@ -143,6 +146,9 @@ pub fn load() -> Result<AppConfig, String> {
             }
             if config.audio_noise_reduction.is_some_and(|level| level > 3) {
                 config.audio_noise_reduction = None;
+            }
+            if config.audio_radio_distance.is_some_and(|distance| distance > 2) {
+                config.audio_radio_distance = None;
             }
             config.service.auto_sleep_timeout_minutes = config.service.auto_sleep_timeout_minutes.clamp(1, 1440);
             if config.gesture_zoom_ratio.is_some_and(|ratio| !ratio.is_finite() || !(1.0..=4.0).contains(&ratio)) {
