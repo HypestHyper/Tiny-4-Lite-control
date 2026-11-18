@@ -36,6 +36,10 @@ pub struct AppConfig {
     pub auto_exposure_mode: Option<String>,
     /// OBSBOT exposure compensation slider position, 0..=18 (-3.0..=+3.0).
     pub exposure_compensation_position: Option<u8>,
+    /// Last successfully submitted microphone auto-gain state; camera GET_CUR is authoritative.
+    pub audio_auto_gain: Option<bool>,
+    /// Last successfully submitted microphone noise-reduction level: 0 Off, 1 Weak, 2 Medium, 3 Strong.
+    pub audio_noise_reduction: Option<u8>,
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
@@ -84,6 +88,8 @@ impl Default for AppConfig {
             focus_mode: None,
             auto_exposure_mode: None,
             exposure_compensation_position: None,
+            audio_auto_gain: None,
+            audio_noise_reduction: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
@@ -131,6 +137,9 @@ pub fn load() -> Result<AppConfig, String> {
             config.joystick_sensitivity_percent = config.joystick_sensitivity_percent.clamp(10, 200);
             if config.exposure_compensation_position.is_some_and(|position| position > 18) {
                 config.exposure_compensation_position = None;
+            }
+            if config.audio_noise_reduction.is_some_and(|level| level > 3) {
+                config.audio_noise_reduction = None;
             }
             config.service.auto_sleep_timeout_minutes = config.service.auto_sleep_timeout_minutes.clamp(1, 1440);
             if config.gesture_zoom_ratio.is_some_and(|ratio| !ratio.is_finite() || !(1.0..=4.0).contains(&ratio)) {
