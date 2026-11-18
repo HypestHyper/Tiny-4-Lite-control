@@ -2,3 +2,4 @@
 //! camera protocol implementation can stay independent of visual styling.
 pub mod design;
 pub mod layout;
+pub mod controls;
