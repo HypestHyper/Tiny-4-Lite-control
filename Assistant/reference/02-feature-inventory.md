@@ -2,6 +2,11 @@
 
 ### 4.1 Power and sleep/wake
 
+Sleep timeout is an app-managed automation setting. The app should
+monitor camera use and issue the existing camera sleep command after
+the configured idle period. It must be disabled by default, avoid
+repeated sleep commands, and handle disconnect/reconnect safely.
+
 **Status:** Lite-confirmed.
 
 Domatix documents `CAM_SET_DEV_STATUS`, opcode `0xA0C2`: - Wake/run
@@ -84,14 +89,13 @@ for packet details.
 
 ### 4.4 AI tracking / framing modes
 
-**Status:** Ten modes validated on Tiny 2 Lite in Domatix protocol
-notes.
+**Current app scope:** Off, Normal, Upper Body, Close-up, Headless,
+Lower Body, and Group. Desk, Whiteboard, and Hand are intentionally
+excluded from the app. Do not expose them as selectable modes.
 
-Modes: 1. Normal 2. Upper Body 3. Close-up 4. Headless 5. Lower Body 6.
-Group 7. Desk 8. Whiteboard 9. Hand 10. Off
-
-Use the exact enum values from the current Domatix protocol
-document/source. Do not invent enum numbers from the display order.
+Use the exact enum values from the current Tiny 2 Lite protocol
+implementation/source. Do not invent enum numbers from the display
+order.
 
 ### 4.5 Tracking speed
 
@@ -153,8 +157,11 @@ preserve this evidence distinction.
 
 ### 4.7 Presets
 
-**Status:** Tiny 2 Lite preset operations verified in Domatix protocol
-notes dated 2026-10-20.
+**Status:** Tiny 2 Lite preset operations are documented in the
+Domatix protocol notes dated 2026-10-20. Implement these directly in
+the app by sending the camera's vendor commands; no external preset
+service is required. Validate the read/list/recall path before adding
+mutating actions.
 
 Operations/opcodes: - Create: `0x3944` - Delete: `0x3984` - Recall:
 `0x39C4` - Read pose: `0x3A44` - Rename: `0x3A84` - Read name:
@@ -218,10 +225,13 @@ has undefined effect in the V4L2 API.
 - The app enables Global / Face controls while autofocus is on and sends the captured Tiny 2 Lite payloads above. It tracks selection locally; no reliable camera-side read-back is implemented. Validate visible focus behavior on the Tiny 2 Lite before marking this path hardware-confirmed.
 
 
-Potential UI: - Auto/manual exposure. - Exposure time. - Autofocus
-toggle. - Manual focus. - Auto/manual white balance. - White-balance
-temperature. - Brightness, contrast, saturation, sharpness, gain, hue,
-red/blue balance, backlight compensation, power-line frequency.
+Expose the standard controls reported by V4L2, including auto/manual
+exposure, exposure time, autofocus, manual focus, auto/manual white
+balance, white-balance temperature, mirror, brightness, contrast,
+saturation, sharpness, gain, hue, red/blue balance, backlight
+compensation, and power-line frequency. Query each selected camera
+node's metadata at runtime; do not hardcode ranges or assume every
+firmware exposes every control.
 
 **Important quirk:** Tiny 2 XU exposure-mode labels are swapped relative
 to V4L2. Domatix removed the XU exposure-mode GUI control and uses
@@ -258,8 +268,10 @@ Documented offsets (confidence varies):
   `0x02`                  Sleep state             Tiny4Linux: 0 awake, 1
                                                   sleep
 
-  `0x06`                  HDR                     Listed in protocol
-                                                  notes
+  `0x06`                  HDR                     Existing capture /
+                                                  status-byte evidence;
+                                                  setter path to be
+                                                  checked against trace
 
   `0x07`                  Face AE /               Uncertain
                           gesture-related state   
@@ -274,7 +286,9 @@ Documented offsets (confidence varies):
                                                   Normal=2; Narrow
                                                   remains 2
 
-  `0x13`                  Mirror                  Partial
+  `0x13`                  Mirror                  Partial status
+                                                  mapping; use standard
+                                                  V4L2 mirror control
 
   `0x18` / `0x1C`         AI mode / framing       Mapping requires source
                                                   verification
@@ -306,12 +320,14 @@ These are useful research leads, not promises:
 -   Additional AI framing/status states.
 -   Video FPS settings.
 -   Audio capture/recording and microphone controls.
--   Background replacement, blur, noise reduction, and visual effects
-    (historical Meet 4K work).
+-   Background replacement, blur, noise reduction, and all other
+    effects layered over the video are out of scope for the basic
+    hardware-control milestone.
+-   Audio capture/recording and microphone controls are deferred until
+    the camera's basic hardware controls are complete.
 -   Voice-command toggles and microphone pickup distance (proprietary
-    SDK app).
--   Virtual camera via `v4l2loopback`.
--   GPU filters and advanced preview processing.
+    SDK app), virtual camera via `v4l2loopback`, and GPU filters are
+    outside the current scope.
 
 Keep these behind an **Experimental** or **Diagnostics** section until
 tested on the Lite.
