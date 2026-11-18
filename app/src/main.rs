@@ -1690,7 +1690,7 @@ fn build_ui(app: &gtk::Application) {
             if compact_value {
                 stack_mode.set_visible_child_name("controls");
             }
-            window_mode.set_default_size(if compact_value { 420 } else { 960 }, if compact_value { 760 } else { 720 });
+            window_mode.set_default_size(if compact_value { 420 } else { 1280 }, if compact_value { 760 } else { 820 });
             window_mode.set_size_request(if compact_value { 340 } else { 760 }, if compact_value { 480 } else { 500 });
             let width = window_mode.width();
             let wide = width >= 1100 && !compact_value;
