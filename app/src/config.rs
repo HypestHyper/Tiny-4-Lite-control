@@ -38,7 +38,7 @@ pub struct AppConfig {
     pub exposure_compensation_position: Option<u8>,
     /// Last successfully submitted microphone auto-gain state; camera GET_CUR is authoritative.
     pub audio_auto_gain: Option<bool>,
-    /// Last successfully submitted microphone-disabled state; camera GET_CUR is authoritative.
+    /// Last successfully submitted microphone-disabled state; no reliable GET_CUR read-back is established.
     pub audio_microphone_disabled: Option<bool>,
     /// Last successfully submitted microphone noise-reduction level: 0 Off, 1 Weak, 2 Medium, 3 Strong.
     pub audio_noise_reduction: Option<u8>,
