@@ -465,6 +465,94 @@ fn set_hdr_enabled(device: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+// Tiny 2 Lite Auto Exposure priority, captured on selector 0x06 (60-byte SET_CUR).
+// This is separate from CAM_SET_FACE_FOCUS / autofocus priority.
+fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 3] {
+    [0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]
+}
+
+fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<(), String> {
+    let payload = auto_exposure_mode_payload(face_priority);
+    let mut data = [0u8; 60];
+    data[..payload.len()].copy_from_slice(&payload);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.auto_exposure_mode = Some(
+        if face_priority { "face" } else { "global" }.into()
+    ));
+    Ok(())
+}
+
+fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Auto Exposure priority"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:auto-exposure-mode");
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    selector.add_css_class("linked");
+    selector.set_halign(gtk::Align::Start);
+    let global = gtk::ToggleButton::with_label("Global");
+    let face = gtk::ToggleButton::with_label("Face");
+    face.set_group(Some(&global));
+    global.add_css_class("flat");
+    face.add_css_class("flat");
+
+    let saved_mode = current_config().auto_exposure_mode;
+    match saved_mode.as_deref() {
+        Some("global") => global.set_active(true),
+        Some("face") => face.set_active(true),
+        _ => {}
+    }
+    selector.append(&global);
+    selector.append(&face);
+    layout.append(&selector);
+
+    let current_face = Rc::new(Cell::new(match saved_mode.as_deref() {
+        Some("face") => Some(true),
+        Some("global") => Some(false),
+        _ => None,
+    }));
+    for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
+        let dev = device.to_string();
+        let status_label = status.clone();
+        let current = current_face.clone();
+        let global_restore = global.clone();
+        let face_restore = face.clone();
+        button.connect_clicked(move |selected| {
+            if !selected.is_active() { return; }
+            let previous = current.get();
+            match set_auto_exposure_mode(&dev, face_priority) {
+                Ok(()) => {
+                    current.set(Some(face_priority));
+                    status_label.set_text(if face_priority {
+                        "Face-priority Auto Exposure command submitted. Verify the camera's exposure behavior."
+                    } else {
+                        "Global Auto Exposure command submitted. Verify the camera's exposure behavior."
+                    });
+                }
+                Err(error) => {
+                    global_restore.set_active(previous == Some(false));
+                    face_restore.set_active(previous == Some(true));
+                    status_label.set_text(&format!("Could not change Auto Exposure priority: {error}"));
+                }
+            }
+        });
+    }
+
+    let note = gtk::Label::new(Some(
+        "Face and Global control Auto Exposure priority, not autofocus. The camera has no confirmed read-back for this setting; the selection is the last successfully submitted command."
+    ));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
 fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera settings"));
     frame.add_css_class("compact-group");
@@ -1731,6 +1819,21 @@ mod xu_protocol_tests {
         assert_eq!(&sleep[..20], hex("aa2542000c00ea630a02c2a00400bffb01000000").as_slice());
         assert!(wake[20..].iter().all(|byte| *byte == 0));
         assert!(sleep[20..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn auto_exposure_priority_payload_matches_linux_capture() {
+        assert_eq!(auto_exposure_mode_payload(true), [0x03, 0x01, 0x00]);
+        assert_eq!(auto_exposure_mode_payload(false), [0x03, 0x01, 0x01]);
+
+        let mut face = [0u8; 60];
+        face[..3].copy_from_slice(&auto_exposure_mode_payload(true));
+        let mut global = [0u8; 60];
+        global[..3].copy_from_slice(&auto_exposure_mode_payload(false));
+        assert_eq!(&face[..4], &[0x03, 0x01, 0x00, 0x00]);
+        assert_eq!(&global[..4], &[0x03, 0x01, 0x01, 0x00]);
+        assert!(face[3..].iter().all(|byte| *byte == 0));
+        assert!(global[3..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
