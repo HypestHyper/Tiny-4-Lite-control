@@ -47,7 +47,7 @@ pub struct AppConfig {
     pub compact_controls: Vec<String>,
     /// User presets. The UI and persistence layer enforce a maximum of ten.
     pub presets: Vec<CameraPreset>,
-    /// Last selected capture mode. It is remembered but never forced on connect.
+    /// Last selected capture mode, restored on connect only if still advertised by V4L2.
     pub video_mode: Option<VideoModeConfig>,
 }
 
