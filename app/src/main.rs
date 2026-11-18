@@ -470,13 +470,21 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     container.append(&frame);
 }
 
-// CAM_SET_FACE_FOCUS (wire command 0x3602, Camera receiver 0x02)
-// accepts a four-byte signed little-endian Boolean. Global = 0, Face = 1.
+// Tiny 2 Lite focus-priority command (wire command 0x3602, Camera receiver 0x02).
+// The earlier 0/1 Boolean payload was borrowed from a different implementation
+// and is contradicted by the Lite capture. The captured values correlate with
+// Face then Global transitions: Face = BF FB 01 00; Global = BE 07 00 00.
+// The capture does not provide reliable read-back, so the mapping remains
+// hardware-testable rather than claiming device-side confirmation.
+fn face_focus_payload(face_priority: bool) -> [u8; 4] {
+    if face_priority { [0xbf, 0xfb, 0x01, 0x00] }
+    else { [0xbe, 0x07, 0x00, 0x00] }
+}
+
 fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
     let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
     let mut command = [0u8; 6];
-    let enabled: i32 = if face_priority { 1 } else { 0 };
-    command[2..6].copy_from_slice(&enabled.to_le_bytes());
+    command[2..6].copy_from_slice(&face_focus_payload(face_priority));
     xu_send_frame(device, group, command)
 }
 
@@ -518,9 +526,9 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
                 Ok(()) => {
                     current.set(face_priority);
                     status_label.set_text(if face_priority {
-                        "Face-priority autofocus command sent."
+                        "Face-priority autofocus command submitted. Verify the camera's focus behavior."
                     } else {
-                        "Global autofocus command sent."
+                        "Global autofocus command submitted. Verify the camera's focus behavior."
                     });
                 }
                 Err(error) => {
@@ -534,7 +542,7 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
         });
     }
 
-    let note = gtk::Label::new(Some("Global uses standard autofocus priority. Face sends the camera's face-priority autofocus command. The camera does not expose this setting in the status block, so selection is tracked locally."));
+    let note = gtk::Label::new(Some("Global and Face use captured Tiny 2 Lite command payloads. No device-side read-back is available; the selection is tracked locally and must be verified by observing focus behavior."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -1505,19 +1513,22 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn face_focus_frame_uses_camera_command_and_i32_payload() {
+    fn face_focus_frames_match_tiny_2_lite_capture_values() {
         let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
+        assert_eq!(face_focus_payload(true), hex("bffb0100").as_slice());
+        assert_eq!(face_focus_payload(false), hex("be070000").as_slice());
+
         let mut face_command = [0u8; 6];
-        face_command[2..6].copy_from_slice(&1i32.to_le_bytes());
+        face_command[2..6].copy_from_slice(&face_focus_payload(true));
         let face = obsbot_frame(0x0040, group, face_command);
         assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&face[16..20], hex("01000000").as_slice());
+        assert_eq!(&face[16..20], hex("bffb0100").as_slice());
 
         let mut global_command = [0u8; 6];
-        global_command[2..6].copy_from_slice(&0i32.to_le_bytes());
+        global_command[2..6].copy_from_slice(&face_focus_payload(false));
         let global = obsbot_frame(0x0041, group, global_command);
         assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&global[16..20], hex("00000000").as_slice());
+        assert_eq!(&global[16..20], hex("be070000").as_slice());
     }
 
     #[test]
