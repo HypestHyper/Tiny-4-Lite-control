@@ -133,6 +133,16 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         add_focus_mode_control(container, device, status);
     }
 
+    // Auto Exposure Face/Global is independent of autofocus priority.
+    // The V4L2 menu value 0 is Auto; hide this vendor option in Manual /
+    // Aperture Priority modes where automatic exposure is not active.
+    let auto_exposure_enabled = controls.iter()
+        .find(|c| c.name == "auto_exposure")
+        .is_some_and(|c| c.value == 0);
+    if auto_exposure_enabled {
+        add_auto_exposure_mode_control(container, device, status);
+    }
+
     let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
     for control in controls.iter().cloned() {
         if control.name == "focus_automatic_continuous" { continue; }
