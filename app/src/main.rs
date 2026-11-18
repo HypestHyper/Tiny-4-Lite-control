@@ -1034,7 +1034,7 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
 
     for control in controls.iter().cloned() {
         if control.name == "focus_automatic_continuous" { continue; }
-        if (control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let blockers = control_blockers(&control, &controls);
         let unavailable = control.disabled || !blockers.is_empty();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
