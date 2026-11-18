@@ -69,7 +69,7 @@ Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has 
 - The Diagnostics tab reads the 60-byte selector `0x06` status block and selector `0x02` command-channel response using GET_CUR only.
 - It shows the selector `0x08` model/stream name and USB descriptor identity, including `bcdDevice` clearly labelled as a USB device-release value, not confirmed firmware.
 - Status fields are decoded only where evidence exists. FOV (`0x11`) and crop/zoom-related raw code (`0x04`) are displayed separately. Candidate position floats from selector `0x02` remain labelled unverified.
-- Camera settings expose Wide / Normal / Narrow FOV commands and LED power plus four brightness levels. The user has visually confirmed all three FOV modes. FOV changes are incompatible with certain AI tracking modes; the exact affected modes are not yet identified. The Narrow status-byte read-back mapping remains unverified. LED power uses selector 0x06 tag 0x18 with payload [0x18, 0x01, 0x00] for Off and [0x18, 0x01, 0x01] for On. Brightness uses selector 0x06 tag 0x1A with payload [0x1A, 0x01, raw], where raw 0–3 maps to user-facing levels 1–4. Status byte 0x21 reads back brightness only, not power state. The UI exposes the separate On/Off switch and all four intensity levels.
+- Camera settings expose Wide / Normal / Narrow FOV commands and LED controls. The user has visually confirmed all three FOV modes. FOV changes are incompatible with certain AI tracking modes; the exact affected modes are not yet identified. The Narrow status-byte read-back mapping remains unverified. LED brightness protocol evidence indicates selector 0x06 tag 0x1A with payload [0x1A, 0x01, raw], where raw 0–3 maps to user-facing levels 1–4; status byte 0x21 reports brightness only. The current UI implementation is known to be wrong: it exposes only levels 1–3, reads byte 0x20 instead of 0x21, and infers LED power from brightness. Tag 0x18 was previously interpreted as a separate power switch, but the user's live test shows On triggers blinking while Off leaves the LED continuously lit. Its actual semantics (power versus blink/indicator mode) are therefore unresolved. Do not treat tag 0x18 as a verified power switch or send further guessed combinations until isolated by a controlled capture and visual test.
 - Sleep and wake controls send the captured Tiny 2 Lite power command. The command action and power-status read-back are separate; the user physically confirmed both sleep and wake behaviour.
 
 ### USB capture workflow
@@ -113,7 +113,7 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Gesture commands
 
-Four command groups are encoded:
+Four command groups are encoded. The user has now physically confirmed the following behaviour on the Tiny 2 Lite: Target selection works and enables normal tracking when the user spreads an open palm/fingers; the Zoom/L-pose gesture works; and Dynamic Zoom works when both hands form L shapes and move apart/together. Dynamic Zoom direction remains unknown: the gesture is functional, but the direction mapping has not been established. These are live hardware observations, not protocol read-back.
 
 - Target selection: `0a 04 c4 30 01 00`
 - Zoom/L-pose: `0a 04 44 31 01 00`
@@ -143,7 +143,7 @@ Enable/disable frames are built with the current frame builder. The status block
 
 - No automatic byte-diff view or semantic inference for unknown XU records; capture reports now include a transfer summary and pairing aids, while preserving raw decoded rows.
 - No automatic firmware-version identification. USB `bcdDevice` and XU model identity are displayed, but neither is treated as the installed OBSBOT firmware revision.
-- No reliable per-gesture state read-back.
+- No reliable per-gesture state read-back. Dynamic Zoom direction semantics remain unknown despite the gesture itself being confirmed working.
 - No complete protocol coverage for all features listed in the research inventory.
 - No UI redesign or visual-polish pass. The current GTK interface is only a functional test bench.
 - GitHub Actions AppImage build passed on 2026-11-17 for commit `150ca222d3d8c10a5d48880788ce1043639b11ba` (run [44184954913](https://github.com/HypestHyper/Tiny-4-Lite-control/actions/runs/44184954913)). This confirms compilation and packaging, not live hardware validation of the new diagnostics reads.
