@@ -1404,6 +1404,7 @@ fn show_compact_settings(
     dialog.present();
 }
 
+// Preview intentionally disabled while USB capture and camera controls are being validated.
 fn build_ui(app: &gtk::Application) {
     let loaded_config = match config::load() {
         Ok(value) => value,
