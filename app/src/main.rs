@@ -507,27 +507,30 @@ fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
 }
 
 fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
-    let frame = gtk::Frame::new(Some("Autofocus mode"));
+    let frame = gtk::Frame::new(Some("Autofocus priority"));
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
     layout.set_margin_start(10);
     layout.set_margin_end(10);
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let global = gtk::CheckButton::with_label("Global Focus");
-    let face = gtk::CheckButton::with_label("Face Focus");
+    // A grouped ToggleButton pair behaves as one segmented choice: exactly
+    // one priority is selected, and changing it sends the corresponding XU command.
+    let selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    selector.add_css_class("linked");
+    selector.set_halign(gtk::Align::Start);
+    let global = gtk::ToggleButton::with_label("Global");
+    let face = gtk::ToggleButton::with_label("Face");
     face.set_group(Some(&global));
+    global.add_css_class("flat");
+    face.add_css_class("flat");
     let saved_face_priority = current_config().focus_mode.as_deref() == Some("face");
     global.set_active(!saved_face_priority);
     face.set_active(saved_face_priority);
-    row.append(&global);
-    row.append(&face);
-    layout.append(&row);
+    selector.append(&global);
+    selector.append(&face);
+    layout.append(&selector);
 
-    // The camera has a dedicated read command, but this app does not yet
-    // decode it. Keep the current selection for this UI session and report
-    // command submission without claiming device-side read-back.
     let current_face = Rc::new(Cell::new(saved_face_priority));
     let updating = Rc::new(Cell::new(false));
     for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
@@ -556,18 +559,17 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
                     global_restore.set_active(!previous);
                     face_restore.set_active(previous);
                     updating_state.set(false);
-                    status_label.set_text(&format!("Could not change autofocus mode: {error}"));
+                    status_label.set_text(&format!("Could not change autofocus priority: {error}"));
                 }
             }
         });
     }
 
-    let note = gtk::Label::new(Some("Global and Face use captured Tiny 2 Lite command payloads. No device-side read-back is available; the selection is tracked locally and must be verified by observing focus behavior."));
+    let note = gtk::Label::new(Some("Global and Face are mutually exclusive autofocus priorities. The camera has no confirmed read-back for this setting, so the selected value is the last successfully submitted command."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
     layout.append(&note);
-
     frame.set_child(Some(&layout));
     container.append(&frame);
 }
@@ -789,20 +791,37 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     } else {
         status.set_text("AI controls shown, but XU status could not be read. Check camera node permissions.");
     }
-    let apply_mode = gtk::Button::with_label("Apply");
-    let mode_apply = mode.clone();
+    let last_mode = Rc::new(RefCell::new(mode.active_id().map(|id| id.to_string())
+        .or_else(|| current_config().ai_tracking_mode.clone())));
+    let changing_mode = Rc::new(Cell::new(false));
     let dev = device.to_string();
     let status_mode = status.clone();
-    apply_mode.connect_clicked(move |_| {
-        let result = mode_apply.active_id().and_then(|id| modes.iter().find(|m| m.0 == id.as_str()))
-            .ok_or_else(|| "Select an AI tracking mode.".to_string())
+    let last_mode_change = last_mode.clone();
+    let changing_mode_state = changing_mode.clone();
+    let mode_restore = mode.clone();
+    mode.connect_changed(move |combo| {
+        if changing_mode_state.get() { return; }
+        let Some(id) = combo.active_id().map(|id| id.to_string()) else { return; };
+        let result = modes.iter().find(|entry| entry.0 == id)
+            .ok_or_else(|| "Unknown AI tracking mode.".to_string())
             .and_then(|entry| set_ai_mode(&dev, (entry.2, entry.3)));
-        status_mode.set_text(&result.map(|_| "AI tracking mode command sent. Refresh status to confirm.".to_string())
-            .unwrap_or_else(|e| format!("AI mode failed: {e}")));
+        match result {
+            Ok(()) => {
+                *last_mode_change.borrow_mut() = Some(id.clone());
+                status_mode.set_text(&format!("AI tracking mode set to {}. Device status can be refreshed to verify.", id));
+            }
+            Err(error) => {
+                changing_mode_state.set(true);
+                if let Some(previous) = last_mode_change.borrow().as_deref() {
+                    mode_restore.set_active_id(Some(previous));
+                }
+                changing_mode_state.set(false);
+                status_mode.set_text(&format!("AI mode failed: {error}"));
+            }
+        }
     });
     mode_row.append(&mode_label);
     mode_row.append(&mode);
-    mode_row.append(&apply_mode);
     layout.append(&mode_row);
 
     let speed_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -818,19 +837,34 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     } else {
         speed.set_active_id(Some("standard"));
     }
-    let apply_speed = gtk::Button::with_label("Apply");
-    let speed_apply = speed.clone();
+    let last_speed = Rc::new(RefCell::new(speed.active_id().map(|id| id.to_string())));
+    let changing_speed = Rc::new(Cell::new(false));
     let dev = device.to_string();
     let status_speed = status.clone();
-    apply_speed.connect_clicked(move |_| {
-        let sport = speed_apply.active_id().as_deref() == Some("sport");
-        let result = set_tracking_speed(&dev, sport);
-        status_speed.set_text(&result.map(|_| "Tracking speed command sent. Refresh status to confirm. Sport encoding is documented for firmware 6.2.5.x.".to_string())
-            .unwrap_or_else(|e| format!("Tracking speed failed: {e}")));
+    let last_speed_change = last_speed.clone();
+    let changing_speed_state = changing_speed.clone();
+    let speed_restore = speed.clone();
+    speed.connect_changed(move |combo| {
+        if changing_speed_state.get() { return; }
+        let Some(id) = combo.active_id().map(|id| id.to_string()) else { return; };
+        let result = set_tracking_speed(&dev, id == "sport");
+        match result {
+            Ok(()) => {
+                *last_speed_change.borrow_mut() = Some(id.clone());
+                status_speed.set_text(&format!("Tracking speed set to {id}."));
+            }
+            Err(error) => {
+                changing_speed_state.set(true);
+                if let Some(previous) = last_speed_change.borrow().as_deref() {
+                    speed_restore.set_active_id(Some(previous));
+                }
+                changing_speed_state.set(false);
+                status_speed.set_text(&format!("Tracking speed failed: {error}"));
+            }
+        }
     });
     speed_row.append(&speed_label);
     speed_row.append(&speed);
-    speed_row.append(&apply_speed);
     layout.append(&speed_row);
 
     // Status byte 0x07 is inverted for the L-pose Zoom gesture:
