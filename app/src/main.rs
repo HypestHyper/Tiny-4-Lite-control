@@ -167,6 +167,7 @@ fn joystick_axis(position: f64, min: i64, max: i64) -> i64 {
 
 fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &Control, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Pan / tilt speed"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "camera:pan-tilt-joystick");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let hint = gtk::Label::new(Some("Drag the stick to move. Release to stop."));
     hint.add_css_class("dim-label");
@@ -407,6 +408,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
 
     // FOV presets are positions on the standard V4L2 zoom_absolute control.
     let zoom_frame = gtk::Frame::new(Some("Zoom and field of view"));
+    ui::layout::mark_compact_item(zoom_frame.upcast_ref(), "obsbot:zoom-presets");
     let zoom_layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
     zoom_layout.set_margin_top(8);
     zoom_layout.set_margin_bottom(8);
@@ -440,6 +442,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     let led_frame = gtk::Frame::new(Some("LED illumination"));
     let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    ui::layout::mark_compact_item(led_level_row.upcast_ref(), "obsbot:led-brightness");
     led_level_row.add_css_class("adaptive-row");
     let led_level_label = gtk::Label::new(Some("LED setting"));
     led_level_label.set_width_chars(22);
@@ -511,6 +514,7 @@ fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
 
 fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Autofocus priority"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:focus_mode");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
@@ -586,6 +590,7 @@ fn add_autofocus_control(
 ) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.add_css_class("adaptive-row");
+    ui::layout::mark_compact_item(row.upcast_ref(), "v4l2:focus_automatic_continuous");
     let title = gtk::Label::new(Some("Autofocus"));
     title.set_width_chars(22);
     title.set_xalign(0.0);
@@ -649,6 +654,7 @@ fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
 
 fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera power"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "camera:power");
     let layout = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     layout.add_css_class("adaptive-row");
     layout.set_margin_top(8);
@@ -769,6 +775,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
     let mode_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     mode_row.add_css_class("adaptive-row");
+    ui::layout::mark_compact_item(mode_row.upcast_ref(), "obsbot:ai-tracking-mode");
     let mode_label = gtk::Label::new(Some("Tracking mode"));
     mode_label.set_width_chars(22);
     mode_label.set_xalign(0.0);
@@ -829,6 +836,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
     let speed_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     speed_row.add_css_class("adaptive-row");
+    ui::layout::mark_compact_item(speed_row.upcast_ref(), "obsbot:tracking-speed");
     let speed_label = gtk::Label::new(Some("Tracking speed"));
     speed_label.set_width_chars(22);
     speed_label.set_xalign(0.0);
@@ -885,6 +893,13 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     for (label, group, initial_state) in gestures {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("adaptive-row");
+        let gesture_key = match group {
+            [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00] => "obsbot:target-selection",
+            [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00] => "obsbot:zoom-l-pose",
+            [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00] => "obsbot:dynamic-zoom",
+            _ => "obsbot:dynamic-zoom-direction",
+        };
+        ui::layout::mark_compact_item(row.upcast_ref(), gesture_key);
         let name = gtk::Label::new(Some(label));
         name.set_xalign(0.0);
         name.set_hexpand(true);
@@ -924,6 +939,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     }
 
     let ratio_frame = gtk::Frame::new(Some("Gesture zoom ratio"));
+    ui::layout::mark_compact_item(ratio_frame.upcast_ref(), "obsbot:gesture-zoom-ratio");
     let ratio_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let ratio_help = gtk::Label::new(Some("Zoom applied when the camera recognizes the L-shaped Zoom gesture. Range: 1.00×–4.00×."));
     ratio_help.set_wrap(true);
