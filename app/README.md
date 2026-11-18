@@ -30,12 +30,15 @@ not the final UI. UI redesign is deferred.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
   (1.00×), Medium=5 (1.15×), Narrow=15 (1.47×). Preset buttons write
-  this same V4L2 control and read its value back. `zoom_continuous` and
+  this same V4L2 control and read its value back. The slider is refreshed
+  after each preset; the user confirmed it displays 0, 5, and 15 for the
+  three presets. `zoom_continuous` and
   the separate vendor FOV setter are not used.
-- Provides pan/tilt speed joystick control with sensitivity adjustment.
-  Releasing the joystick sends neutral speed. Bounded absolute pan/tilt
-  step controls are also available and move the physical gimbal
-  immediately.
+- Pan and tilt use standard V4L2 controls: `pan_absolute`,
+  `tilt_absolute`, `pan_speed`, and `tilt_speed`. Provides speed
+  joystick control with sensitivity adjustment; releasing the joystick
+  sends neutral speed. Bounded absolute pan/tilt steps are also available
+  and move the physical gimbal immediately.
 
 ### OBSBOT vendor UVC Extension Unit controls
 
@@ -104,8 +107,9 @@ successfully submitted commands where no reliable read-back exists.
 
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
-The in-process camera service that will own monitoring and optional
-restore-on-connect behavior is not implemented yet.
+The settings module is implemented, but the dedicated in-process camera
+service that will own device monitoring and optional restore-on-connect
+behavior is not implemented yet.
 
 ## Diagnostics and USB capture
 
@@ -176,8 +180,9 @@ revision as build-verified.
 - Sleep/wake physically move the gimbal and remain explicit actions.
 - No camera movement or sleep action runs automatically at startup.
 - There is no separately installed background daemon or automatic
-  sleep/wake service. The longer-term service/config architecture is
-  still a design direction, not an implemented feature.
+  sleep/wake service. Persistent TOML configuration is implemented;
+  the in-process camera service and optional restore-on-connect behavior
+  are still future work.
 - Global / Face focus mode hardware confirmation/read-back, reliable
   gesture read-back, automatic firmware detection, live pan/tilt
   telemetry, HDR setter verification, mirror support, and preset
