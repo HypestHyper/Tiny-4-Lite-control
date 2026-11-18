@@ -449,7 +449,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     led_level.add_mark(1.0, gtk::PositionType::Bottom, Some("1"));
     led_level.add_mark(2.0, gtk::PositionType::Bottom, Some("2"));
     led_level.add_mark(3.0, gtk::PositionType::Bottom, Some("3"));
-    let initial_led = xu_status(device).ok().map(|data| data[0x21]).unwrap_or(0);
+    let initial_led = xu_status(device).ok().map(|data| data[0x21])
+        .or_else(|| current_config().led_brightness).unwrap_or(0);
     led_level.set_value(if initial_led <= 3 { initial_led as f64 } else { 0.0 });
     led_level_row.append(&led_level_label);
     led_level_row.append(&led_level);
@@ -517,7 +518,9 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     let global = gtk::CheckButton::with_label("Global Focus");
     let face = gtk::CheckButton::with_label("Face Focus");
     face.set_group(Some(&global));
-    global.set_active(true);
+    let saved_face_priority = current_config().focus_mode.as_deref() == Some("face");
+    global.set_active(!saved_face_priority);
+    face.set_active(saved_face_priority);
     row.append(&global);
     row.append(&face);
     layout.append(&row);
@@ -525,7 +528,7 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     // The camera has a dedicated read command, but this app does not yet
     // decode it. Keep the current selection for this UI session and report
     // command submission without claiming device-side read-back.
-    let current_face = Rc::new(Cell::new(false));
+    let current_face = Rc::new(Cell::new(saved_face_priority));
     let updating = Rc::new(Cell::new(false));
     for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
         let dev = device.to_string();
@@ -834,12 +837,13 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     // 1 = disabled, 0 = enabled. Other gesture states have no confirmed
     // device read-back, so those start Unknown and become state-aware after
     // the first successful command in this session.
+    let saved_gestures = current_config().gesture_states;
     let gestures: [(&str, [u8; 6], Option<bool>); 4] = [
-        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00], None),
+        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00], saved_gestures.get("target_selection").copied()),
         ("Zoom (L-pose) gesture", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00],
-            xu_status(device).ok().map(|data| data[0x07] == 0)),
-        ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00], None),
-        ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00], None),
+            xu_status(device).ok().map(|data| data[0x07] == 0).or_else(|| saved_gestures.get("zoom_l_pose").copied())),
+        ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00], saved_gestures.get("dynamic_zoom").copied()),
+        ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00], saved_gestures.get("dynamic_zoom_direction").copied()),
     ];
     for (label, group, initial_state) in gestures {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -893,7 +897,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let ratio_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     ratio_row.add_css_class("adaptive-row");
     let ratio_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 4.0, 0.01);
-    ratio_scale.set_value(1.0);
+    ratio_scale.set_value(current_config().gesture_zoom_ratio.unwrap_or(1.0) as f64);
     ratio_scale.set_digits(2);
     ratio_scale.set_draw_value(true);
     ratio_scale.set_hexpand(true);
