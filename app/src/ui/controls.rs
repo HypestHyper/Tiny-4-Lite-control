@@ -58,7 +58,8 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     }
 
     // Each category is a real page, not another heading in one endless form.
-    let categories: [(&str, &str, &str); 9] = [
+    let categories: [(&str, &str, &str); 10] = [
+        ("camera", "Camera", "Camera power, status and device controls"),
         ("image", "Image", "Brightness, contrast, saturation and image detail"),
         ("white-balance", "White balance", "Automatic and manual colour temperature"),
         ("exposure", "Exposure", "Exposure mode, shutter and anti-flicker"),
@@ -143,7 +144,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     let page = |key: &str| -> gtk::Box {
         pages.get(key).expect("settings category exists").clone()
     };
-    add_sleep_controls(&page("movement"), device, status);
+    add_sleep_controls(&page("camera"), device, status);
     add_camera_settings(&page("zoom"), device, window, status);
     add_ai_controls(&page("tracking"), device, status);
     ui::presets::append(&page("presets"), device, window, status);
