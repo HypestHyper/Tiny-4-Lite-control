@@ -424,7 +424,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     led_level.add_mark(1.0, gtk::PositionType::Bottom, Some("1"));
     led_level.add_mark(2.0, gtk::PositionType::Bottom, Some("2"));
     led_level.add_mark(3.0, gtk::PositionType::Bottom, Some("3"));
-    let initial_led = xu_status(device).ok().map(|data| data[0x20]).unwrap_or(0);
+    let initial_led = xu_status(device).ok().map(|data| data[0x21]).unwrap_or(0);
     led_level.set_value(if initial_led <= 3 { initial_led as f64 } else { 0.0 });
     led_level_row.append(&led_level_label);
     led_level_row.append(&led_level);
