@@ -225,10 +225,12 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             content.set_margin_bottom(6);
             content.set_margin_start(8);
             content.set_margin_end(8);
+            frame.add_css_class("compact-group");
             frame.set_child(Some(&content));
             container.append(&frame);
             content
         });
+        ui::layout::mark_compact_item(row.upcast_ref(), &format!("v4l2:{}", control.name));
         group.append(&row);
         if unavailable {
             let note = gtk::Label::new(Some(&format!("Unavailable: {}.", blockers.join("; "))));
@@ -242,5 +244,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
+    let config = current_config();
+    ui::layout::apply_compact_visibility(container.upcast_ref(), config.compact_mode, &config.compact_controls);
     ui::layout::restore_scroll_position(scroll_position);
 }
