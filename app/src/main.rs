@@ -8,7 +8,6 @@ use std::rc::Rc;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 #[derive(Clone, Debug)]
 struct Control {
@@ -460,79 +459,80 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     container.append(&frame);
 }
 
-// Focus-mode selector captured from the Tiny 2 Lite vendor protocol.
-const FOCUS_MODE_GROUP: [u8; 6] = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
-static FOCUS_MODE_SEQUENCE: AtomicU16 = AtomicU16::new(0x0049);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FocusMode {
-    Global,
-    Face,
-}
-
-impl FocusMode {
-    fn wire_value(self) -> u8 {
-        match self {
-            Self::Global => 1,
-            Self::Face => 0,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Global => "Global Focus",
-            Self::Face => "Face Focus",
-        }
-    }
-}
-
-fn set_focus_mode(device: &str, mode: FocusMode) -> Result<(), String> {
-    // Captures show command 0x3602 with a four-byte payload:
-    // 01 00 00 00 = Global, 00 00 00 00 = Face.
-    // The camera does not expose this mode in the 0x0600 status response.
-    let mut command = [0u8; 6];
-    command[2] = mode.wire_value();
-    let sequence = FOCUS_MODE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    xu_send_frame(device, sequence, FOCUS_MODE_GROUP, command)
-}
-
-fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+// Global/Face focus-mode payloads are not mapped reliably yet. Keep the
+// options visible while autofocus is enabled, but disable them rather than
+// sending a guessed command that appears to succeed without changing focus.
+fn add_focus_mode_control(container: &gtk::Box) {
     let frame = gtk::Frame::new(Some("Autofocus mode"));
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_margin_top(8);
-    row.set_margin_bottom(8);
-    row.set_margin_start(10);
-    row.set_margin_end(10);
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
 
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let global = gtk::CheckButton::with_label("Global Focus");
     let face = gtk::CheckButton::with_label("Face Focus");
     face.set_group(Some(&global));
-    // The capture baseline was Global; the camera provides no read-back.
     global.set_active(true);
-
-    let dev_global = device.to_string();
-    let status_global = status.clone();
-    global.connect_toggled(move |button| {
-        if button.is_active() {
-            let result = set_focus_mode(&dev_global, FocusMode::Global);
-            status_global.set_text(&result.map(|_| "Global Focus selected.".to_string())
-                .unwrap_or_else(|e| format!("Could not select Global Focus: {e}")));
-        }
-    });
-    let dev_face = device.to_string();
-    let status_face = status.clone();
-    face.connect_toggled(move |button| {
-        if button.is_active() {
-            let result = set_focus_mode(&dev_face, FocusMode::Face);
-            status_face.set_text(&result.map(|_| "Face Focus selected.".to_string())
-                .unwrap_or_else(|e| format!("Could not select Face Focus: {e}")));
-        }
-    });
-
+    global.set_sensitive(false);
+    face.set_sensitive(false);
     row.append(&global);
     row.append(&face);
-    frame.set_child(Some(&row));
+    layout.append(&row);
+
+    let note = gtk::Label::new(Some("Global / Face protocol mapping is not confirmed yet. These options are temporarily disabled; autofocus itself remains controlled above."));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+
+    frame.set_child(Some(&layout));
     container.append(&frame);
+}
+
+fn add_autofocus_control(
+    container: &gtk::Box,
+    device: &str,
+    window: &gtk::ApplicationWindow,
+    status: &gtk::Label,
+    enabled: bool,
+) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("adaptive-row");
+    let title = gtk::Label::new(Some("Autofocus"));
+    title.set_width_chars(22);
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    let toggle = gtk::Switch::new();
+    toggle.set_active(enabled);
+    toggle.set_valign(gtk::Align::Center);
+
+    let dev = device.to_string();
+    let controls_refresh = container.clone();
+    let window_refresh = window.clone();
+    let status_refresh = status.clone();
+    toggle.connect_state_set(move |switch, active| {
+        match set_control(&dev, "focus_automatic_continuous", if active { 1 } else { 0 }) {
+            Ok(()) => {
+                status_refresh.set_text(if active {
+                    "Autofocus enabled."
+                } else {
+                    "Autofocus disabled. Manual focus is available."
+                });
+                populate_controls(&dev, &controls_refresh, &window_refresh, &status_refresh);
+            }
+            Err(error) => {
+                status_refresh.set_text(&format!("Could not change autofocus: {error}"));
+                switch.set_active(!active);
+            }
+        }
+        gtk::glib::Propagation::Proceed
+    });
+
+    row.append(&title);
+    row.append(&toggle);
+    container.append(&row);
 }
 
 fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
@@ -888,44 +888,18 @@ fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::Applicati
         .map(|c| c.value != 0)
         .unwrap_or(false);
     let total = controls.len();
-    if autofocus_enabled {
-        add_focus_mode_control(container, device, status);
+
+    // Keep the autofocus master switch above its dependent controls.
+    if controls.iter().any(|c| c.name == "focus_automatic_continuous") {
+        add_autofocus_control(container, device, window, status, autofocus_enabled);
     }
+    if autofocus_enabled {
+        add_focus_mode_control(container);
+    }
+
     for control in controls {
+        if control.name == "focus_automatic_continuous" { continue; }
         if autofocus_enabled && control.name == "focus_absolute" { continue; }
-        if control.name == "focus_automatic_continuous" {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            row.add_css_class("adaptive-row");
-            let title = gtk::Label::new(Some("Autofocus"));
-            title.set_width_chars(22);
-            title.set_xalign(0.0);
-            title.set_hexpand(true);
-            let toggle = gtk::Switch::new();
-            toggle.set_active(control.value != 0);
-            toggle.set_valign(gtk::Align::Center);
-            let dev = device.to_string();
-            let controls_refresh = container.clone();
-            let window_refresh = window.clone();
-            let status_refresh = status.clone();
-            let name = control.name.clone();
-            toggle.connect_state_set(move |switch, enabled| {
-                match set_control(&dev, &name, if enabled { 1 } else { 0 }) {
-                    Ok(()) => {
-                        status_refresh.set_text(if enabled { "Autofocus enabled. Choose Global or Face Focus." } else { "Autofocus disabled. Manual focus is available." });
-                        populate_controls(&dev, &controls_refresh, &window_refresh, &status_refresh);
-                    }
-                    Err(error) => {
-                        status_refresh.set_text(&format!("Could not change autofocus: {error}"));
-                        switch.set_active(!enabled);
-                    }
-                }
-                gtk::glib::Propagation::Proceed
-            });
-            row.append(&title);
-            row.append(&toggle);
-            container.append(&row);
-            continue;
-        }
         if (control.disabled && control.name != "zoom_absolute" && control.name != "focus_absolute") || (control.kind == "button" && control.name != "zoom_absolute") || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.add_css_class("adaptive-row");
@@ -1474,24 +1448,6 @@ mod xu_protocol_tests {
         assert_eq!(&sleep[..20], hex("aa2542000c00ea630a02c2a00400bffb01000000").as_slice());
         assert!(wake[20..].iter().all(|byte| *byte == 0));
         assert!(sleep[20..].iter().all(|byte| *byte == 0));
-    }
-
-    #[test]
-    fn focus_mode_frames_match_focus2_capture() {
-        let global = obsbot_frame(
-            0x0045,
-            FOCUS_MODE_GROUP,
-            [0x00, 0x00, 0x01, 0x00, 0x00, 0x00],
-        );
-        let face = obsbot_frame(
-            0x0046,
-            FOCUS_MODE_GROUP,
-            [0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        );
-        assert_eq!(&global[..20], hex("aa2545000c008bd70a0202360400bffb01000000").as_slice());
-        assert_eq!(&face[..20], hex("aa2546000c007bd80a0202360400be0700000000").as_slice());
-        assert_eq!(FocusMode::Global.wire_value(), 1);
-        assert_eq!(FocusMode::Face.wire_value(), 0);
     }
 
     #[test]
