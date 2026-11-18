@@ -205,3 +205,43 @@ The focus command submissions that were present had matching USB completions wit
 The app's Global/Face payload mapping was corrected to the values above. The GTK selector was also changed to dispatch from the newly clicked active button instead of handling both buttons' `toggled` signals. A grouped ToggleButton pair emits state changes for both the deselected and selected segments; the old handler depended on signal ordering and could fail to send the intended command. The corrected click handler sends only for the active selected segment and restores the previous local selection if submission fails.
 
 These changes are committed on `test-app-v0.1` in commit `8fd0878acb2de0da444bdfb0ae9f6769d3073107`. A new hardware capture is still required to verify all five transitions, especially the previously missing final Face → Global command. Do not mark Global/Face as hardware-working until the camera's visible focus behavior is confirmed.
+
+
+---
+
+## 2026-11-18 Tiny 2 Lite HDR control capture
+
+**Target:** Tiny 2 Lite, VID:PID `3564:fef9`  
+**USB bus/device:** `3/9`  
+**Monitor:** `usbmon3`  
+**Capture:** `~/.local/share/tiny4lite-control/captures/obsbot-capture-1795009114-271074329.pcapng`
+
+The user recorded HDR Off at baseline and toggled HDR repeatedly. Four outgoing 60-byte Extension Unit SET_CUR submissions were identified. All use request type `0x21`, request `0x01`, selector `0x0600`, and index `0x0200` (unit 2, selector `0x06`). The captured data-fragment prefix is:
+
+| Frame | Relative time | 60-byte payload prefix | State indicated |
+|---:|---:|---|---|
+| 46349 | 9.001861s | `01 01 01` | Off |
+| 104351 | 20.272726s | `01 01 00` | On |
+| 138985 | 26.969341s | `01 01 01` | Off |
+| 174385 | 33.842670s | `01 01 00` | On |
+
+The selector `0x06` status response independently tracks the same state at byte offset `0x06`:
+
+| Relative time | Status byte `0x06` | State |
+|---:|---:|---|
+| 1.008366s | `00` | Off |
+| 9.161446s | `01` | On |
+| 21.410601s | `00` | Off |
+| 27.535419s | `01` | On |
+| 35.685629s | `00` | Off |
+
+The status-byte sequence is the inverse of the outgoing command's third byte: status `00` means HDR Off and status `01` means HDR On. The user checkpoints and the packet/status sequence establish the command mapping used by the app:
+
+- HDR On: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 00`.
+- HDR Off: 60-byte selector `0x06` SET_CUR buffer beginning `01 01 01`.
+
+The last user checkpoint recorded HDR Off, but no corresponding outgoing command appears after the final HDR-On write. The user considers that last click likely not recorded. The repeated command alternation and matching status responses provide sufficient evidence for the mapping; the absent final write is retained as a capture omission, not used to reject the mapping.
+
+### App implementation
+
+The test app now exposes an HDR switch in Camera settings. It reads status byte `0x06` on startup to initialize the switch, falls back to the last successfully submitted local setting if the status read is unavailable, sends the captured 60-byte selector `0x06` payload on change, and persists the preference in `config.toml`. Unit tests cover both command prefixes and the status-byte interpretation. A successful ioctl confirms host-side request completion; the independent status read-back is the stronger state verification.
