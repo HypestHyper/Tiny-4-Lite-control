@@ -103,8 +103,19 @@ The versioned TOML config is loaded when the application starts and
 written after successful changes. It records supported V4L2 control
 values (excluding transient pan/tilt position and speed commands), LED
 brightness, AI tracking mode and speed, Global/Face focus selection,
-gesture toggles, gesture zoom ratio, theme, and joystick sensitivity.
+gesture toggles, gesture zoom ratio, theme, joystick sensitivity, and
+background-service policy.
+
+The service policy is stored under `[service]`:
+- `auto_sleep_enabled = false` by default. The future service must not
+  start idle monitoring or send automatic sleep commands unless this is
+  explicitly enabled.
+- `auto_sleep_timeout_minutes = 10` is the default idle timeout and is
+  validated to the range 1–1440 minutes.
+
 The previous `settings.conf` theme preference is migrated on first load.
+Missing keys in older config files receive safe defaults, so adding these
+service fields does not invalidate existing user settings.
 
 Loading the file does not send camera commands. In particular,
 `apply_on_connect` defaults to `false`; saved camera values are retained
@@ -115,9 +126,12 @@ successfully submitted commands where no reliable read-back exists.
 
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
-The settings module is implemented, but the dedicated in-process camera
-service that will own device monitoring and optional restore-on-connect
-behavior is not implemented yet.
+The settings module is implemented and loaded at application startup.
+The dedicated in-process camera service that will consume its service
+policy, own device monitoring, and implement optional idle sleep/wake
+behavior is not implemented yet. The service should receive a config
+snapshot at startup and reload policy only after an explicit settings
+change, rather than independently guessing defaults.
 
 ## Diagnostics and USB capture
 
