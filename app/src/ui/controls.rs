@@ -33,6 +33,33 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
     blockers
 }
 
+fn control_display_name(name: &str) -> String {
+    match name {
+        "exposure_time_absolute" => "Shutter speed".to_string(),
+        "iso_sensitivity" => "ISO sensitivity".to_string(),
+        "iso_sensitivity_auto" => "Auto ISO".to_string(),
+        "gain" => "Sensor gain".to_string(),
+        _ => name.replace('_', " "),
+    }
+}
+
+fn control_display_value(name: &str, value: i64) -> String {
+    match name {
+        // V4L2_CID_EXPOSURE_ABSOLUTE is expressed in 100-microsecond units.
+        "exposure_time_absolute" if value > 0 => {
+            let denominator = (10_000.0 / value as f64).round() as i64;
+            if denominator >= 2 {
+                format!("1/{denominator} s")
+            } else {
+                format!("{:.2} s", value as f64 / 10_000.0)
+            }
+        }
+        "iso_sensitivity" => format!("ISO {value}"),
+        "gain" => format!("Gain {value}"),
+        _ => value.to_string(),
+    }
+}
+
 fn v4l2_control_group(name: &str) -> &'static str {
     match name {
         "white_balance_automatic" | "red_balance" | "blue_balance" | "white_balance_temperature" => "White balance",
@@ -116,7 +143,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     row.add_css_class("adaptive-row");
         row.set_margin_top(3);
         row.set_margin_bottom(3);
-        let title = gtk::Label::new(Some(&control.name.replace('_', " ")));
+        let title = gtk::Label::new(Some(&control_display_name(&control.name)));
         title.set_width_chars(22);
         title.set_xalign(0.0);
         title.set_hexpand(true);
@@ -189,12 +216,17 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
                 control.step as f64,
             );
             scale.set_value(control.value.clamp(control.min, control.max.max(control.min)) as f64);
-            scale.set_draw_value(true);
+            scale.set_draw_value(false);
             scale.set_digits(0);
             scale.set_hexpand(true);
             scale.set_sensitive(!unavailable);
             scale.add_mark(control.default_value as f64, gtk::PositionType::Bottom,
-                Some(&format!("Default: {}", control.default_value)));
+                Some(&format!("Default: {}", control_display_value(&control.name, control.default_value))));
+
+            let value_label = gtk::Label::new(Some(&control_display_value(&control.name, control.value)));
+            value_label.set_width_chars(9);
+            value_label.set_xalign(1.0);
+            value_label.add_css_class("dim-label");
 
             let reset = gtk::Button::with_label("Reset");
             reset.set_sensitive(!unavailable && control.value != control.default_value);
@@ -207,16 +239,20 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             let name = control.name.clone();
             let status_label = status.clone();
             let reset_button = reset.clone();
+            let value_display = value_label.clone();
+            let display_name = name.clone();
             let default_value = control.default_value;
             scale.connect_value_changed(move |slider| {
                 let requested = slider.value().round() as i64;
+                value_display.set_text(&control_display_value(&display_name, requested));
                 let result = set_control(&dev, &name, requested);
                 let success = result.is_ok();
-                status_label.set_text(&result.map(|_| format!("{name}: {requested}"))
+                status_label.set_text(&result.map(|_| format!("{} set to {}", control_display_name(&name), control_display_value(&name, requested)))
                     .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
                 reset_button.set_sensitive(success && requested != default_value);
             });
             row.append(&scale);
+            row.append(&value_label);
             row.append(&reset);
         }
         let group_name = v4l2_control_group(&control.name);
