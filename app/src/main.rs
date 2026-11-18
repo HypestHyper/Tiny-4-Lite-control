@@ -2117,9 +2117,6 @@ mod xu_protocol_tests {
         assert_eq!(audio_noise_reduction_label(2), "Medium");
         assert_eq!(audio_noise_reduction_label(3), "Strong");
         assert_eq!(audio_noise_reduction_label(4), "Unknown");
-        for level in 0..=3 {
-            assert_eq!(level, level); // All four wire values are valid one-byte enum values.
-        }
     }
 
     #[test]
