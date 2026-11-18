@@ -1262,7 +1262,7 @@ fn show_compact_settings(
     let mut options: Vec<(String, String)> = Vec::new();
     if let Ok(output) = run_v4l2(device, "--list-ctrls-menus") {
         for control in parse_controls(&output) {
-            if control.kind == "button" || matches!(control.name.as_str(), "zoom_continuous" | "pan_speed" | "tilt_speed") {
+            if control.kind == "button" || matches!(control.name.as_str(), "zoom_continuous" | "pan_speed" | "tilt_speed" | "pan_absolute" | "tilt_absolute") {
                 continue;
             }
             let key = format!("v4l2:{}", control.name);
