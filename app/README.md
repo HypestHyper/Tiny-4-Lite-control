@@ -50,10 +50,12 @@ selector `0x06` for the 60-byte status block.
   `0x02` value and does not automatically choose the older reported
   `0x21` encoding.
 - Gestures: Target selection, Zoom/L-pose, Dynamic Zoom, and Dynamic
-  Zoom Direction. The first three gesture behaviours have been
-  physically confirmed. Dynamic Zoom Direction has a capture-derived
-  inverted ON/OFF payload mapping, but visible direction reversal still
-  needs hardware confirmation.
+  Zoom Direction. All four gesture behaviours have been physically confirmed. Dynamic
+  Zoom Direction reverses the direction of the Dynamic Zoom gesture, so
+  these two settings work together: enable Dynamic Zoom for the two-hand
+  L-shaped gesture, then use Direction Flip to reverse its direction.
+  Direction Flip does not affect the separate Zoom/L-pose gesture or
+  autofocus Global/Face priority.
 - Framed XU writes use a rolling process-local 16-bit sequence counter.
   The 2026-11-18 capture shows consecutive sequence values across
   multiple command groups. The required initial seed after reconnect or
