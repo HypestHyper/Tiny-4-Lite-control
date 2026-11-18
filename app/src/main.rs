@@ -1436,13 +1436,10 @@ fn build_ui(app: &gtk::Application) {
 
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control")
-        .default_width(if loaded_config.compact_mode { 420 } else { 1280 })
-        .default_height(if loaded_config.compact_mode { 760 } else { 820 })
+        .default_width(900)
+        .default_height(680)
         .build();
-    window.set_size_request(
-        if loaded_config.compact_mode { 340 } else { 760 },
-        if loaded_config.compact_mode { 480 } else { 500 },
-    );
+    window.set_size_request(620, 480);
     window.add_css_class("tiny4-window");
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -1464,20 +1461,7 @@ fn build_ui(app: &gtk::Application) {
     title.set_xalign(0.0);
     let refresh = gtk::Button::with_label("Refresh camera");
     refresh.add_css_class("suggested-action");
-    let mode_selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    mode_selector.add_css_class("linked");
-    let full_mode = gtk::ToggleButton::with_label("Full");
-    let compact_mode = gtk::ToggleButton::with_label("Compact");
-    compact_mode.set_group(Some(&full_mode));
-    full_mode.add_css_class("flat");
-    compact_mode.add_css_class("flat");
-    full_mode.set_active(!loaded_config.compact_mode);
-    compact_mode.set_active(loaded_config.compact_mode);
-    mode_selector.append(&full_mode);
-    mode_selector.append(&compact_mode);
-    let compact_settings = gtk::Button::with_label("Compact controls");
-    compact_settings.set_tooltip_text(Some("Choose which controls appear in Compact mode."));
-    let theme = gtk::ComboBoxText::new();
+     let theme = gtk::ComboBoxText::new();
     theme.append(Some("system"), "System");
     theme.append(Some("light"), "Light");
     theme.append(Some("dark"), "Dark");
@@ -1492,9 +1476,7 @@ fn build_ui(app: &gtk::Application) {
     header.append(&app_icon);
     header.append(&title);
     header.append(&theme);
-    header.append(&mode_selector);
-    header.append(&compact_settings);
-    header.append(&refresh);
+     header.append(&refresh);
     root.append(&header);
 
     let device_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -1521,7 +1503,43 @@ fn build_ui(app: &gtk::Application) {
     stack.set_transition_type(gtk::StackTransitionType::Crossfade);
     stack.set_transition_duration(160);
 
-    let preview_picture = gtk::Picture::new();
+    let controls_scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Never).build();
+    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    controls_box.add_css_class("content-page");
+    controls_scroll.set_child(Some(&controls_box));
+    stack.add_titled(&controls_scroll, Some("controls"), "Controls");
+
+    // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
+    let capture_page = capture::build_page();
+    let capture_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true).vexpand(true).build();
+    capture_scroll.set_child(Some(&capture_page));
+    stack.add_titled(&capture_scroll, Some("capture"), "Capture");
+
+    let diagnostics_page = add_diagnostics_page(&devices);
+    let diagnostics_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true).vexpand(true).build();
+    diagnostics_scroll.set_child(Some(&diagnostics_page));
+    stack.add_titled(&diagnostics_scroll, Some("diagnostics"), "Diagnostics");
+
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_halign(gtk::Align::Fill);
+    switcher.set_hexpand(true);
+    switcher.add_css_class("compact-switcher");
+    let page_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    page_column.set_hexpand(true);
+    page_column.set_vexpand(true);
+    page_column.append(&switcher);
+    page_column.append(&stack);
+    root.append(&page_column);
+
+    
     preview_picture.set_can_shrink(true);
     preview_picture.set_keep_aspect_ratio(true);
     preview_picture.set_hexpand(true);
@@ -1565,61 +1583,7 @@ fn build_ui(app: &gtk::Application) {
     );
     PREVIEW_CONTEXT.with(|context| *context.borrow_mut() = Some(preview_context.clone()));
 
-    let controls_scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Never).build();
-    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    controls_box.add_css_class("content-page");
-    controls_scroll.set_child(Some(&controls_box));
-    stack.add_titled(&controls_scroll, Some("controls"), "Controls");
-
-    // USB capture discovers the camera through sysfs; it does not depend on V4L2 nodes.
-    let capture_page = capture::build_page();
-    let capture_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true).vexpand(true).build();
-    capture_scroll.set_child(Some(&capture_page));
-    stack.add_titled(&capture_scroll, Some("capture"), "Capture");
-
-    let diagnostics_page = add_diagnostics_page(&devices);
-    let diagnostics_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true).vexpand(true).build();
-    diagnostics_scroll.set_child(Some(&diagnostics_page));
-    stack.add_titled(&diagnostics_scroll, Some("diagnostics"), "Diagnostics");
-
-    let navigation = gtk::StackSidebar::new();
-    navigation.add_css_class("navigation-sidebar");
-    navigation.set_stack(&stack);
-    let switcher = gtk::StackSwitcher::new();
-    switcher.set_stack(Some(&stack));
-    switcher.set_halign(gtk::Align::Fill);
-    switcher.set_hexpand(true);
-    switcher.add_css_class("compact-switcher");
-    let page_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    page_column.set_hexpand(true);
-    page_column.set_vexpand(true);
-    page_column.append(&switcher);
-    page_column.append(&stack);
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    content.add_css_class("workspace-content");
-    content.set_vexpand(true);
-    content.append(&navigation);
-    content.append(&page_column);
-
-    // Full mode gives the preview its own resizable right-hand panel.
-    // Compact mode reuses the same widgets in a narrow vertical workspace.
-    let main_paned = gtk::Paned::new(gtk::Orientation::Horizontal);
-    main_paned.set_vexpand(true);
-    configure_workspace(
-        &main_paned, &preview_frame, &content,
-        loaded_config.compact_mode, window.width(),
-    );
-    root.append(&main_paned);
-
-    let compact_mode_state = Rc::new(Cell::new(loaded_config.compact_mode));
+ let compact_mode_state = Rc::new(Cell::new(loaded_config.compact_mode));
     let navigation_responsive = navigation.clone();
     let switcher_responsive = switcher.clone();
     let root_responsive = root.clone();
@@ -1735,12 +1699,12 @@ fn build_ui(app: &gtk::Application) {
         if let Some(id) = combo.active_id() {
             let restore_message = apply_saved_video_mode(&id);
             ui::controls::populate_controls(&id, &controls, &win, &status_select);
-            restart_preview(&id, video::current_mode(&id));
+            
             if let Some(message) = restore_message {
                 status_select.set_text(&message);
             }
         } else {
-            restart_preview("", None);
+            
         }
     });
 
@@ -1756,7 +1720,7 @@ fn build_ui(app: &gtk::Application) {
             devices_refresh.set_active_id(Some(first));
         } else {
             clear_box(&controls_refresh);
-            restart_preview("", None);
+            
             if usb_camera_present() {
                 status_refresh.set_text("USB camera detected, but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
             } else {
@@ -1768,7 +1732,7 @@ fn build_ui(app: &gtk::Application) {
     if let Some(first) = nodes.first() {
         let restore_message = apply_saved_video_mode(first);
         ui::controls::populate_controls(first, &controls_box, &window, &status);
-        restart_preview(first, video::current_mode(first));
+        
         if let Some(message) = restore_message {
             status.set_text(&message);
         }
@@ -1781,12 +1745,7 @@ fn build_ui(app: &gtk::Application) {
             status.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera. Expected USB ID: 3564:fef9.");
         }
     }
-    let preview_on_close = preview_context.clone();
-    window.connect_close_request(move |_| {
-        preview_on_close.stop();
-        gtk::glib::Propagation::Proceed
-    });
-    window.present();
+     window.present();
 }
 
 
