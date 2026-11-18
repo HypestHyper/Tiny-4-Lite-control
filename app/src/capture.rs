@@ -332,7 +332,7 @@ pub fn build_page() -> gtk::Box {
     let help = gtk::Label::new(Some(
         "Record one continuous USB trace while changing one camera setting at a time. \
          Start with the baseline, change the setting in OBSBOT Center, then add a checkpoint \
-         with a short description. The app keeps the raw capture and creates a decoded text report."
+         with a short description. You can use this app to change settings while recording. Finish saves the raw trace and decoded report; Clear discards the current session so you can start another."
     ));
     help.set_wrap(true);
     help.set_xalign(0.0);
@@ -617,7 +617,7 @@ pub fn build_page() -> gtk::Box {
                 }
                 Ok(Err(error)) => {
                     start_done.set_sensitive(true);
-                    clear_done.set_sensitive(false);
+                    clear_done.set_sensitive(true);
                     status_done.set_text(&format!("Capture stopped, but report generation failed: {error}"));
                     gtk::glib::ControlFlow::Break
                 }
