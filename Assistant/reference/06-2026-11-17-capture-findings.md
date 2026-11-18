@@ -156,3 +156,52 @@ patterns alone.
   control is understood.
 - The capture does not justify implementing any additional unknown XU
   records.
+
+
+---
+
+## 2026-11-18 Linux Tiny 2 Lite Global / Face autofocus-priority capture
+
+**Target:** Tiny 2 Lite, VID:PID `3564:fef9`  
+**USB bus/device:** `3/9`  
+**Monitor:** `usbmon3`  
+**Capture:** `~/.local/share/tiny4lite-control/captures/obsbot-capture-1795008410-698968467.pcapng`  
+**Capture size:** 59,918,028 bytes
+
+The user recorded autofocus enabled, with Global selected at baseline, then changed priorities in this order:
+
+| Checkpoint | Relative time | User action |
+|---:|---:|---|
+| 1 | 0.000001s | Baseline: autofocus on, Global |
+| 2 | 16.214066s | Global → Face |
+| 3 | 25.260190s | Face → Global |
+| 4 | 32.175261s | Global → Face |
+| 5 | 39.067326s | Face → Global |
+
+Four outgoing 60-byte XU SET_CUR command frames were found. Their vendor function record is `0a 02 02 36 04 00` (Tiny 2 Lite `CAM_SET_FACE_FOCUS`, command `0x3602`, receiver `0x02`). The four-byte focus-priority value is at frame payload offset 16:
+
+| Frame | Relative time | Correlated action | Sequence | Payload |
+|---:|---:|---|---:|---|
+| 31244 | 6.051968s | Initial/baseline Global command candidate | `0x22` | `bf fb 01 00` |
+| 78444 | 15.217506s | Global → Face | `0x23` | `be 07 00 00` |
+| 119472 | 23.167025s | Face → Global | `0x24` | `bf fb 01 00` |
+| 153688 | 29.833731s | Global → Face | `0x25` | `be 07 00 00` |
+
+The 15.217s, 23.167s, and 29.833s writes occur shortly before their corresponding user checkpoints, consistent with the user action preceding the checkpoint marker. The first write at 6.052s occurs well after the baseline marker and before the first transition; it is consistent with the initial Global state but is not independently tied to a specific click. The three subsequent correlated transitions establish the working payload assignment:
+
+- **Global:** `bf fb 01 00`
+- **Face:** `be 07 00 00`
+
+This reverses the earlier app implementation's assignment. The previous mapping in the implementation-status document and app README is superseded by this controlled capture.
+
+### Missing final transition
+
+No focus-priority SET_CUR was found for the final Face → Global checkpoint at 39.067s. Inspection of all control transfers from 34s through 41s found only interface alternate-setting changes, periodic UVC GET requests, and a separate three-byte endpoint control request (`00 7d 00`). None is the 60-byte focus-priority command. The final UI transition therefore did not produce a focus command in this recording.
+
+The focus command submissions that were present had matching USB completions with status 0. This establishes successful host USB transfer completion only; it does not prove that the camera applied the priority. There is no reliable camera-side read-back for this setting.
+
+### App correction prompted by this capture
+
+The app's Global/Face payload mapping was corrected to the values above. The GTK selector was also changed to dispatch from the newly clicked active button instead of handling both buttons' `toggled` signals. A grouped ToggleButton pair emits state changes for both the deselected and selected segments; the old handler depended on signal ordering and could fail to send the intended command. The corrected click handler sends only for the active selected segment and restores the previous local selection if submission fails.
+
+These changes are committed on `test-app-v0.1` in commit `8fd0878acb2de0da444bdfb0ae9f6769d3073107`. A new hardware capture is still required to verify all five transitions, especially the previously missing final Face → Global command. Do not mark Global/Face as hardware-working until the camera's visible focus behavior is confirmed.
