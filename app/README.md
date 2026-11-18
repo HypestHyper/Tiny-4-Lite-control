@@ -91,8 +91,9 @@ selector `0x06` for the 60-byte status block.
   separate vendor command: Wide=0, Medium=5, Narrow=15. The generic
   V4L2 slider covers 0–100.
 - HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
-- Microphone controls use the 60-byte GET_CUR configuration block
-  on XU unit 2 / selector 0x06. Disable microphone is byte offset 2
+- Microphone controls use XU unit 2 / selector 0x06. Auto gain and
+  noise reduction use the 60-byte GET_CUR configuration block.
+  Disable microphone is byte offset 2 in its separate command payload
   (0=disabled, 1=enabled); the controlled OBSBOT Center sequence was
   On → Off → On, with SET_CUR prefixes `1c 01 00`, `1c 01 01`,
   `1c 01 00`. The camera restarted after each toggle. Auto gain is
