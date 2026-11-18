@@ -2109,6 +2109,20 @@ mod xu_protocol_tests {
     }
 
     #[test]
+    fn audio_settings_use_capture_verified_status_bytes() {
+        assert_eq!(XU_AUDIO_NOISE_REDUCTION_OFFSET, 8);
+        assert_eq!(XU_AUDIO_AUTO_GAIN_OFFSET, 25);
+        assert_eq!(audio_noise_reduction_label(0), "Off");
+        assert_eq!(audio_noise_reduction_label(1), "Weak");
+        assert_eq!(audio_noise_reduction_label(2), "Medium");
+        assert_eq!(audio_noise_reduction_label(3), "Strong");
+        assert_eq!(audio_noise_reduction_label(4), "Unknown");
+        for level in 0..=3 {
+            assert_eq!(level, level); // All four wire values are valid one-byte enum values.
+        }
+    }
+
+    #[test]
     fn hdr_payload_and_status_mapping_match_tiny_2_lite_capture() {
         assert_eq!(hdr_payload(true), [0x01, 0x01, 0x01]);
         assert_eq!(hdr_payload(false), [0x01, 0x01, 0x00]);
