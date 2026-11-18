@@ -9,3 +9,4 @@ license = "MIT"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 gtk = { package = "gtk4", version = "0.9" }
+gdk-pixbuf = "0.20"
