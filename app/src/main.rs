@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 #[derive(Clone, Debug)]
 struct Control {
@@ -329,7 +330,17 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
     frame
 }
 
-fn xu_send_frame(device: &str, sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
+// OBSBOT's frame sequence is a rolling transaction counter shared by
+// framed XU commands. The capture shows consecutive values 0x000f..0x0012
+// across Direction Flip and Dynamic Zoom commands, not fixed per-feature IDs.
+static XU_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+
+fn next_xu_sequence(counter: &AtomicU16) -> u16 {
+    counter.fetch_add(1, Ordering::Relaxed)
+}
+
+fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
+    let sequence = next_xu_sequence(&XU_SEQUENCE);
     let mut frame = obsbot_frame(sequence, function_group, command);
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
 }
@@ -605,12 +616,12 @@ fn add_sleep_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
 fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
     let group = [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00];
-    let (sequence, command) = if sport {
-        (0x0021, [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00])
+    let command = if sport {
+        [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00]
     } else {
-        (0x0020, [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00])
+        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
     };
-    xu_send_frame(device, sequence, group, command)
+    xu_send_frame(device, group, command)
 }
 
 fn set_gesture_zoom_ratio_payload_is_valid(ratio: f32) -> bool {
@@ -626,35 +637,28 @@ fn set_gesture_zoom_ratio(device: &str, ratio: f32) -> Result<(), String> {
     let group = [0x0a, 0x04, 0x44, 0x32, 0x04, 0x00];
     let mut command = [0u8; 6];
     command[2..6].copy_from_slice(&ratio.to_le_bytes());
-    xu_send_frame(device, 0x0069, group, command)
+    xu_send_frame(device, group, command)
 }
 
-fn gesture_command(group: [u8; 6], enabled: bool) -> (u16, [u8; 6]) {
-    // Dynamic Zoom Direction uses the same XU command group for both states,
-    // but its captured wire values are inverted relative to the other gestures.
-    // Captured Tiny 2 Lite transitions:
-    //   OFF: sequence 0x000f, payload 27 ff 01 00
-    //   ON:  sequence 0x0010, payload e6 3f 00 00
-    if group == [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] {
-        return if enabled {
-            (0x0010, [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00])
-        } else {
-            (0x000f, [0x27, 0xff, 0x01, 0x00, 0x00, 0x00])
-        };
-    }
-
-    if enabled {
-        (match group[3] { 0x30 => 0x0009, 0x31 => 0x000b, 0x33 if group[2] == 0x44 => 0x000d, _ => 0x000f },
-         [0x27, 0xff, 0x01, 0x00, 0x00, 0x00])
+fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
+    // Dynamic Zoom Direction is the exception: its captured ON/OFF payloads
+    // are inverted relative to the other gesture commands.
+    let wire_enabled = if group == [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] {
+        !enabled
     } else {
-        (match group[3] { 0x30 => 0x0008, 0x31 => 0x000a, 0x33 if group[2] == 0x44 => 0x000c, _ => 0x000e },
-         [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00])
+        enabled
+    };
+
+    if wire_enabled {
+        [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]
+    } else {
+        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
     }
 }
 
 fn set_gesture(device: &str, group: [u8; 6], enabled: bool) -> Result<(), String> {
-    let (sequence, command) = gesture_command(group, enabled);
-    xu_send_frame(device, sequence, group, command)
+    let command = gesture_command(group, enabled);
+    xu_send_frame(device, group, command)
 }
 
 fn ai_mode_label(status: &[u8; 60]) -> &'static str {
@@ -1444,17 +1448,18 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn dynamic_zoom_direction_frames_match_lite_capture() {
+    fn dynamic_zoom_direction_payload_matches_lite_capture() {
         let group = [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00];
-        let (off_sequence, off_command) = gesture_command(group, false);
-        let (on_sequence, on_command) = gesture_command(group, true);
-        let off = obsbot_frame(off_sequence, group, off_command);
-        let on = obsbot_frame(on_sequence, group, on_command);
+        assert_eq!(gesture_command(group, false), [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(gesture_command(group, true), [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]);
 
-        assert_eq!(&off[..18], hex("aa250f000c00da810a04c433010027ff0100").as_slice());
-        assert_eq!(&on[..18], hex("aa2510000c00eb240a04c4330100e63f0000").as_slice());
-        assert_eq!(gesture_command(group, false).0, 0x000f);
-        assert_eq!(gesture_command(group, true).0, 0x0010);
+        // The capture's sequence values advance across commands, including
+        // the separate Dynamic Zoom disable packet: 0x0f, 0x10, 0x11, 0x12.
+        let sequence = AtomicU16::new(0x000f);
+        assert_eq!(next_xu_sequence(&sequence), 0x000f);
+        assert_eq!(next_xu_sequence(&sequence), 0x0010);
+        assert_eq!(next_xu_sequence(&sequence), 0x0011);
+        assert_eq!(next_xu_sequence(&sequence), 0x0012);
     }
 
     #[test]
