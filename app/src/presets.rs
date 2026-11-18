@@ -153,8 +153,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 (None, _) => Err(format!("Unknown gesture setting '{name}'.")),
                 _ => Err(format!("Invalid value for gesture '{name}'.")),
             }
-        } else {
+        } else if key.starts_with("video:") {
             continue;
+        } else {
+            Err(format!("Unsupported preset setting '{key}'."))
         };
         match result {
             Ok(()) => applied += 1,
@@ -168,6 +170,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         preset.settings.get("video:frame_rate_milli"),
         preset.settings.get("video:pixel_format"),
     ];
+    let has_video_settings = preset.settings.keys().any(|key| key.starts_with("video:"));
+    if has_video_settings && video_keys.iter().any(Option::is_none) {
+        errors.push("video mode: preset is missing one or more capture-mode fields".into());
+    }
     if let [Some(width), Some(height), Some(rate), Some(format)] = video_keys {
         let mode = (|| Some(video::VideoMode {
             width: u32::try_from(*width).ok()?,
