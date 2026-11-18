@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 thread_local! {
     static APP_CONFIG: RefCell<config::AppConfig> = RefCell::new(config::AppConfig::default());
-    static PREVIEW_CONTEXT: RefCell<Option<ui::preview::PreviewContext>> = const { RefCell::new(None) };
 }
 
 fn update_config_checked(update: impl FnOnce(&mut config::AppConfig)) -> Result<(), String> {
@@ -36,24 +35,6 @@ fn update_config(update: impl FnOnce(&mut config::AppConfig)) {
 
 fn current_config() -> config::AppConfig {
     APP_CONFIG.with(|value| value.borrow().clone())
-}
-
-fn stop_preview() {
-    PREVIEW_CONTEXT.with(|context| {
-        if let Some(preview) = context.borrow().as_ref() {
-            preview.stop();
-        }
-    });
-}
-
-fn restart_preview(device: &str, mode: Option<video::VideoMode>) {
-    PREVIEW_CONTEXT.with(|context| {
-        let Some(preview) = context.borrow().as_ref().cloned() else { return; };
-        match mode {
-            Some(mode) => preview.start(device, &mode),
-            None => preview.unavailable("No readable video capture mode on this camera node."),
-        }
-    });
 }
 
 /// Restore the remembered host capture mode only when this camera still
@@ -84,7 +65,6 @@ fn apply_saved_video_mode(device: &str) -> Option<String> {
     }
     let current = video::current_mode(device);
     if current.as_ref() == Some(&mode) { return None; }
-    stop_preview();
     match video::set_mode(device, &mode) {
         Ok(()) => Some(format!(
             "Restored capture mode {} × {} · {} · {:.3} fps.",
@@ -1595,7 +1575,6 @@ fn build_ui(app: &gtk::Application) {
         }
     }
     if nodes.is_empty() {
-        restart_preview("", None);
         if usb_camera_present() {
             status.set_text("USB camera detected (3564:fef9), but no V4L2 node is available. Controls require the UVC driver; USB capture remains available in Capture.");
         } else {
