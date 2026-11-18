@@ -92,6 +92,11 @@ window.tiny4-window {{ background: @tiny_surface_dim; color: @tiny_on_surface; }
 .tiny4-root {{ padding: 12px; background: @tiny_surface_dim; color: @tiny_on_surface; }}
 .tiny4-root.compact-layout {{ padding: 6px; }}
 .content-page.compact-layout {{ padding: 6px; }}
+.compact-layout .category-sidebar {{ min-width: 0; }}
+.compact-layout .category-workspace {{ min-width: 0; }}
+.compact-layout .settings-page {{ padding: 2px; }}
+.compact-layout .control-row {{ min-height: 42px; padding: 2px 4px; }}
+.compact-layout .control-label {{ min-width: 92px; }}
 .compact-layout frame {{ padding: 6px; }}
 .compact-layout .app-title {{ font-size: 20px; }}
 .compact-layout button {{ padding-left: 12px; padding-right: 12px; }}
@@ -109,6 +114,25 @@ stacksidebar row:focus-visible {{ outline: 2px solid @tiny_primary; outline-offs
 .content-stack {{ background: transparent; }}
 .workspace-content {{ min-width: 0; }}
 .content-page {{ padding: 16px; color: @tiny_on_surface; }}
+.controls-toolbar {{ padding: 4px 8px 8px; }}
+.category-workspace {{ min-width: 0; }}
+.category-sidebar {{ min-width: 148px; padding: 6px 0; }}
+.category-sidebar row {{ min-height: 42px; border-radius: 16px; margin: 3px 0; padding: 4px 10px; color: @tiny_on_surface_variant; font-weight: 650; }}
+.category-sidebar row:selected {{ background: @tiny_selected; color: @tiny_selected_text; }}
+.category-sidebar row:hover {{ background: @tiny_surface_high; }}
+.category-switcher {{ margin: 2px 0 8px; }}
+.settings-stack {{ background: transparent; }}
+.settings-page {{ min-width: 0; }}
+.section-intro {{ padding: 8px 4px 12px; }}
+.settings-section-list {{ min-width: 0; }}
+.control-card {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.18); border-radius: 22px; padding: 10px; }}
+.control-card > label {{ font-size: 14px; font-weight: 700; }}
+.control-row {{ min-height: 48px; padding: 4px 8px; border-radius: 14px; }}
+.control-row:hover {{ background: alpha(@tiny_surface_high, 0.65); }}
+.control-label {{ font-size: 13px; font-weight: 600; text-transform: capitalize; }}
+.control-reset {{ min-height: 32px; padding: 3px 12px; border-radius: 14px; font-size: 11px; }}
+.availability-note {{ font-size: 11px; padding: 2px 8px 6px; }}
+.device-caption {{ font-size: 11px; }}
 .preview-panel {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.22); border-radius: 28px; padding: 6px; }}
 .preview-panel > border {{ border-radius: 24px; }}
 .preview-heading {{ min-height: 28px; }}
