@@ -148,10 +148,15 @@ not an independent gesture: it modifies the direction of the Dynamic
 Zoom gesture, so the two settings work together. Direction Flip does
 not change the Zoom/L-pose gesture or Global/Face autofocus priority.
 
-The selector 0x06 status block does not provide reliable per-gesture
-read-back. A successful ioctl confirms host-side request completion,
-not that the camera applied the feature. Keep the controls separate and
-preserve this evidence distinction.
+The selector 0x06 status block does not provide reliable read-back for
+Target Selection, Dynamic Zoom, or Direction Flip. In the app these
+controls therefore start as **Unknown** unless a previously successful
+local setting was saved; the first click from Unknown sends Enable.
+Zoom/L-pose has a status-byte read-back. The Unknown label means the app
+cannot determine the initial state, not that the camera reports an error.
+A successful ioctl confirms host-side request completion, not that the
+camera applied the feature. Keep the controls separate and preserve this
+evidence distinction.
 
 ### 4.7 Presets
 
@@ -214,7 +219,7 @@ has undefined effect in the V4L2 API.
 - These payloads replace the earlier unsupported `i32le(0/1)` assumption. The assignment is inferred from the paired transitions around the 15.85s and 25.17s checkpoints; later checkpoints are not cleanly correlated. Hardware confirmation remains pending.
 - Transport: framed V3 command on XU unit 2, selector `0x02`.
 - This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a different selector `0x06` tag `0x03` setting and status byte `0x07`.
-- The app enables Global / Face controls while autofocus is on and sends the captured Tiny 2 Lite payloads above. It tracks selection locally; no reliable camera-side read-back is implemented. Validate visible focus behavior on the Tiny 2 Lite before marking this path hardware-confirmed.
+- The app exposes Global / Face controls while autofocus is on and sends the capture-derived Tiny 2 Lite payloads above. The user has tested both options and reports that neither currently produces the expected focus behavior. Treat this path as **not working / unverified**. The payload-to-label assignment is inferred from imperfectly correlated checkpoints, and no reliable camera-side read-back is implemented. The UI's local selection or successful host-side submission is not proof that focus behavior changed.
 
 
 Expose the standard controls reported by V4L2, including auto/manual
