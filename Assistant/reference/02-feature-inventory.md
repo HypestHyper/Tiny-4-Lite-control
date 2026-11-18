@@ -184,13 +184,7 @@ operation on hardware.
 
 ### 4.8 Field of view (FOV)
 
-**Status:** Wide, Normal, and Narrow visually confirmed working by the user.
-
--   Wide: 86°
--   Normal: 78°
--   Narrow: 65°
-
-**Compatibility limitation:** FOV changes do not work with certain AI tracking modes. The specific incompatible modes have not yet been identified, so do not imply that FOV is available in every tracking mode. If a change is ignored, switch tracking off or to another mode and retry. The user has visually confirmed Wide, Normal, and Narrow. The Narrow status-byte read-back mapping remains unverified; visual operation is confirmed.
+FOV is implemented as the three `zoom_absolute` presets documented in Section 4.3. There is no separate FOV protocol command or independent FOV state in the app.
 
 ### 4.9 Exposure, focus, white balance and image settings
 
