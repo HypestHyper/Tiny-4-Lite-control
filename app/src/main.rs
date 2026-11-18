@@ -434,8 +434,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     intensity_on.append(Some("3"), "3");
     intensity_on.set_active_id(Some("1"));
     if let Ok(current) = xu_status(device) {
-        if current[0x20] <= 3 {
-            intensity_on.set_active_id(Some(&(current[0x20] + 1).to_string()));
+        if (1..=3).contains(&current[0x20]) {
+            intensity_on.set_active_id(Some(&current[0x20].to_string()));
         }
     }
     intensity_on.set_hexpand(true);
@@ -476,8 +476,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, status: &gtk::Label) 
     led_brightness.add_css_class("dim-label");
     if let Ok(current) = xu_status(device) {
         let level = current[0x20];
-        let state = match level { 0 => "Level 1", 1 => "Level 2", 2 => "Level 3", 3 => "Level 4", _ => "Unknown level" };
-        led_brightness.set_text(&format!("LED brightness: {state} (raw 0x21 = {level}); power is controlled separately"));
+        let state = match level { 0 => "Off", 1 => "Level 1", 2 => "Level 2", 3 => "Level 3", _ => "Unknown" };
+        led_brightness.set_text(&format!("LED status: {state} (status 0x20 = {level})"));
     }
     layout.append(&led_brightness);
 
