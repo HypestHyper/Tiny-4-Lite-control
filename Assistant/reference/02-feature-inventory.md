@@ -239,6 +239,32 @@ only in the XU auto-exposure path and silently no-ops when the V4L2
 exposure route is used. Treat Face AE as experimental, not a reliable
 basic feature.
 
+**2026-11-18 Tiny 2 Lite Linux capture: Auto Exposure Face / Global**
+
+The controlled capture contains five 60-byte `UVC_SET_CUR` writes to
+XU unit 2, selector `0x06`, with these payload prefixes:
+
+| Frame | Payload | Correlated selection |
+|---:|---|---|
+| 80075 | `03 01 00` | Face |
+| 146705 | `03 01 01` | Global |
+| 219369 | `03 01 00` | Face |
+| 297559 | `03 01 01` | Global |
+| 300515 | `03 01 00` | Face |
+
+The remaining 57 bytes are zero. Repeated transitions support the
+mapping **Face = 0** and **Global = 1** in the third payload byte.
+The final checkpoint was labelled Global, but the final actual write
+was Face; preserve this mismatch as a checkpoint discrepancy. The app
+implements the setting only while V4L2 `auto_exposure` is Auto and
+keeps it separate from the framed `CAM_SET_FACE_FOCUS` autofocus
+priority command. No reliable GET_CUR read-back mapping has been
+established, so the app remembers only the last successful local write.
+
+Exposure compensation is a separate slider reported by OBSBOT Center
+as −3 through +3. Its XU payload and encoding are not yet known;
+do not infer them from the Face/Global command.
+
 See [2026-11-17 capture findings](06-2026-11-17-capture-findings.md)
 for raw request details and the accompanying zoom correlation.
 
