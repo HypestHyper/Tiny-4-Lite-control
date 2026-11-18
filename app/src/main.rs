@@ -491,13 +491,6 @@ fn microphone_disabled_wire_value(disabled: bool) -> u8 {
     if disabled { 0 } else { 1 }
 }
 
-fn microphone_disabled_from_status(data: &[u8; 60]) -> Option<bool> {
-    match data[XU_AUDIO_MICROPHONE_DISABLED_OFFSET] {
-        0 => Some(true),
-        1 => Some(false),
-        _ => None,
-    }
-}
 
 fn audio_noise_reduction_label(level: u8) -> &'static str {
     match level {
@@ -525,11 +518,11 @@ fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), Stri
 }
 
 fn set_microphone_disabled(device: &str, disabled: bool) -> Result<(), String> {
-    set_xu_status_byte(
-        device,
-        XU_AUDIO_MICROPHONE_DISABLED_OFFSET,
-        microphone_disabled_wire_value(disabled),
-    )?;
+    // Unlike the GET_CUR status block, this captured command has its own
+    // fixed 60-byte payload. Its first three bytes are 1c 01 <state>.
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x1c, 0x01, microphone_disabled_wire_value(disabled)]);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_microphone_disabled = Some(disabled));
     Ok(())
 }
@@ -565,15 +558,12 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     microphone_disabled_label.set_hexpand(true);
     let microphone_disabled = gtk::Switch::new();
     microphone_disabled.set_valign(gtk::Align::Center);
-    let camera_microphone_disabled = xu_status(device).ok()
-        .and_then(|data| microphone_disabled_from_status(&data));
-    let initial_microphone_disabled = camera_microphone_disabled
-        .or(current_config().audio_microphone_disabled);
-    if let Some(disabled) = initial_microphone_disabled {
-        microphone_disabled.set_active(disabled);
+    let initial_microphone_disabled = current_config().audio_microphone_disabled;
+    microphone_disabled.set_active(initial_microphone_disabled.unwrap_or(false));
+    if initial_microphone_disabled.is_none() {
+        microphone_disabled.set_tooltip_text(Some("No camera read-back is available; the switch starts visually Off until you change it."));
     } else {
-        microphone_disabled.set_sensitive(false);
-        microphone_disabled.set_tooltip_text(Some("Microphone disable state could not be read from the camera."));
+        microphone_disabled.set_tooltip_text(Some("Shows the last successfully submitted state; camera read-back is not established."));
     }
     let microphone_device = device.to_string();
     let microphone_status = status.clone();
@@ -2181,12 +2171,6 @@ mod xu_protocol_tests {
         assert_eq!(microphone_disabled_wire_value(false), 0x01);
 
         let mut status = [0u8; 60];
-        status[2] = 0x00;
-        assert_eq!(microphone_disabled_from_status(&status), Some(true));
-        status[2] = 0x01;
-        assert_eq!(microphone_disabled_from_status(&status), Some(false));
-        status[2] = 0xff;
-        assert_eq!(microphone_disabled_from_status(&status), None);
     }
 
     #[test]
