@@ -74,7 +74,22 @@ The application is a Rust + GTK4 test bench. Current source of truth:
 
 - Auto Exposure Face / Global priority is implemented as a separate grouped control, shown only while the V4L2 `auto_exposure` menu is set to Auto (value 0). It writes a 60-byte `UVC_SET_CUR` to XU unit 2 / selector `0x06`: Face = `03 01 00`, Global = `03 01 01`, with the remaining 57 bytes zero. The selected value is persisted locally but is not replayed on startup. No reliable camera read-back has been established; the UI shows the last successfully submitted selection, not confirmed device state. This control is unrelated to autofocus priority and must remain separate.
 - The 2026-11-18 Linux capture contains five selector `0x06` writes: frames 80075 (`03 01 00`), 146705 (`03 01 01`), 219369 (`03 01 00`), 297559 (`03 01 01`), and 300515 (`03 01 00`). These repeated transitions support Face = 0 and Global = 1. The final checkpoint was labelled Global, but the last actual write is Face; retain that checkpoint discrepancy rather than changing the byte mapping to fit the label.
-- Exposure compensation (−3 to +3) is not yet implemented. Its selector/tag and encoding are pending a separate controlled capture.
+- Exposure compensation is implemented as a UVC Processing Unit
+  control, separate from V4L2 controls and the OBSBOT Extension Unit.
+  The camera descriptor identifies Processing Unit entity 3; selector 1
+  is Backlight Compensation. The controlled 2026-11-18 Linux capture
+  mapped all 19 OBSBOT Center positions to consecutive 16-bit
+  little-endian values: −3.0 = 1 (01 00), −2.7 = 2, −2.3 = 3,
+  −2.0 = 4, −1.7 = 5, −1.3 = 6, −1.0 = 7, −0.7 = 8, −0.3 = 9,
+  0.0 = 10 (0a 00), +0.3 = 11, +0.7 = 12, +1.0 = 13,
+  +1.3 = 14, +1.7 = 15, +2.0 = 16, +2.3 = 17, +2.7 = 18,
+  +3.0 = 19 (13 00). The request is host-to-device class/interface
+  SET_CUR (bmRequestType 0x21, bRequest 0x01, wValue 0x0100,
+  wIndex 0x0300, wLength 2). In the UVC ioctl API this is unit 3,
+  selector 1, SET_CUR, with a two-byte unsigned little-endian value.
+  The UI exposes 19 positions only while V4L2 Auto Exposure is Auto,
+  reads the current position with GET_CUR when available, and persists
+  the last successful selection. This is not a V4L2 exposure-bias control.
 - Zoom and FOV now share one standard V4L2 path. The Tiny 2 Lite reports
   `zoom_absolute` from 0 to 100; the user confirmed smooth adjustment
   and preset values Wide=0 (1.00×), Medium=5 (1.15×), Narrow=15
