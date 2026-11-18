@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub tracking_speed: Option<String>,
     pub focus_mode: Option<String>,
     pub auto_exposure_mode: Option<String>,
+    /// OBSBOT exposure compensation slider position, 0..=18 (-3.0..=+3.0).
+    pub exposure_compensation_position: Option<u8>,
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
@@ -81,6 +83,7 @@ impl Default for AppConfig {
             tracking_speed: None,
             focus_mode: None,
             auto_exposure_mode: None,
+            exposure_compensation_position: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
@@ -94,6 +97,7 @@ impl Default for AppConfig {
                 "v4l2:focus_automatic_continuous".into(),
                 "obsbot:focus_mode".into(),
                 "obsbot:auto_exposure_mode".into(),
+                "obsbot:exposure_compensation".into(),
                 "obsbot:ai_tracking_mode".into(),
                 "obsbot:led_brightness".into(),
             ],
@@ -125,6 +129,9 @@ pub fn load() -> Result<AppConfig, String> {
                 return Err(format!("{} contains more than 10 camera presets; edit the file before opening it.", path.display()));
             }
             config.joystick_sensitivity_percent = config.joystick_sensitivity_percent.clamp(10, 200);
+            if config.exposure_compensation_position.is_some_and(|position| position > 18) {
+                config.exposure_compensation_position = None;
+            }
             config.service.auto_sleep_timeout_minutes = config.service.auto_sleep_timeout_minutes.clamp(1, 1440);
             if config.gesture_zoom_ratio.is_some_and(|ratio| !ratio.is_finite() || !(1.0..=4.0).contains(&ratio)) {
                 config.gesture_zoom_ratio = None;
@@ -193,6 +200,7 @@ mod tests {
         assert!(config.v4l2_controls.is_empty());
         assert!(config.hdr_enabled.is_none());
         assert!(config.auto_exposure_mode.is_none());
+        assert!(config.exposure_compensation_position.is_none());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
         assert!(!config.compact_mode);
@@ -220,6 +228,7 @@ mod tests {
         config.tracking_speed = Some("sport".into());
         config.focus_mode = Some("face".into());
         config.auto_exposure_mode = Some("global".into());
+        config.exposure_compensation_position = Some(18);
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
         config.joystick_sensitivity_percent = 135;
@@ -247,6 +256,7 @@ mod tests {
         assert_eq!(decoded.tracking_speed.as_deref(), Some("sport"));
         assert_eq!(decoded.focus_mode.as_deref(), Some("face"));
         assert_eq!(decoded.auto_exposure_mode.as_deref(), Some("global"));
+        assert_eq!(decoded.exposure_compensation_position, Some(18));
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
         assert_eq!(decoded.joystick_sensitivity_percent, 135);
