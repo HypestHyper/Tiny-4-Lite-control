@@ -13,6 +13,7 @@ fn refresh(combo: &gtk::ComboBoxText) {
 
 pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Camera presets"));
+    crate::ui::layout::mark_compact_item(frame.upcast_ref(), "camera:presets");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
     layout.set_margin_top(8);
     layout.set_margin_bottom(8);
