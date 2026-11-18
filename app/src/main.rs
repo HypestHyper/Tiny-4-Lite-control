@@ -1433,7 +1433,7 @@ fn build_ui(app: &gtk::Application) {
 
     let preview_picture = gtk::Picture::new();
     preview_picture.set_can_shrink(true);
-    preview_picture.set_content_fit(gtk::ContentFit::Contain);
+    preview_picture.set_keep_aspect_ratio(true);
     preview_picture.set_hexpand(true);
     preview_picture.set_vexpand(true);
     preview_picture.set_size_request(320, 160);
