@@ -1330,8 +1330,14 @@ fn build_ui(app: &gtk::Application) {
     ui::design::apply_theme(&theme_provider, initial_theme);
 
     let window = gtk::ApplicationWindow::builder().application(app)
-        .title("Tiny 2 Lite Control").default_width(960).default_height(720).build();
-    window.set_size_request(620, 500);
+        .title("Tiny 2 Lite Control")
+        .default_width(if loaded_config.compact_mode { 420 } else { 960 })
+        .default_height(if loaded_config.compact_mode { 760 } else { 720 })
+        .build();
+    window.set_size_request(
+        if loaded_config.compact_mode { 340 } else { 620 },
+        if loaded_config.compact_mode { 480 } else { 500 },
+    );
     window.add_css_class("tiny4-window");
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
