@@ -121,9 +121,9 @@ Implemented XU operations:
 - Read AI status and decode the tracking mode from offsets `0x18` and `0x1c`.
 - Read the tracking-speed status byte at `0x24`.
 - Set HDR through selector `0x06` using the captured 60-byte payload prefix. HDR On is `01 01 01`; HDR Off is `01 01 00`. Status byte `0x06` reports `0x01` for On and `0x00` for Off. The GTK switch initializes from this status byte and persists the last successfully submitted setting as a fallback when status is unavailable.
-- Microphone controls use XU unit 2 / selector 0x06 and the
-  60-byte GET_CUR configuration block:
-  - Disable microphone: byte offset 2, 0 = disabled, 1 = enabled.
+- Microphone controls use XU unit 2 / selector 0x06:
+  - Disable microphone: byte offset 2 of its separate fixed 60-byte
+    command payload, 0 = disabled, 1 = enabled.
     The controlled 2026-11-18 capture recorded Disable microphone
     On → Off → On, with SET_CUR prefixes `1c 01 00`, `1c 01 01`,
     `1c 01 00`. The camera restarted after each toggle in OBSBOT
@@ -133,9 +133,11 @@ Implemented XU operations:
     payload with prefix `1c 01 <state>` and zero-filled remaining bytes,
     not the GET_CUR status block. No matching read-back is established;
     the UI displays the last successfully submitted local state only.
-  - Auto gain: byte offset 25, Off = 0, On = 1. The capture sequence
+  - Auto gain: byte offset 25 in the GET_CUR configuration block,
+    Off = 0, On = 1. The capture sequence
     was Off → On → Off → On, with matching read-backs.
-  - Noise reduction: byte offset 8, Off = 0, Weak = 1, Medium = 2,
+  - Noise reduction: byte offset 8 in the GET_CUR configuration block,
+    Off = 0, Weak = 1, Medium = 2,
     Strong = 3. All four levels were captured and read back.
   Auto gain and noise reduction perform GET_CUR, modify only their
   respective status-block byte, then SET_CUR the complete block,
