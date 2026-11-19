@@ -34,9 +34,10 @@ pub fn disable_scroll_wheel_controls(widget: &gtk::Widget) {
         && (widget.is::<gtk::Scale>() || widget.is::<gtk::ComboBox>())
     {
         let controller = gtk::EventControllerScroll::new(
-            gtk::EventControllerScrollFlags::VERTICAL
-                | gtk::EventControllerScrollFlags::DISCRETE,
+            gtk::EventControllerScrollFlags::VERTICAL,
         );
+        // Capture before GtkScale / GtkComboBox can consume wheel input.
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         controller.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
         widget.add_controller(controller);
         widget.add_css_class("scroll-wheel-locked");
