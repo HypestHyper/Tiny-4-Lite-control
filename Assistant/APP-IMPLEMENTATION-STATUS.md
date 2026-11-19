@@ -296,7 +296,7 @@ Use the capture workflow and template linked from the [tracing documentation on 
 ## Mirror image (experimental implementation)
 
 A controlled Linux OBSBOT Center capture on 2026-11-19 identified three XU unit 2 /
-selector 0x02 SET_CUR writes (60-byte payloads). Mirror ON appeared twice and
+selector 0x06 SET_CUR writes (60-byte payloads). Mirror ON appeared twice and
 OFF once. All three payloads were zero-filled except the first three bytes:
 `14 01 01` for ON and `14 01 00` for OFF. The repeated ON command matched
 exactly. This supports a simple payload builder with byte 2 representing the
