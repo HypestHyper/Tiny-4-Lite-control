@@ -964,7 +964,11 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     if let Some(distance) = initial_radio_distance {
         radio_distance.set_active_id(Some(&distance.to_string()));
     } else {
-        radio_distance.set_tooltip_text(Some("Camera read-back is unavailable. Choose a value to submit it; the last successful selection is saved locally."));
+        // Make the unknown state explicit without silently choosing a real
+        // radio range. The changed handler ignores this non-numeric sentinel.
+        radio_distance.append(Some("unknown"), "Unknown");
+        radio_distance.set_active_id(Some("unknown"));
+        radio_distance.set_tooltip_text(Some("Camera read-back is unavailable. Choose Close, Standard, or Far to submit a value; the last successful selection is saved locally."));
     }
     let radio_device = device.to_string();
     let radio_status = status.clone();
@@ -1970,11 +1974,11 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     device_info.set_cursor_visible(false);
     device_info.set_monospace(true);
     device_info.set_wrap_mode(gtk::WrapMode::WordChar);
-    device_info.set_size_request(-1, 105);
+    device_info.set_size_request(-1, 140);
     if let Ok(info) = usb_descriptor_info() { device_info.buffer().set_text(&info); }
     else { device_info.buffer().set_text("USB descriptor information unavailable until the camera is visible to Linux."); }
     let info_scroll = gtk::ScrolledWindow::new();
-    info_scroll.set_min_content_height(105);
+    info_scroll.set_min_content_height(140);
     info_scroll.set_child(Some(&device_info));
     page.append(&info_scroll);
 
