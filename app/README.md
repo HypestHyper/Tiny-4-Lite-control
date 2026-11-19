@@ -37,7 +37,7 @@ xvfb-run -a -s "-screen 0 1600x1200x24" \
   app/artifacts/headless-ui
 ```
 
-The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads screenshots for Auto mode, Manual mode, the lower Controls page, Capture, and Diagnostics. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
+The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads Auto/Manual screenshots at multiple scroll positions, a screenshot at the normal 900 × 680 window size, Capture, and Diagnostics. It also compares screenshots before and after wheel input over a slider and dropdown. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
 
 
 ### Device discovery and standard V4L2 controls
