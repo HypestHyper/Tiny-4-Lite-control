@@ -118,7 +118,7 @@ selector `0x06` for the 60-byte status block.
   or OBSBOT Center advances its internal sequence. Physical ON/OFF validation
   is still required.
 - Mirror image: experimental On/Off switch under Microphone processing.
-  It sends the exact captured 60-byte XU unit 2 / selector 0x02 payload:
+  It sends the exact captured 60-byte XU unit 2 / selector 0x06 payload:
   `14 01 01` for ON and `14 01 00` for OFF, followed by zeroes.
   The three controlled OBSBOT Center writes differed only at payload byte 2.
   The last successfully submitted state is saved locally; camera read-back is
