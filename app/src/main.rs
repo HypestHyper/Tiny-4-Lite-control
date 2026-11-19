@@ -2248,10 +2248,14 @@ fn build_ui(app: &gtk::Application) {
     ui::design::apply_theme(&theme_provider, initial_theme);
 
     let test_mode = ui_test_mode();
+    let test_width = std::env::var("TINY4LITE_UI_TEST_WIDTH")
+        .ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(1440);
+    let test_height = std::env::var("TINY4LITE_UI_TEST_HEIGHT")
+        .ok().and_then(|value| value.parse::<i32>().ok()).unwrap_or(1040);
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control")
-        .default_width(if test_mode { 1440 } else { 900 })
-        .default_height(if test_mode { 1040 } else { 680 })
+        .default_width(if test_mode { test_width } else { 900 })
+        .default_height(if test_mode { test_height } else { 680 })
         .build();
     window.set_size_request(620, 480);
     window.add_css_class("tiny4-window");
