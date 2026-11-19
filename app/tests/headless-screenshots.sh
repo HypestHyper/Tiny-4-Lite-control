@@ -55,7 +55,7 @@ capture_one() {
         sleep 1.5
         import -window "$window" "$OUT/$name.png"
         if [[ "$with_scroll" == "1" ]]; then
-            # Scroll the page over its empty right margin, not over a control.
+            # Scroll the page over its empty left gutter, not over a control.
             xdotool mousemove --window "$window" 30 930
             xdotool click --repeat 9 --delay 70 5
             sleep 0.5
