@@ -55,6 +55,9 @@ capture_one() {
             xdotool mousemove --window "$window" 1370 930
             xdotool click --repeat 9 --delay 70 5
             sleep 0.5
+            import -window "$window" "$OUT/${name%-top}-mid.png"
+            xdotool click --repeat 12 --delay 70 5
+            sleep 0.5
             import -window "$window" "$OUT/${name%-top}-bottom.png"
         fi
     )
@@ -62,7 +65,7 @@ capture_one() {
 }
 
 capture_one auto controls controls-auto-top 1
-capture_one manual controls controls-manual 0
+capture_one manual controls controls-manual-top 1
 capture_one auto capture capture-page 0
 capture_one auto diagnostics diagnostics-page 0
 
