@@ -73,6 +73,18 @@ The application is a Rust + GTK4 test bench. Current source of truth:
   optional restore-on-connect has not been implemented. No separately
   installed system daemon is planned.
 
+### 2026-11-20 device-specific V4L2 baseline
+
+The user's OBSBOT Tiny 2 Lite was queried directly on CachyOS with `uvcvideo` driver version 7.3.4. The complete observed control inventory, ranges, defaults/current values, USB/media topology, video formats, invalid values, and controlled dependency matrix are recorded in [reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md).
+
+The controlled tests confirmed:
+- `auto_exposure`: exposure time is active only in Manual mode; inactive in Auto and Aperture Priority.
+- `focus_automatic_continuous`: manual focus is active only when continuous autofocus is disabled.
+- `white_balance_automatic`: red balance, blue balance, and white-balance temperature are active only when automatic white balance is disabled.
+- The other listed controls did not acquire the V4L2 `inactive` flag in the tested states. This does not prove every control produces a visible effect.
+
+Two important driver anomalies were observed: `power_line_frequency` advertises default 3 despite valid menu values 0–2; `zoom_continuous` reports current value 245 despite its declared -100…100 range. The app must validate defaults and current values independently, avoid writing invalid values, and continue to query live metadata rather than hard-code this snapshot.
+
 ### Standard V4L2 control path
 
 - Lists controls and menu metadata from `v4l2-ctl --list-ctrls-menus`.
