@@ -126,7 +126,13 @@ data="$(mktemp -d)"
     sleep 0.3
     xdotool mousemove 1590 1180
     import -window "$window" "$OUT/wheel-lock-after-dropdown.png"
-    compare -metric AE -crop 1400x1040+0+0 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-diff.txt"
+    # The combo may gain a focus/hover background after a wheel event.
+    # Compare the page separately and compare only thresholded label pixels
+    # so a visual focus change cannot masquerade as a changed selection.
+    compare -metric AE -crop 1400x960+0+80 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-page-diff.txt"
+    convert "$OUT/wheel-lock-before.png" -crop 70x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-before.png"
+    convert "$OUT/wheel-lock-after-dropdown.png" -crop 70x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-after.png"
+    compare -metric AE "$OUT/wheel-theme-before.png" "$OUT/wheel-theme-after.png" null: >/dev/null 2>"$OUT/wheel-dropdown-value-diff.txt"
 )
 rm -rf "$config" "$cache" "$data"
 
