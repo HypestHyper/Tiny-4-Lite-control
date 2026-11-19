@@ -581,7 +581,7 @@ fn mirror_image_payload(enabled: bool) -> [u8; 60] {
 
 fn set_mirror_image(device: &str, enabled: bool) -> Result<(), String> {
     let mut data = mirror_image_payload(enabled);
-    xu_query(device, 0x02, UVC_SET_CUR, &mut data)?;
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.mirror_image_enabled = Some(enabled));
     Ok(())
 }
