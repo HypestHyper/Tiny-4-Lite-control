@@ -849,7 +849,7 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     layout.append(&mirror_row);
 
     let note = gtk::Label::new(Some(
-        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads verbatim; unknown sequence fields are not regenerated and camera read-back is not established."
+        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads; Mirror image sends captured 60-byte ON/OFF payloads through selector 0x06. Neither has reliable camera read-back; both remain experimental pending physical validation."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
