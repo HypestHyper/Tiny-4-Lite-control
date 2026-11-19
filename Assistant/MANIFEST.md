@@ -6,6 +6,10 @@
 - Eight topic notes under `reference/`, including the 2026-11-17 PTZ position read-back and firmware/FOV investigations.
 - Complete source preserved unchanged; topic files retain original section content/order.
 
+## Tiny 2 Lite V4L2 hardware reference
+
+- [2026-11-20 V4L2 inventory and dependency matrix](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md): device identity, nodes, USB/media topology, video/audio descriptors, complete reported V4L2 controls and values, invalid driver values, and experimentally confirmed mode dependencies.
+
 ## Current app handoff
 
 - [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md): current framework implementation, protocol details, gaps, and next investigation.
