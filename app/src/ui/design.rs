@@ -166,6 +166,7 @@ separator {{ background: alpha(@tiny_outline, 0.24); }}
 .tiny4-root {{ padding: 6px 8px; }}
 .content-page {{ padding: 8px; }}
 .app-header {{ min-height: 52px; }}
+.app-icon {{ color: @tiny_primary; margin-right: 8px; }}
 .device-row {{ padding: 8px 12px; border-radius: 18px; }}
 .status-chip {{ padding: 6px 10px; margin-bottom: 2px; }}
 .preview-panel {{ border-radius: 20px; padding: 4px; }}
