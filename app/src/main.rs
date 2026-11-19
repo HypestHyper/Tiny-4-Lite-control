@@ -261,7 +261,11 @@ fn parse_controls(text: &str) -> Vec<Control> {
         } else {
             let upper = control.max.max(control.min);
             control.default_value = control.default_value.clamp(control.min, upper);
-            control.value = control.value.clamp(control.min, upper);
+            if control.value < control.min || control.value > upper {
+                // Preserve the driver's raw value for diagnosis. The UI will
+                // clamp the thumb, disable writes, and explain the bad report.
+                control.disabled = true;
+            }
         }
     }
     controls
@@ -1251,7 +1255,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
         zoom_presets.append(&button);
     }
     zoom_layout.append(&zoom_presets);
-    let zoom_note = gtk::Label::new(Some("All zoom uses V4L2 zoom_absolute (0–100). The general slider below provides smooth adjustment; these buttons set common FOV positions. zoom_continuous and the separate vendor FOV command are not used."));
+    let zoom_note = gtk::Label::new(Some("Use V4L2 zoom_absolute (0–100) for smooth zoom and these common FOV positions. zoom_continuous is shown separately but disabled when the driver reports an out-of-range value; the separate vendor FOV command is not used."));
     zoom_note.set_wrap(true);
     zoom_note.set_xalign(0.0);
     zoom_note.add_css_class("dim-label");
@@ -2412,6 +2416,7 @@ fn build_ui(app: &gtk::Application) {
             status.set_text("Tiny 2 Lite not found. Connect it and press Refresh camera. Expected USB ID: 3564:fef9.");
         }
     }
+    ui::layout::disable_scroll_wheel_controls(root.upcast_ref());
     window.present();
 }
 
