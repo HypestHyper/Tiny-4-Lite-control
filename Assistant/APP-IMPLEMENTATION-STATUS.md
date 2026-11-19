@@ -85,6 +85,10 @@ The controlled tests confirmed:
 
 Two important driver anomalies were observed: `power_line_frequency` advertises default 3 despite valid menu values 0–2; `zoom_continuous` reports current value 245 despite its declared -100…100 range. The app must validate defaults and current values independently, avoid writing invalid values, and continue to query live metadata rather than hard-code this snapshot.
 
+### Capture-mode application and verification
+
+The Video capture controls enumerate discrete format/resolution/frame-rate combinations from the selected V4L2 node. Applying a mode now reads back both the active format (`VIDIOC_G_FMT`) and frame interval (`VIDIOC_G_PARM`) and only reports success when the driver retained the requested dimensions/format and a frame rate within 0.5 fps of the requested nominal rate. A driver fallback is reported with both requested and actual modes instead of being treated as success. The UI warns that other camera viewers can reclaim the previous mode; close OBS, CameraControls, and other stream consumers before changing capture modes. This verifies the mode at the time of the read-back; it does not prevent another process from changing it afterward. Hardware validation on the user's machine is still required.
+
 ### Standard V4L2 control path
 
 - Lists controls and menu metadata from `v4l2-ctl --list-ctrls-menus`.
