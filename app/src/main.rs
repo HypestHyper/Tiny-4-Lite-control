@@ -85,7 +85,76 @@ struct Control {
     value: i64, default_value: i64, disabled: bool, menu: Vec<(i64, String)>,
 }
 
+
+fn ui_test_mode() -> bool {
+    std::env::var("TINY4LITE_UI_TEST").is_ok_and(|value| value == "1")
+}
+
+fn mock_v4l2_output(option: &str) -> String {
+    let manual = std::env::var("TINY4LITE_UI_TEST_STATE").is_ok_and(|value| value == "manual");
+    let exposure_mode = if manual { 1 } else { 0 };
+    let awb = if manual { 0 } else { 1 };
+    let autofocus = if manual { 0 } else { 1 };
+    let dependent_flags = |inactive: bool| if inactive { " flags=inactive" } else { "" };
+    match option {
+        "--list-ctrls-menus" => format!(r#"brightness (int) : min=0 max=100 step=1 default=50 value=50
+contrast (int) : min=0 max=100 step=1 default=50 value=54
+saturation (int) : min=0 max=100 step=1 default=50 value=50
+hue (int) : min=0 max=100 step=1 default=50 value=50
+white_balance_automatic (bool) : default=1 value={awb}
+red_balance (int) : min=0 max=2048 step=1 default=1024 value=1043{}
+blue_balance (int) : min=0 max=2048 step=1 default=1024 value=1312{}
+gain (int) : min=1 max=64 step=1 default=1 value=1
+power_line_frequency (menu) : min=0 max=2 step=1 default=3 value=2
+	0: Disabled
+	1: 50 Hz
+	2: 60 Hz
+white_balance_temperature (int) : min=2000 max=10000 step=100 default=5000 value=3000{}
+sharpness (int) : min=0 max=100 step=1 default=50 value=50
+backlight_compensation (int) : min=0 max=18 step=1 default=9 value=18
+auto_exposure (menu) : min=0 max=3 step=1 default=0 value={exposure_mode}
+	0: Auto
+	1: Manual
+	3: Aperture Priority
+exposure_time_absolute (int) : min=1 max=2500 step=1 default=330 value=330{}
+pan_absolute (int) : min=-468000 max=468000 step=3600 default=0 value=-50400
+tilt_absolute (int) : min=-324000 max=324000 step=3600 default=0 value=-50400
+focus_absolute (int) : min=0 max=100 step=1 default=0 value=100{}
+focus_automatic_continuous (bool) : default=1 value={autofocus}
+zoom_absolute (int) : min=0 max=100 step=1 default=0 value=15
+zoom_continuous (int) : min=-100 max=100 step=1 default=100 value=245
+pan_speed (int) : min=-80 max=80 step=1 default=10 value=0
+tilt_speed (int) : min=-120 max=120 step=1 default=20 value=0
+"#,
+            dependent_flags(awb != 0),
+            dependent_flags(awb != 0),
+            dependent_flags(awb != 0),
+            dependent_flags(exposure_mode != 1),
+            dependent_flags(autofocus != 0),
+        ),
+        "--list-formats-ext" => String::from(
+            "ioctl: VIDIOC_ENUM_FMT\n Type: Video Capture\n [0]: 'MJPG' (Motion-JPEG, compressed)\n   Size: Discrete 1920x1080\n     Interval: Discrete 0.033s (30.000 fps)\n     Interval: Discrete 0.017s (60.000 fps)\n   Size: Discrete 1280x720\n     Interval: Discrete 0.033s (30.000 fps)\n [1]: 'YUYV' (YUYV 4:2:2)\n   Size: Discrete 640x480\n     Interval: Discrete 0.033s (30.000 fps)\n"
+        ),
+        "--get-fmt-video" => String::from("Format Video Capture:\n\tWidth/Height      : 1920/1080\n\tPixel Format      : 'MJPG'\n"),
+        "--get-parm" => String::from("Streaming Parameters Video Capture:\n\tFrames per second: 30.000 (30/1)\n"),
+        value if value.starts_with("--get-ctrl=") => {
+            let name = value.trim_start_matches("--get-ctrl=");
+            let current = match name {
+                "pan_absolute" | "tilt_absolute" | "pan_speed" | "tilt_speed" => 0,
+                "zoom_absolute" => 15,
+                "brightness" | "contrast" | "saturation" | "hue" | "sharpness" => 50,
+                "gain" => 1,
+                _ => 0,
+            };
+            format!("{name}: {current}")
+        }
+        value if value.starts_with("--set-ctrl=") || value.starts_with("--set-fmt-video=") || value.starts_with("--set-parm=") => String::new(),
+        _ => String::new(),
+    }
+}
+
 fn run_v4l2(device: &str, option: &str) -> Result<String, String> {
+    if ui_test_mode() { return Ok(mock_v4l2_output(option)); }
     let output = Command::new("v4l2-ctl").arg("-d").arg(device).arg(option).output()
         .map_err(|e| format!("Could not run v4l2-ctl: {e}"))?;
     if !output.status.success() {
@@ -119,6 +188,7 @@ fn usb_camera_present() -> bool {
 }
 
 fn discover_tiny4lite() -> Vec<String> {
+    if ui_test_mode() { return vec!["/dev/tiny4lite-headless-fixture".to_string()]; }
     let mut found = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/video4linux") else { return found; };
     for entry in entries.flatten() {
@@ -174,6 +244,25 @@ fn parse_controls(text: &str) -> Vec<Control> {
             disabled: flags.contains("inactive") || flags.contains("disabled") || flags.contains("read-only"),
             menu: Vec::new(),
         });
+    }
+    for control in &mut controls {
+        if control.kind.contains("menu") {
+            let valid = |value: i64| control.menu.iter().any(|(entry, _)| *entry == value);
+            if !valid(control.default_value) {
+                control.default_value = if valid(control.value) {
+                    control.value
+                } else {
+                    control.menu.first().map(|(value, _)| *value).unwrap_or(control.min)
+                };
+            }
+            if !valid(control.value) {
+                control.value = control.default_value;
+            }
+        } else {
+            let upper = control.max.max(control.min);
+            control.default_value = control.default_value.clamp(control.min, upper);
+            control.value = control.value.clamp(control.min, upper);
+        }
     }
     controls
 }
@@ -352,6 +441,19 @@ extern "C" {
 }
 
 fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    if ui_test_mode() {
+        if request == UVC_GET_CUR {
+            data.fill(0);
+            if selector == 0x06 && data.len() >= 0x25 {
+                data[0x21] = 1;
+            } else if selector == 0x08 {
+                let model = b"OBSBOT Tiny 2 Lite";
+                let count = model.len().min(data.len());
+                data[..count].copy_from_slice(&model[..count]);
+            }
+        }
+        return Ok(());
+    }
     use std::os::fd::AsRawFd;
     let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
         .map_err(|e| format!("Cannot open {device} for OBSBOT controls: {e}"))?;
@@ -368,6 +470,12 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
 }
 
 fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    if ui_test_mode() {
+        if request == UVC_GET_CUR && data.len() >= 2 {
+            data[..2].copy_from_slice(&10u16.to_le_bytes());
+        }
+        return Ok(());
+    }
     use std::os::fd::AsRawFd;
     let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
         .map_err(|e| format!("Cannot open {device} for UVC Processing Unit controls: {e}"))?;
@@ -391,6 +499,10 @@ const PAN_DISPLAY_LIMIT_DEGREES: f64 = 130.0;
 const TILT_DISPLAY_LIMIT_DEGREES: f64 = 90.0;
 
 fn camera_terminal_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    if ui_test_mode() {
+        if request == UVC_GET_CUR { data.fill(0); }
+        return Ok(());
+    }
     use std::os::fd::AsRawFd;
     let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
         .map_err(|e| format!("Cannot open {device} for UVC Camera Terminal read-back: {e}"))?;
@@ -1723,6 +1835,9 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
 
 fn usb_descriptor_info() -> Result<String, String> {
+    if ui_test_mode() {
+        return Ok("USB identity: 3564 / fef9\nManufacturer: OBSBOT (fixture)\nProduct: Tiny 2 Lite (headless test)\nUSB bcdDevice: simulated\nUSB bus/address: 0/0\n\nThis is a synthetic UI fixture. No camera is connected or controlled.".into());
+    }
     let entries = fs::read_dir("/sys/bus/usb/devices")
         .map_err(|e| format!("Could not enumerate USB devices: {e}"))?;
     for entry in entries.flatten() {
@@ -2092,15 +2207,16 @@ fn build_ui(app: &gtk::Application) {
     let initial_theme = ui::design::ThemeMode::from_name(&loaded_config.theme);
     ui::design::apply_theme(&theme_provider, initial_theme);
 
+    let test_mode = ui_test_mode();
     let window = gtk::ApplicationWindow::builder().application(app)
         .title("Tiny 2 Lite Control")
-        .default_width(900)
-        .default_height(680)
+        .default_width(if test_mode { 1440 } else { 900 })
+        .default_height(if test_mode { 1040 } else { 680 })
         .build();
     window.set_size_request(620, 480);
     window.add_css_class("tiny4-window");
 
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
     root.add_css_class("tiny4-root");
     root.set_margin_top(8);
     root.set_margin_bottom(8);
@@ -2163,7 +2279,7 @@ fn build_ui(app: &gtk::Application) {
 
     let controls_scroll = gtk::ScrolledWindow::builder().vexpand(true).hexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never).build();
-    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let controls_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     controls_box.add_css_class("content-page");
     controls_scroll.set_child(Some(&controls_box));
     stack.add_titled(&controls_scroll, Some("controls"), "Controls");
@@ -2184,6 +2300,12 @@ fn build_ui(app: &gtk::Application) {
         .hexpand(true).vexpand(true).build();
     diagnostics_scroll.set_child(Some(&diagnostics_page));
     stack.add_titled(&diagnostics_scroll, Some("diagnostics"), "Diagnostics");
+    if test_mode {
+        let page = std::env::var("TINY4LITE_UI_TEST_PAGE").unwrap_or_else(|_| "controls".into());
+        if matches!(page.as_str(), "controls" | "capture" | "diagnostics") {
+            stack.set_visible_child_name(&page);
+        }
+    }
 
     let switcher = gtk::StackSwitcher::new();
     switcher.set_stack(Some(&stack));
@@ -2271,6 +2393,15 @@ mod xu_protocol_tests {
         (0..s.len()).step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn invalid_driver_menu_default_is_replaced_by_a_supported_entry() {
+        let controls = parse_controls(
+            "power_line_frequency (menu) : min=0 max=2 step=1 default=3 value=2\n\t0: Disabled\n\t1: 50 Hz\n\t2: 60 Hz\n"
+        );
+        assert_eq!(controls[0].default_value, 2);
+        assert_eq!(controls[0].value, 2);
     }
 
     #[test]
