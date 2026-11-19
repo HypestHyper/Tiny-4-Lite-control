@@ -293,6 +293,25 @@ Next work: test host-initiated selector 0x02 GET_CUR polling during idle, manual
 
 Use the capture workflow and template linked from the [tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing). Important: that generic guide is HID-focused. Tiny 2 Lite controls are V4L2/UVC XU; reuse its evidence discipline, not HID-specific assumptions.
 
+## Mirror image (experimental implementation)
+
+A controlled Linux OBSBOT Center capture on 2026-11-19 identified three XU unit 2 /
+selector 0x02 SET_CUR writes (60-byte payloads). Mirror ON appeared twice and
+OFF once. All three payloads were zero-filled except the first three bytes:
+`14 01 01` for ON and `14 01 00` for OFF. The repeated ON command matched
+exactly. This supports a simple payload builder with byte 2 representing the
+observed state.
+
+The app now exposes an experimental **Mirror image** switch alongside the
+microphone processing controls. It sends the captured 60-byte payload and
+remembers the last successfully submitted state locally. No reliable camera
+read-back is established. The payload mapping is capture-supported, but
+physical ON/OFF behaviour from this app has not yet been validated. Do not
+describe a successful ioctl as proof that the camera applied the setting.
+
+See [reference/10-mirror-image-protocol.md](reference/10-mirror-image-protocol.md)
+for the packet frames, action windows, decoded request, and exact payloads.
+
 ## Pop filter (experimental implementation)
 
 A dedicated evidence record now lives at [reference/09-pop-filter-protocol-investigation.md](reference/09-pop-filter-protocol-investigation.md). It contains all three controlled captures, the nine 60-byte SET_CUR payloads, action-window timestamps, frame numbers, the capture procedure, exact TShark commands, and the next experiment.
