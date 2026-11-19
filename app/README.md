@@ -109,6 +109,14 @@ selector `0x06` for the 60-byte status block.
   has not been established. App-side hardware validation is pending;
   the restart mechanism and any additional restart-related commands
   remain uninvestigated.
+- Pop filter: experimental On/Off switch under Microphone processing.
+  It replays two exact captured 60-byte SET_CUR payloads through XU unit 2 /
+  selector 0x02 (OFF uses captured byte-2 value 0x0f; ON uses 0x10).
+  Unknown sequence/check fields are not regenerated. The last successfully
+  submitted state is saved locally; reliable camera read-back is not known.
+  Treat this as a prototype: fixed replay may be rejected after the camera
+  or OBSBOT Center advances its internal sequence. Physical ON/OFF validation
+  is still required.
 - Radio distance: Close, Standard, and Far. XU unit 2 / selector 0x06
   sends a separate fixed 60-byte command with prefix
   `1b 01 <value>` (Close=0, Standard=1, Far=2), zero-filled
