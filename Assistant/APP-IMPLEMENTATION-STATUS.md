@@ -19,6 +19,15 @@ This file records what is currently implemented in the repository and the protoc
 - Remaining validation: live portal theme-change updates, reduced-motion integration, accessibility/screen-reader checks, text scaling, and visual review under Adwaita/Breeze. The System theme is currently resolved when selected or when the app starts, not live-updated after an external desktop theme change.
 
 
+### Compact Controls page and headless visual validation
+
+- The Controls page now orders standard V4L2 controls by workflow: Exposure, White balance, Focus, Zoom, then Image. Gimbal movement and its position readout are grouped first; OBSBOT camera features, AI tracking, microphone processing, presets, video capture, and power remain distinct sections.
+- Mirror image is grouped under Image orientation, not Microphone processing.
+- Known dependent controls remain visible while unavailable, with the blocker named below the control: manual white balance requires Auto White Balance Off; shutter speed requires Manual exposure; manual focus requires Continuous Autofocus Off; Auto Exposure priority and compensation require Auto exposure.
+- Changing the relevant V4L2 mode rebuilds the page so dependent controls update immediately. Reported ranges, steps, and menu choices are retained. Invalid menu defaults are normalized to a supported choice; out-of-range numeric current values are displayed disabled with the driver-reported range.
+- Mouse-wheel input is blocked on dropdowns and sliders so page scrolling does not accidentally alter settings. Dragging and keyboard operation remain available.
+- A synthetic-device mode guarded by `TINY4LITE_UI_TEST=1` bypasses hardware discovery and every V4L2/UVC operation. GitHub Actions builds the GTK app, runs unit tests, launches it under Xvfb, and uploads Auto/Manual Controls, scrolled Controls, Capture, and Diagnostics screenshots. These are UI-only checks, not hardware validation.
+
 The application is a Rust + GTK4 test bench. Current source of truth:
 
 - `app/src/main.rs`
