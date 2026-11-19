@@ -35,8 +35,7 @@ jobs:
       - name: Render UI screenshots with a synthetic camera
         run: |
           mkdir -p app/artifacts/headless-ui
-          xvfb-run -a -s "-screen 0 1600x1200x24" \
-            bash app/tests/headless-screenshots.sh \
+          bash app/tests/headless-screenshots.sh \
             app/target/release/tiny4lite-control \
             app/artifacts/headless-ui
 
