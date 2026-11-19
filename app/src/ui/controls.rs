@@ -24,7 +24,7 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
         }
         _ => {}
     }
-    if control.disabled {
+    if control.disabled && blockers.is_empty() {
         blockers.push(if control.kind.contains("read-only") {
             "The V4L2 driver marks this control read-only".to_string()
         } else {
@@ -145,12 +145,6 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     heading.set_halign(gtk::Align::Start);
     container.append(&heading);
 
-    add_sleep_controls(container, device, status);
-    add_camera_settings(container, device, window, status);
-    add_ai_controls(container, device, status);
-    ui::presets::append(container, device, window, status);
-    ui::video::append(container, device, status);
-
     let pan_speed = controls.iter().find(|c| c.name == "pan_speed" && !c.disabled).cloned();
     let tilt_speed = controls.iter().find(|c| c.name == "tilt_speed" && !c.disabled).cloned();
     let joystick_enabled = match (pan_speed.as_ref(), tilt_speed.as_ref()) {
@@ -192,24 +186,29 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     // Keep the autofocus master switch above its dependent controls.
     if controls.iter().any(|c| c.name == "focus_automatic_continuous") {
         add_autofocus_control(container, device, window, status, autofocus_enabled);
-    }
-    if autofocus_enabled {
-        add_focus_mode_control(container, device, status);
+        add_focus_mode_control(container, device, status, autofocus_enabled);
     }
 
-    // Auto Exposure Face/Global is independent of autofocus priority.
-    // The V4L2 menu value 0 is Auto; hide this vendor option in Manual /
-    // Aperture Priority modes where automatic exposure is not active.
+    // Auto Exposure priority is independent of autofocus. Keep both controls
+    // visible, but disable them unless the V4L2 exposure mode is Auto (value 0).
     let auto_exposure_enabled = controls.iter()
         .find(|c| c.name == "auto_exposure")
         .is_some_and(|c| c.value == 0);
-    if auto_exposure_enabled {
-        add_auto_exposure_mode_control(container, device, status);
-        add_exposure_compensation_control(container, device, status);
+    if controls.iter().any(|c| c.name == "auto_exposure") {
+        add_auto_exposure_mode_control(container, device, status, auto_exposure_enabled);
+        add_exposure_compensation_control(container, device, status, auto_exposure_enabled);
     }
 
+    let mut ordered_controls = controls.clone();
+    ordered_controls.sort_by_key(|control| match v4l2_control_group(&control.name) {
+        "Exposure" => 0,
+        "White balance" => 1,
+        "Focus" => 2,
+        "Zoom" => 3,
+        _ => 4,
+    });
     let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
-    for control in controls.iter().cloned() {
+    for control in ordered_controls {
         if control.name == "focus_automatic_continuous" { continue; }
         if control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let blockers = control_blockers(&control, &controls);
@@ -295,6 +294,14 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             scale.set_digits(0);
             scale.set_hexpand(true);
             scale.set_sensitive(!unavailable);
+            scale.set_tooltip_text(Some(&format!(
+                "Allowed range: {} to {} · step {} · default {}",
+                control.min, control.max, control.step, control.default_value
+            )));
+            title.set_tooltip_text(Some(&format!(
+                "Range: {} to {} · step {} · default {}",
+                control.min, control.max, control.step, control.default_value
+            )));
             scale.add_mark(control.default_value as f64, gtk::PositionType::Bottom,
                 Some(&format!("Default: {}", control_display_value(&control.name, control.default_value))));
 
@@ -346,7 +353,12 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         ui::layout::mark_compact_item(row.upcast_ref(), &format!("v4l2:{}", control.name));
         group.append(&row);
         if unavailable {
-            let note = gtk::Label::new(Some(&format!("Unavailable: {}.", blockers.join("; "))));
+            let reason = if blockers.is_empty() {
+                "The camera driver reports this setting as unavailable.".to_string()
+            } else {
+                blockers.join("; ")
+            };
+            let note = gtk::Label::new(Some(&format!("Unavailable: {reason}.")));
             note.set_wrap(true);
             note.set_xalign(0.0);
             note.add_css_class("dim-label");
@@ -356,17 +368,62 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         }
         group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
+    // Keep related camera settings together. The standard controls above are
+    // ordered Exposure → White balance → Focus → Zoom → Image.
+    add_camera_settings(container, device, window, status);
+    add_ai_controls(container, device, status);
+    add_audio_controls(container, device, status);
+    ui::presets::append(container, device, window, status);
+    ui::video::append(container, device, status);
+    add_sleep_controls(container, device, status);
+
     status.set_text(&format!("Loaded {total} V4L2 controls from {device}. Sliders apply changes immediately."));
     // The test app intentionally exposes the complete control set. Ignore
     // any compact-mode preference persisted by older builds, otherwise it
     // silently hides controls with no remaining UI to restore them.
     ui::layout::apply_compact_visibility(container.upcast_ref(), false, &[]);
+    ui::layout::disable_scroll_wheel_controls(container.upcast_ref());
     ui::layout::restore_scroll_position(scroll_position);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::control_display_value;
+    use super::{control_blockers, control_display_value, v4l2_control_group};
+    use crate::Control;
+
+    fn control(name: &str, value: i64, disabled: bool) -> Control {
+        Control {
+            name: name.into(), kind: "int".into(), min: 0, max: 100, step: 1,
+            value, default_value: 50, disabled, menu: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn white_balance_manual_controls_explain_auto_white_balance_blocker() {
+        let controls = vec![control("white_balance_automatic", 1, false), control("red_balance", 1043, true)];
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Auto white balance is enabled"]);
+    }
+
+    #[test]
+    fn shutter_speed_requires_manual_exposure() {
+        let controls = vec![control("auto_exposure", 3, false), control("exposure_time_absolute", 330, true)];
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Exposure mode is not Manual"]);
+    }
+
+    #[test]
+    fn manual_focus_requires_autofocus_to_be_disabled() {
+        let controls = vec![control("focus_automatic_continuous", 1, false), control("focus_absolute", 100, true)];
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Autofocus is enabled"]);
+    }
+
+    #[test]
+    fn standard_control_groups_follow_camera_workflow() {
+        assert_eq!(v4l2_control_group("auto_exposure"), "Exposure");
+        assert_eq!(v4l2_control_group("white_balance_automatic"), "White balance");
+        assert_eq!(v4l2_control_group("focus_absolute"), "Focus");
+        assert_eq!(v4l2_control_group("zoom_absolute"), "Zoom");
+        assert_eq!(v4l2_control_group("brightness"), "Image");
+    }
 
     #[test]
     fn exposure_values_display_as_shutter_speeds() {
