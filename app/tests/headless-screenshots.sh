@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="\${1:-app/target/release/tiny4lite-control}"
-OUT="\${2:-app/artifacts/headless-ui}"
+APP="${1:-app/target/release/tiny4lite-control}"
+OUT="${2:-app/artifacts/headless-ui}"
 mkdir -p "$OUT"
 APP="$(realpath "$APP")"
 OUT="$(realpath "$OUT")"
@@ -11,7 +11,7 @@ capture_one() {
     local state="$1"
     local page="$2"
     local name="$3"
-    local with_scroll="\${4:-0}"
+    local with_scroll="${4:-0}"
     local config cache data
     config="$(mktemp -d)"
     cache="$(mktemp -d)"
@@ -55,7 +55,7 @@ capture_one() {
             xdotool mousemove --window "$window" 1370 930
             xdotool click --repeat 9 --delay 70 5
             sleep 0.5
-            import -window "$window" "$OUT/\${name%-top}-bottom.png"
+            import -window "$window" "$OUT/${name%-top}-bottom.png"
         fi
     )
     rm -rf "$config" "$cache" "$data"
