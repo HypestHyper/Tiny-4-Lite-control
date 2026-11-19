@@ -117,6 +117,12 @@ selector `0x06` for the 60-byte status block.
   Treat this as a prototype: fixed replay may be rejected after the camera
   or OBSBOT Center advances its internal sequence. Physical ON/OFF validation
   is still required.
+- Mirror image: experimental On/Off switch under Microphone processing.
+  It sends the exact captured 60-byte XU unit 2 / selector 0x02 payload:
+  `14 01 01` for ON and `14 01 00` for OFF, followed by zeroes.
+  The three controlled OBSBOT Center writes differed only at payload byte 2.
+  The last successfully submitted state is saved locally; camera read-back is
+  not established. Physical ON/OFF validation is still required.
 - Radio distance: Close, Standard, and Far. XU unit 2 / selector 0x06
   sends a separate fixed 60-byte command with prefix
   `1b 01 <value>` (Close=0, Standard=1, Far=2), zero-filled
@@ -270,8 +276,8 @@ revision as build-verified.
   and GTK toggle dispatch were corrected; a fresh capture and visible
   behavior test are still required. Reliable read-back for most gesture
   states, automatic firmware detection, live pan/tilt telemetry, HDR
-  setter verification, mirror support, and preset mutation remain
-  unimplemented or unverified.
+  setter verification, physical Mirror image validation, and preset mutation
+  remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
   capture evidence and explicit hardware validation.
 
