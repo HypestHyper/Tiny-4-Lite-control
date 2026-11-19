@@ -70,9 +70,9 @@ fn control_display_value(name: &str, value: i64) -> String {
 fn v4l2_control_group(name: &str) -> &'static str {
     match name {
         "white_balance_automatic" | "red_balance" | "blue_balance" | "white_balance_temperature" => "White balance",
-        "auto_exposure" | "exposure_time_absolute" | "power_line_frequency" => "Exposure",
+        "auto_exposure" | "exposure_time_absolute" | "power_line_frequency" | "gain" => "Exposure",
         "focus_absolute" => "Focus",
-        "zoom_absolute" => "Zoom",
+        "zoom_absolute" | "zoom_continuous" => "Zoom",
         _ => "Image",
     }
 }
@@ -210,7 +210,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         "Exposure" => 0,
         "White balance" => 1,
         "Focus" => 2,
-        "Zoom" => 3,
+        "Image" => 3,
         _ => 4,
     });
     let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
@@ -375,7 +375,8 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
     // Keep related camera settings together. The standard controls above are
-    // ordered Exposure → White balance → Focus → Zoom → Image.
+    // ordered Exposure → White balance → Focus → Image → Zoom. Zoom presets
+    // follow immediately after the V4L2 zoom controls in Camera settings.
     add_camera_settings(container, device, window, status);
     add_ai_controls(container, device, status);
     add_audio_controls(container, device, status);
