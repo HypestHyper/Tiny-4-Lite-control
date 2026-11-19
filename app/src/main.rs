@@ -2266,8 +2266,9 @@ fn build_ui(app: &gtk::Application) {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     header.add_css_class("adaptive-row");
     header.add_css_class("app-header");
-    let app_icon = gtk::Label::new(Some("videocam"));
-    app_icon.add_css_class("material-icon");
+    let app_icon = gtk::Image::from_icon_name("camera-video-symbolic");
+    app_icon.set_pixel_size(28);
+    app_icon.add_css_class("app-icon");
     app_icon.set_tooltip_text(Some("OBSBOT Tiny 2 Lite"));
     let title = gtk::Label::new(Some("OBSBOT Tiny 2 Lite"));
     title.add_css_class("app-title");
