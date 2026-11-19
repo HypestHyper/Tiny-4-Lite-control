@@ -105,6 +105,8 @@ The application is a Rust + GTK4 test bench. Current source of truth:
   joystick control and bounded absolute steps. The joystick sends
   neutral speed on release.
 
+- **Physical position read-back:** Windows DirectShow testing confirmed that `IAMCameraControl::Get()` for Pan and Tilt changes with actual hand-moved gimbal position. The camera descriptor advertises Camera Terminal PanTilt Absolute (entity 1, selector `0x0D`). The Linux app now issues read-only `UVCIOC_CTRL_QUERY` GET_CUR requests to that Camera Terminal control (8-byte response: signed little-endian pan and tilt), converts using the existing 3600 raw-units-per-degree app scale, and displays the result in a 4 Hz **Gimbal position** readout. Display values are clamped to the user-selected software limits: Pan [-130°, +130°], Tilt [-90°, +90°]. No movement writes are performed by this readout. Windows live feedback is confirmed; direct Linux ioctl success and raw-unit scale still require physical validation with USB owned by Linux. Do not claim Linux hardware validation until that test passes. See [reference/12-2026-11-19-directshow-pan-tilt-position-readback.md](reference/12-2026-11-19-directshow-pan-tilt-position-readback.md).
+
 ### Vendor UVC Extension Unit path
 
 The XU transport is separate from V4L2. Current code uses:

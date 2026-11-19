@@ -383,6 +383,45 @@ fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
     Ok(())
 }
 
+const UVC_CAMERA_TERMINAL_UNIT: u8 = 1;
+const UVC_CT_PANTILT_ABSOLUTE: u8 = 0x0d;
+// Existing V4L2 PTZ controls use 3600 raw units for a one-degree step.
+const PANTILT_RAW_UNITS_PER_DEGREE: f64 = 3600.0;
+const PAN_DISPLAY_LIMIT_DEGREES: f64 = 130.0;
+const TILT_DISPLAY_LIMIT_DEGREES: f64 = 90.0;
+
+fn camera_terminal_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
+        .map_err(|e| format!("Cannot open {device} for UVC Camera Terminal read-back: {e}"))?;
+    let mut query = UvcXuControlQuery {
+        unit: UVC_CAMERA_TERMINAL_UNIT, selector, query: request, _pad: 0,
+        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
+    };
+    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
+    if result < 0 {
+        return Err(format!("UVC Camera Terminal 1 selector 0x{selector:02x} request 0x{request:02x}: {}",
+            std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
+    let pan_raw = i32::from_le_bytes(data[0..4].try_into().expect("four-byte pan field"));
+    let tilt_raw = i32::from_le_bytes(data[4..8].try_into().expect("four-byte tilt field"));
+    (
+        (pan_raw as f64 / PANTILT_RAW_UNITS_PER_DEGREE).clamp(-PAN_DISPLAY_LIMIT_DEGREES, PAN_DISPLAY_LIMIT_DEGREES),
+        (tilt_raw as f64 / PANTILT_RAW_UNITS_PER_DEGREE).clamp(-TILT_DISPLAY_LIMIT_DEGREES, TILT_DISPLAY_LIMIT_DEGREES),
+    )
+}
+
+/// Read standard UVC Camera Terminal PanTilt Absolute using GET_CUR only.
+pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
+    let mut data = [0u8; 8];
+    camera_terminal_query(device, UVC_CT_PANTILT_ABSOLUTE, UVC_GET_CUR, &mut data)?;
+    Ok(decode_pan_tilt_absolute(&data))
+}
+
 fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], String> {
     if position > 18 {
         return Err("Exposure compensation position must be between 0 and 18.".into());
@@ -1976,6 +2015,7 @@ fn show_compact_settings(
         ("camera:video_mode", "Video format, resolution and frame rate"),
         ("camera:pan_tilt_joystick", "Pan / tilt joystick"),
         ("camera:gimbal_movement", "Pan / tilt step controls"),
+        ("camera:gimbal_position", "Gimbal position readout"),
         ("camera:power", "Camera sleep / wake"),
         ("camera:presets", "Camera presets"),
     ];
@@ -2231,6 +2271,17 @@ mod xu_protocol_tests {
         (0..s.len()).step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn pan_tilt_absolute_readback_decodes_signed_little_endian_and_clamps() {
+        let mut data = [0u8; 8];
+        data[0..4].copy_from_slice(&(-146_i32 * 3600).to_le_bytes());
+        data[4..8].copy_from_slice(&(91_i32 * 3600).to_le_bytes());
+        assert_eq!(decode_pan_tilt_absolute(&data), (-130.0, 90.0));
+        data[0..4].copy_from_slice(&(45_i32 * 3600).to_le_bytes());
+        data[4..8].copy_from_slice(&(-30_i32 * 3600).to_le_bytes());
+        assert_eq!(decode_pan_tilt_absolute(&data), (45.0, -30.0));
     }
 
     #[test]

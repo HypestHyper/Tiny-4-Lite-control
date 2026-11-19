@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use std::collections::HashMap;
+use std::time::Duration;
 use crate::*;
 
 fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
@@ -70,6 +71,66 @@ fn v4l2_control_group(name: &str) -> &'static str {
     }
 }
 
+fn add_gimbal_position_feedback(container: &gtk::Box, device: &str) {
+    let frame = gtk::Frame::new(Some("Gimbal position"));
+    ui::layout::mark_compact_item(frame.upcast_ref(), "camera:gimbal_position");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.add_css_class("adaptive-row");
+    row.set_margin_top(8);
+    row.set_margin_bottom(8);
+    row.set_margin_start(10);
+    row.set_margin_end(10);
+
+    let pan_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let pan_title = gtk::Label::new(Some("Pan"));
+    pan_title.add_css_class("dim-label");
+    let pan_value = gtk::Label::new(Some("Reading…"));
+    pan_value.add_css_class("title-2");
+    pan_value.set_xalign(0.0);
+    pan_column.append(&pan_title);
+    pan_column.append(&pan_value);
+
+    let tilt_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let tilt_title = gtk::Label::new(Some("Tilt"));
+    tilt_title.add_css_class("dim-label");
+    let tilt_value = gtk::Label::new(Some("Reading…"));
+    tilt_value.add_css_class("title-2");
+    tilt_value.set_xalign(0.0);
+    tilt_column.append(&tilt_title);
+    tilt_column.append(&tilt_value);
+
+    pan_column.set_hexpand(true);
+    tilt_column.set_hexpand(true);
+    row.append(&pan_column);
+    row.append(&tilt_column);
+    frame.set_child(Some(&row));
+    container.append(&frame);
+
+    let device = device.to_string();
+    let pan_weak = pan_value.downgrade();
+    let tilt_weak = tilt_value.downgrade();
+    gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
+        let (Some(pan_label), Some(tilt_label)) = (pan_weak.upgrade(), tilt_weak.upgrade()) else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        match get_gimbal_position(&device) {
+            Ok((pan, tilt)) => {
+                pan_label.set_text(&format!("{pan:+.1}°"));
+                tilt_label.set_text(&format!("{tilt:+.1}°"));
+                pan_label.set_tooltip_text(None);
+                tilt_label.set_tooltip_text(None);
+            }
+            Err(error) => {
+                pan_label.set_text("Unavailable");
+                tilt_label.set_text("Unavailable");
+                pan_label.set_tooltip_text(Some(&error));
+                tilt_label.set_tooltip_text(Some(&error));
+            }
+        }
+        gtk::glib::ControlFlow::Continue
+    });
+}
+
 pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk::ApplicationWindow, status: &gtk::Label) {
     let scroll_position = ui::layout::capture_scroll_position(container.upcast_ref());
     clear_box(container);
@@ -102,6 +163,9 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
 
     let has_pan = controls.iter().any(|c| c.name == "pan_absolute" && !c.disabled);
     let has_tilt = controls.iter().any(|c| c.name == "tilt_absolute" && !c.disabled);
+    if has_pan && has_tilt {
+        add_gimbal_position_feedback(container, device);
+    }
     if has_pan || has_tilt {
         let frame = gtk::Frame::new(Some("Gimbal movement"));
         ui::layout::mark_compact_item(frame.upcast_ref(), "camera:gimbal-movement");
