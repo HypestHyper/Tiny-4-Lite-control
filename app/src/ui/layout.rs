@@ -25,6 +25,30 @@ pub fn restore_scroll_position(position: Option<(gtk::Adjustment, f64)>) {
 }
 
 
+
+/// Prevent the mouse wheel from changing a slider or selection while the user
+/// is scrolling the surrounding settings page. Pointer dragging and keyboard
+/// navigation remain available.
+pub fn disable_scroll_wheel_controls(widget: &gtk::Widget) {
+    if !widget.has_css_class("scroll-wheel-locked")
+        && (widget.is::<gtk::Scale>() || widget.is::<gtk::ComboBox>())
+    {
+        let controller = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::VERTICAL
+                | gtk::EventControllerScrollFlags::DISCRETE,
+        );
+        controller.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
+        widget.add_controller(controller);
+        widget.add_css_class("scroll-wheel-locked");
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        disable_scroll_wheel_controls(&current);
+    }
+}
+
 /// Mark a control row or section as selectable in Compact mode.
 pub fn mark_compact_item(widget: &gtk::Widget, key: &str) {
     let class = format!("compact-item-{}", key.replace(':', "--").replace('_', "-"));
