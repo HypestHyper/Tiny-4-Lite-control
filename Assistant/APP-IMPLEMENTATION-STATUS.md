@@ -312,6 +312,14 @@ describe a successful ioctl as proof that the camera applied the setting.
 See [reference/10-mirror-image-protocol.md](reference/10-mirror-image-protocol.md)
 for the packet frames, action windows, decoded request, and exact payloads.
 
+## Selector 0x02 motion-associated SET_CUR stream (2026-11-19)
+
+A controlled usbmon3 capture (`obsbot-capture-1795096511-064087666.pcapng`) recorded repeated host-to-camera selector `0x02` SET_CUR requests with 60-byte `AA 25` payloads. Two little-endian float32 fields at payload offsets 20 and 24 change across the controlled pan/tilt action windows. A raw frame dump independently confirms the extraction (frame 2897: `30 8f ad be` at offset 20 = approximately -0.33898; `fc f2 58 40` at offset 24 = approximately 3.38983).
+
+These are **outgoing SET_CUR values**, not camera-to-host read-back. Their correlation with movement makes them useful protocol evidence, but it does not establish whether they represent current pose, target pose, motion estimates, or another coordinate pair. Do not label them confirmed pan/tilt telemetry or reuse the packets as a movement command. Keep this evidence separate from the earlier selector `0x02` GET_CUR position hypothesis.
+
+See [reference/11-2026-11-19-selector-02-motion-payloads.md](reference/11-2026-11-19-selector-02-motion-payloads.md) for the request tuple, payload layout, sample values, capture checkpoints, extraction commands, and next investigation.
+
 ## Pop filter (experimental implementation)
 
 A dedicated evidence record now lives at [reference/09-pop-filter-protocol-investigation.md](reference/09-pop-filter-protocol-investigation.md). It contains all three controlled captures, the nine 60-byte SET_CUR payloads, action-window timestamps, frame numbers, the capture procedure, exact TShark commands, and the next experiment.
