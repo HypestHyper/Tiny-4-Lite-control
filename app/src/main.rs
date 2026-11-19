@@ -305,10 +305,12 @@ fn joystick_axis(position: f64, min: i64, max: i64) -> i64 {
 fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &Control, status: &gtk::Label) {
     let frame = gtk::Frame::new(Some("Pan / tilt speed"));
     ui::layout::mark_compact_item(frame.upcast_ref(), "camera:pan-tilt-joystick");
-    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let layout = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let controls = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    controls.set_hexpand(true);
     let hint = gtk::Label::new(Some("Drag the stick to move. Release to stop."));
     hint.add_css_class("dim-label");
-    layout.append(&hint);
+    controls.append(&hint);
 
     let initial_sensitivity = current_config().joystick_sensitivity_percent.clamp(10, 200);
     let sensitivity = Rc::new(RefCell::new(initial_sensitivity as f64 / 100.0));
@@ -332,18 +334,20 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     sensitivity_row.append(&sensitivity_label);
     sensitivity_row.append(&sensitivity_scale);
     sensitivity_row.append(&sensitivity_value);
-    layout.append(&sensitivity_row);
+    controls.append(&sensitivity_row);
 
     let pad = gtk::DrawingArea::new();
-    pad.set_content_width(240);
-    pad.set_content_height(190);
-    pad.set_hexpand(true);
+    pad.set_content_width(160);
+    pad.set_content_height(150);
+    pad.set_size_request(160, 150);
+    pad.set_hexpand(false);
+    pad.set_valign(gtk::Align::Center);
     let position = Rc::new(RefCell::new((0.0_f64, 0.0_f64)));
     let draw_position = position.clone();
     pad.set_draw_func(move |_, cr, width, height| {
         let cx = width as f64 / 2.0;
         let cy = height as f64 / 2.0;
-        let radius = 70.0_f64.min(cx - 8.0).min(cy - 8.0);
+        let radius = 55.0_f64.min(cx - 8.0).min(cy - 8.0);
         let (x, y) = *draw_position.borrow();
         cr.set_line_width(2.0);
         cr.set_source_rgba(0.45, 0.48, 0.54, 0.55);
@@ -369,7 +373,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
     let status_drag = status.clone();
     let drag = gtk::GestureDrag::new();
     let drag_position = position.clone();
-    let drag_start = Rc::new(RefCell::new((120.0_f64, 95.0_f64)));
+    let drag_start = Rc::new(RefCell::new((80.0_f64, 75.0_f64)));
     let start_capture = drag_start.clone();
     drag.connect_drag_begin(move |_, x, y| {
         *start_capture.borrow_mut() = (x, y);
@@ -382,7 +386,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
         let height = pad_update.height() as f64;
         let cx = width / 2.0;
         let cy = height / 2.0;
-        let radius = 70.0_f64.min(cx - 8.0).min(cy - 8.0).max(1.0);
+        let radius = 55.0_f64.min(cx - 8.0).min(cy - 8.0).max(1.0);
         let (start_x, start_y) = *start_update.borrow();
         let sensitivity_factor = *sensitivity_drag.borrow();
         let x = (((start_x + dx - cx) / radius) * sensitivity_factor).clamp(-1.0, 1.0);
@@ -415,6 +419,7 @@ fn add_speed_joystick(container: &gtk::Box, device: &str, pan: &Control, tilt: &
             .unwrap_or_else(|e| format!("Could not stop gimbal: {e}")));
     });
     pad.add_controller(drag);
+    layout.append(&controls);
     layout.append(&pad);
     frame.set_child(Some(&layout));
     container.append(&frame);
