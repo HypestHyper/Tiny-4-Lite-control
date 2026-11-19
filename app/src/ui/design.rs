@@ -176,7 +176,10 @@ frame {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.20)
 frame > label {{ color: @tiny_on_surface; font-weight: 650; padding: 0 4px; }}
 .adaptive-row {{ min-height: 34px; }}
 .control-label {{ font-size: 13px; }}
-.availability-note {{ font-size: 11px; padding: 1px 6px 4px; }}
+.control-card {{ padding: 8px; border-radius: 18px; }}
+.control-row {{ min-height: 42px; padding: 2px 6px; }}
+.section-intro {{ padding: 5px 3px 7px; }}
+.availability-note {{ font-size: 11px; padding: 1px 6px 3px; }}
 button {{ min-height: 35px; padding: 4px 12px; font-size: 13px; }}
 button:disabled, scale:disabled, switch:disabled, checkbutton:disabled {{ opacity: 0.42; }}
 scale trough {{ min-height: 6px; border-radius: 99px; background: @tiny_surface_highest; }}
