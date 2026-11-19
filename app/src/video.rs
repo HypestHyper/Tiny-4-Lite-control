@@ -101,7 +101,7 @@ pub fn current_mode(device: &str) -> Option<VideoMode> {
 /// V4L2 setters may return success while the driver rounds or falls back to
 /// another mode, so callers must not treat the requested tuple as active
 /// until GET_FMT and G_PARM confirm it.
-pub fn set_mode(device: &str, mode: &VideoMode) -> Result<VideoMode, String> {
+pub fn set_mode(device: &str, mode: &VideoMode) -> Result<(), String> {
     if mode.width == 0 || mode.height == 0 || mode.frame_rate_milli == 0
         || mode.pixel_format.len() != 4 || !mode.pixel_format.is_ascii() {
         return Err("Invalid video capture mode.".into());
@@ -130,7 +130,7 @@ pub fn set_mode(device: &str, mode: &VideoMode) -> Result<VideoMode, String> {
             actual.frame_rate_milli as f64 / 1000.0
         ));
     }
-    Ok(actual)
+    Ok(())
 }
 
 #[cfg(test)]
