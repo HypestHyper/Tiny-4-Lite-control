@@ -31,8 +31,7 @@ The application has an explicit synthetic-device mode for visual tests. It is en
 Run the screenshot harness after building:
 
 ```sh
-xvfb-run -a -s "-screen 0 1600x1200x24" \
-  bash app/tests/headless-screenshots.sh \
+bash app/tests/headless-screenshots.sh \
   app/target/release/tiny4lite-control \
   app/artifacts/headless-ui
 ```
