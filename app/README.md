@@ -23,7 +23,7 @@ The mouse wheel is prevented from changing dropdown selections or slider values.
 
 ## Headless UI validation
 
-The application has an explicit synthetic-device mode for visual tests. It is enabled only by setting `TINY4LITE_UI_TEST=1`; this bypasses USB discovery and all V4L2/UVC I/O, and supplies fixture camera metadata instead. Optional variables select the fixture state and page:
+The application has an explicit synthetic-device mode for visual tests. It is enabled only by setting `TINY4LITE_UI_TEST=1`; this bypasses USB discovery and all V4L2/UVC I/O, disables USB capture so no TShark process can be started, and supplies fixture camera metadata instead. Optional variables select the fixture state and page:
 
 - `TINY4LITE_UI_TEST_STATE=auto|manual`
 - `TINY4LITE_UI_TEST_PAGE=controls|capture|diagnostics`
