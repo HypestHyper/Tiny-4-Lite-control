@@ -36,7 +36,7 @@ bash app/tests/headless-screenshots.sh \
   app/artifacts/headless-ui
 ```
 
-The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads Auto/Manual/Aperture Priority screenshots at multiple scroll positions, a screenshot at the normal 900 × 680 window size, Capture, and Diagnostics. It also compares screenshots before and after wheel input over a slider and dropdown. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
+The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads Auto/Manual/Aperture Priority screenshots at multiple scroll positions, a screenshot at the normal 900 × 680 window size, Capture, and Diagnostics. It also compares screenshots before and after wheel input over a slider and dropdown, then drags the enabled Auto exposure compensation slider and checks that its value label changes. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
 
 
 ### Device discovery and standard V4L2 controls
