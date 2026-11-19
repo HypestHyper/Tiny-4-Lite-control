@@ -1,8 +1,8 @@
 # Tiny 2 Lite Control
 
 A Rust/GTK4 Linux hardware-control test bench for the OBSBOT Tiny 2 Lite
-(USB VID:PID `3564:fef9`). This is a feature/protocol development app,
-not the final UI. UI redesign is deferred.
+(USB VID:PID `3564:fef9`). This is a feature/protocol development app with a compact test-bench interface,
+not the final application design.
 
 ## Current capabilities
 
