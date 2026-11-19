@@ -399,7 +399,7 @@ mod tests {
 
     fn control(name: &str, value: i64, disabled: bool) -> Control {
         Control {
-            name: name.into(), kind: "int".into(), min: 0, max: 100, step: 1,
+            name: name.into(), kind: "int".into(), min: 0, max: 10_000, step: 1,
             value, default_value: 50, disabled, menu: Vec::new(),
         }
     }
@@ -420,6 +420,17 @@ mod tests {
     fn manual_focus_requires_autofocus_to_be_disabled() {
         let controls = vec![control("focus_automatic_continuous", 1, false), control("focus_absolute", 100, true)];
         assert_eq!(control_blockers(&controls[1], &controls), vec!["Autofocus is enabled".to_string()]);
+    }
+
+    #[test]
+    fn out_of_range_driver_value_is_explained_and_blocked() {
+        let mut invalid = control("zoom_continuous", 245, true);
+        invalid.min = -100;
+        invalid.max = 100;
+        assert_eq!(
+            control_blockers(&invalid, &[invalid.clone()]),
+            vec!["The driver reports current value 245 outside its declared range -100–100".to_string()]
+        );
     }
 
     #[test]
