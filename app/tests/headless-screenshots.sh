@@ -23,7 +23,7 @@ capture_one() {
         export TINY4LITE_UI_TEST_PAGE="$page"
         export GDK_BACKEND=x11
         export GSK_RENDERER=cairo
-        export NO_AT_BRIDGE=1
+        export NO_AT_BRIDGE=1 GTK_A11Y=none
         export XDG_CONFIG_HOME="$config"
         export XDG_CACHE_HOME="$cache"
         export XDG_DATA_HOME="$data"
@@ -56,7 +56,10 @@ capture_one() {
             xdotool click --repeat 9 --delay 70 5
             sleep 0.5
             import -window "$window" "$OUT/${name%-top}-mid.png"
-            xdotool click --repeat 12 --delay 70 5
+            xdotool click --repeat 6 --delay 70 5
+            sleep 0.5
+            import -window "$window" "$OUT/${name%-top}-focus.png"
+            xdotool click --repeat 6 --delay 70 5
             sleep 0.5
             import -window "$window" "$OUT/${name%-top}-bottom.png"
             xdotool click --repeat 18 --delay 70 5
