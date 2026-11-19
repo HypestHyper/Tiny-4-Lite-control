@@ -24,6 +24,12 @@ fn control_blockers(control: &Control, controls: &[Control]) -> Vec<String> {
         }
         _ => {}
     }
+    if control.value < control.min || control.value > control.max {
+        blockers.push(format!(
+            "The driver reports current value {} outside its declared range {}–{}",
+            control.value, control.min, control.max
+        ));
+    }
     if control.disabled && blockers.is_empty() {
         blockers.push(if control.kind.contains("read-only") {
             "The V4L2 driver marks this control read-only".to_string()
@@ -210,7 +216,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     let mut control_groups: HashMap<&'static str, gtk::Box> = HashMap::new();
     for control in ordered_controls {
         if control.name == "focus_automatic_continuous" { continue; }
-        if control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || control.name == "zoom_continuous" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
+        if control.kind == "button" && control.name != "zoom_absolute" || control.name == "pan_absolute" || control.name == "tilt_absolute" || (joystick_enabled && (control.name == "pan_speed" || control.name == "tilt_speed")) { continue; }
         let blockers = control_blockers(&control, &controls);
         let unavailable = control.disabled || !blockers.is_empty();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -401,19 +407,19 @@ mod tests {
     #[test]
     fn white_balance_manual_controls_explain_auto_white_balance_blocker() {
         let controls = vec![control("white_balance_automatic", 1, false), control("red_balance", 1043, true)];
-        assert_eq!(control_blockers(&controls[1], &controls), vec!["Auto white balance is enabled"]);
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Auto white balance is enabled".to_string()]);
     }
 
     #[test]
     fn shutter_speed_requires_manual_exposure() {
         let controls = vec![control("auto_exposure", 3, false), control("exposure_time_absolute", 330, true)];
-        assert_eq!(control_blockers(&controls[1], &controls), vec!["Exposure mode is not Manual"]);
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Exposure mode is not Manual".to_string()]);
     }
 
     #[test]
     fn manual_focus_requires_autofocus_to_be_disabled() {
         let controls = vec![control("focus_automatic_continuous", 1, false), control("focus_absolute", 100, true)];
-        assert_eq!(control_blockers(&controls[1], &controls), vec!["Autofocus is enabled"]);
+        assert_eq!(control_blockers(&controls[1], &controls), vec!["Autofocus is enabled".to_string()]);
     }
 
     #[test]
