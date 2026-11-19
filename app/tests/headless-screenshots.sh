@@ -12,6 +12,8 @@ capture_one() {
     local page="$2"
     local name="$3"
     local with_scroll="${4:-0}"
+    local width="${5:-1440}"
+    local height="${6:-1040}"
     local config cache data
     config="$(mktemp -d)"
     cache="$(mktemp -d)"
@@ -21,6 +23,8 @@ capture_one() {
         export TINY4LITE_UI_TEST=1
         export TINY4LITE_UI_TEST_STATE="$state"
         export TINY4LITE_UI_TEST_PAGE="$page"
+        export TINY4LITE_UI_TEST_WIDTH="$width"
+        export TINY4LITE_UI_TEST_HEIGHT="$height"
         export GDK_BACKEND=x11
         export GSK_RENDERER=cairo
         export NO_AT_BRIDGE=1 GTK_A11Y=none
@@ -78,6 +82,7 @@ capture_one() {
 
 capture_one auto controls controls-auto-top 1
 capture_one manual controls controls-manual-top 1
+capture_one auto controls controls-default-size-top 0 900 680
 capture_one auto capture capture-page 0
 capture_one auto diagnostics diagnostics-page 0
 
