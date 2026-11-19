@@ -293,7 +293,7 @@ Next work: test host-initiated selector 0x02 GET_CUR polling during idle, manual
 
 Use the capture workflow and template linked from the [tracing documentation on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing). Important: that generic guide is HID-focused. Tiny 2 Lite controls are V4L2/UVC XU; reuse its evidence discipline, not HID-specific assumptions.
 
-## Pop filter protocol investigation (not implemented)
+## Pop filter (experimental implementation)
 
 A dedicated evidence record now lives at [reference/09-pop-filter-protocol-investigation.md](reference/09-pop-filter-protocol-investigation.md). It contains all three controlled captures, the nine 60-byte SET_CUR payloads, action-window timestamps, frame numbers, the capture procedure, exact TShark commands, and the next experiment.
 
