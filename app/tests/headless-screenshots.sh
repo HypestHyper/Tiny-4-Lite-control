@@ -85,7 +85,7 @@ data="$(mktemp -d)"
     export TINY4LITE_UI_TEST=1
     export TINY4LITE_UI_TEST_STATE=auto
     export TINY4LITE_UI_TEST_PAGE=controls
-    export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1
+    export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
     export XDG_CONFIG_HOME="$config" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$data"
     "$APP" >"$OUT/wheel-lock.log" 2>&1 &
     app_pid=$!
