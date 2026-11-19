@@ -222,9 +222,15 @@ Important TShark quirks observed in this environment:
 - Use the report's frame numbers and `-x` to inspect raw packets. In each packet, the USB Control section begins with the seven-byte setup header; the 60-byte data payload follows it.
 - Do not mistake the URB submit/completion pair for two separate setting changes.
 
-## 7. Next experiment required
+## 7. Captured payloads used by the experimental app toggle
 
-The next useful experiment is one uninterrupted capture containing **10 consecutive Pop filter toggles**, alternating On and Off, without restarting OBSBOT Center or disconnecting the camera. Keep each toggle in its own Begin action / End action window. The purpose is to collect more adjacent counter and bytes-6–7 samples and observe whether the trailing region changes within one application/device session.
+A fresh OBSBOT Center session capture (`pop filter fresh session`, Unix start 1795044907) reproduced byte-2 values `0x0f` through `0x12` and the same bytes 6–7 as the prior session. The two payloads currently replayed by the app are the exact 60-byte commands for `0x0f` OFF and `0x10` ON. Both contain the session-stable sequence `50 C8 D7 B9 0F 22 01` at payload offsets 25–31; remaining offsets 32–59 are zero. This capture is the basis for the current prototype. It does not establish that these payloads remain valid after a sequence advance, Center restart, or camera reconnect.
+
+The app stores only the last submitted UI state. It does not claim read-back or confirmed device acceptance. Treat the implementation as experimental and validate it on the physical camera.
+
+## 8. Next experiment required
+
+The current priority is a one-time hardware test of the prototype: switch Pop filter ON, confirm the visible/functional camera effect, then switch it OFF and confirm. If either fails, capture the failed app interaction and inspect whether the camera requires a fresh sequence value. Do not resume broad exploratory captures unless this focused test shows the fixed replay is rejected.
 
 After capture:
 
