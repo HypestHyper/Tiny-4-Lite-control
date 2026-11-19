@@ -19,6 +19,7 @@
 | 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |
 | Current Tiny 2 Lite gesture, FOV, LED, power, and protocol feature evidence | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) and [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
 | Pop filter protocol investigation, all three capture payload sets, action-window workflow, TShark commands, and next test | [reference/09-pop-filter-protocol-investigation.md](reference/09-pop-filter-protocol-investigation.md) |
+| Mirror image protocol capture, exact ON/OFF payloads, frame numbers, action windows, and validation status | [reference/10-mirror-image-protocol.md](reference/10-mirror-image-protocol.md) |
 | PTZ position read-back hypothesis, selector 0x02 GET_CUR evidence, Windows KS topology attempts, and next AI-tracking polling test | [reference/07-2026-11-17-ptz-position-readback.md](reference/07-2026-11-17-ptz-position-readback.md) |
 | Firmware identity and distinction between FOV, crop level, and zoom | [reference/08-firmware-identification-and-fov.md](reference/08-firmware-identification-and-fov.md) |
 | Preview, snapshots, recording, audio, Linux/firmware limitations | [reference/03-media-and-limitations.md](reference/03-media-and-limitations.md) |
