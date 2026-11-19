@@ -142,6 +142,7 @@ capture_one() {
 
 capture_one auto controls controls-auto-top 1 1440 1040
 capture_one manual controls controls-manual-top 1 1440 1040
+capture_one aperture controls controls-aperture-top 1 1440 1040
 capture_one auto controls controls-default-size-top 0 900 680
 capture_one auto capture capture-page 0 1440 1040
 capture_one auto diagnostics diagnostics-page 0 1440 1040
