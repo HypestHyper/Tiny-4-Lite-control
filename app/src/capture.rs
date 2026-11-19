@@ -453,6 +453,8 @@ pub fn build_page() -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.add_css_class("adaptive-row");
     let start = gtk::Button::with_label("Start capture + baseline");
+    let synthetic_test_mode = std::env::var("TINY4LITE_UI_TEST").is_ok_and(|value| value == "1");
+    if synthetic_test_mode { start.set_sensitive(false); }
     let begin_action = gtk::Button::with_label("Begin action");
     let end_action = gtk::Button::with_label("End action");
     let finish = gtk::Button::with_label("Finish session");
@@ -472,7 +474,12 @@ pub fn build_page() -> gtk::Box {
     actions.append(&clear);
     page.append(&actions);
 
-    let status = gtk::Label::new(Some("Ready. The USB camera is detected independently of its video node."));
+    let status_text = if synthetic_test_mode {
+        "Synthetic test mode. USB capture is disabled; no camera or tshark process will be started."
+    } else {
+        "Ready. Start a session to begin USB capture."
+    };
+    let status = gtk::Label::new(Some(status_text));
     status.set_xalign(0.0);
     status.set_wrap(true);
     page.append(&status);
