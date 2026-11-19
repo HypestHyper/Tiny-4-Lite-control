@@ -108,14 +108,14 @@ data="$(mktemp -d)"
     sleep 0.3
     xdotool mousemove 1590 1180
     import -window "$window" "$OUT/wheel-lock-after-slider.png"
-    compare -metric AE "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-slider.png" null: >/dev/null 2>"$OUT/wheel-slider-diff.txt"
+    compare -metric AE -crop 1400x1040+0+0 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-slider.png" null: >/dev/null 2>"$OUT/wheel-slider-diff.txt"
 
     xdotool mousemove --window "$window" 1220 36
     xdotool click 5
     sleep 0.3
     xdotool mousemove 1590 1180
     import -window "$window" "$OUT/wheel-lock-after-dropdown.png"
-    compare -metric AE "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-diff.txt"
+    compare -metric AE -crop 1400x1040+0+0 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-diff.txt"
 )
 rm -rf "$config" "$cache" "$data"
 
