@@ -92,20 +92,19 @@ data="$(mktemp -d)"
     done
     [[ -n "$window" ]] || { cat "$OUT/wheel-lock.log"; exit 1; }
     sleep 1.5
-    xdotool mousemove --window "$window" 1370 930
-    xdotool click --repeat 9 --delay 70 5
-    sleep 0.5
     xdotool mousemove 1590 1180
     import -window "$window" "$OUT/wheel-lock-before.png"
 
-    xdotool mousemove --window "$window" 720 640
+    # Sensitivity slider and theme dropdown are fixed in the header/first
+    # section, making this check independent of the document's scroll height.
+    xdotool mousemove --window "$window" 700 390
     xdotool click 5
     sleep 0.3
     xdotool mousemove 1590 1180
     import -window "$window" "$OUT/wheel-lock-after-slider.png"
     compare -metric AE "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-slider.png" null: >/dev/null 2>"$OUT/wheel-slider-diff.txt"
 
-    xdotool mousemove --window "$window" 1350 790
+    xdotool mousemove --window "$window" 1220 36
     xdotool click 5
     sleep 0.3
     xdotool mousemove 1590 1180
