@@ -2366,9 +2366,12 @@ fn build_ui(app: &gtk::Application) {
     page_column.append(&stack);
     root.append(&page_column);
 
-    let footer = gtk::Label::new(Some(
+    let footer_text = if test_mode {
+        "Synthetic UI test mode: camera commands and USB capture are disabled."
+    } else {
         "Pan and tilt controls move the physical gimbal. USB capture requires tshark and pkexec."
-    ));
+    };
+    let footer = gtk::Label::new(Some(footer_text));
     footer.set_xalign(0.0);
     footer.set_wrap(true);
     footer.add_css_class("dim-label");
