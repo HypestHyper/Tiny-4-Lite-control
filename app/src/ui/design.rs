@@ -157,7 +157,7 @@ button.suggested-action:hover {{ background: @tiny_primary_hover; }}
 entry, combobox, dropdown, spinbutton {{ min-height: 40px; border-radius: 12px; background: @tiny_surface_high; color: @tiny_on_surface; }}
 scale trough {{ min-height: 6px; border-radius: 99px; background: @tiny_surface_highest; }}
 scale highlight {{ background: @tiny_primary; }}
-scale slider {{ min-width: 18px; min-height: 18px; border-radius: 99px; background: @tiny_primary; }}
+scale slider {{ min-width: 18px; min-height: 18px; margin: 0; padding: 0; border-radius: 99px; background: @tiny_primary; }}
 .dim-label {{ color: @tiny_on_surface_variant; }}
 textview, textview text {{ background: @tiny_surface_dim; color: @tiny_on_surface; }}
 scrolledwindow {{ border: none; background: transparent; }}
@@ -181,7 +181,7 @@ button {{ min-height: 35px; padding: 4px 12px; font-size: 13px; }}
 button:disabled, scale:disabled, switch:disabled, checkbutton:disabled {{ opacity: 0.42; }}
 scale trough {{ min-height: 6px; border-radius: 99px; background: @tiny_surface_highest; }}
 scale highlight {{ min-height: 6px; border-radius: 99px; background: @tiny_primary; }}
-scale slider {{ min-width: 18px; min-height: 18px; border-radius: 99px; background: @tiny_primary; }}
+scale slider {{ min-width: 18px; min-height: 18px; margin: 0; padding: 0; border-radius: 99px; background: @tiny_primary; }}
 scrolledwindow > viewport {{ background: transparent; }}
 "#)
 }
