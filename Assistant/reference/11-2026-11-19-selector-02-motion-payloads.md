@@ -90,18 +90,53 @@ Examples from the extracted sequence show substantial, smooth variation rather t
 
 The sequence byte wraps, so sequence order must be interpreted with timestamps and capture order, not by sorting the byte numerically.
 
+## Full capture inventory and inbound traffic
+
+The capture contains **4,686 USB records**. The observed endpoint-address counts are:
+
+| Endpoint address | Record count |
+|---|---:|
+| `0x81` | 2,916 |
+| `0x80` | 1,102 |
+| `0x00` | 668 |
+| `0x86` | 0 |
+
+The device descriptor identifies endpoint `0x86` as a VideoControl interrupt-IN endpoint (16-byte maximum packet, interval 8). It carried no records in this capture. Therefore this capture provides no interrupt-endpoint status/telemetry evidence. Do not confuse the absent `0x86` traffic with the separate video/control endpoint records.
+
+The relevant Extension Unit request counts were:
+
+| XU selector | Request | Count | Result |
+|---|---|---:|---|
+| `0x02` | SET_CUR | 207 | 60-byte host-to-camera writes beginning `AA 25` |
+| `0x02` | GET_LEN | 207 | Every observed successful length response was `3C 00` (60 bytes) |
+| `0x02` | GET_CUR | 0 observed | No inbound selector `0x02` position response was polled in this capture |
+| `0x06` | GET_LEN | 69 | Successful length response `3C 00` (60 bytes) |
+| `0x06` | GET_CUR | 66 | 66 identical 60-byte responses |
+
+All 66 selector `0x06` GET_CUR response blocks were byte-for-byte identical across the capture, including the pan/tilt movement and zero-button windows. This is consistent with a static configuration/status block in this particular test, not live gimbal pose feedback. It does not rule out other status fields changing in a different operating condition.
+
+A key behavioural observation from the decoded SET_CUR stream is that the two float32 fields at offsets 20 and 24 return to zero when the movement activity stops. Together with the controlled pan-only and tilt-only action windows, this supports interpreting the pair as **movement-related command data**, rather than independent physical-position telemetry. It still does not tell us whether the values are velocity, a relative displacement, a target, or another command representation.
+
+### Consequence for the position-feedback hypothesis
+
+This capture does **not** contain selector `0x02` GET_CUR requests. It therefore cannot test whether the earlier candidate GET_CUR float pair changes during the current controlled movement sequence. The 66 selector `0x06` responses are static and must not be substituted for selector `0x02` data.
+
+The earlier selector `0x02` GET_CUR position hypothesis remains a separate, unresolved lead documented in [the PTZ position read-back investigation](07-2026-11-17-ptz-position-readback.md). The present capture adds evidence for a movement-associated selector `0x02` SET_CUR command stream, not proof of live position read-back.
+
 ## What this establishes, and what it does not
 
 **Observed:**
 
-- Repeated selector `0x02` SET_CUR requests with a 60-byte `AA 25` payload.
+- 207 selector `0x02` SET_CUR requests with a 60-byte `AA 25` payload, plus 207 GET_LEN requests returning 60-byte control length.
 - Two valid float32 values at payload offsets 20 and 24.
-- Both values change across the capture and appear in a movement-associated stream.
+- Both values change across the capture and return to zero when movement activity stops.
+- 66 selector `0x06` GET_CUR responses are identical; no selector `0x02` GET_CUR was observed.
+- Endpoint `0x86` carried no traffic in this capture.
 - The frame-2897 raw bytes independently reproduce the supplied float extraction.
 
 **Not established:**
 
-- Whether the values represent current pose, requested/target pose, a motion estimate, or another pair of coordinates.
+- The exact movement-command semantics: velocity, relative displacement, target, or another representation.
 - Which field is pan and which is tilt.
 - Units, coordinate origin, sign convention, valid range, update rate, or latency.
 - Whether the zero-button action resets either field to a defined coordinate.
@@ -132,7 +167,7 @@ Do not rely on `usb.capdata` or `data.data` being populated for these usbmon sub
 ## Next investigation
 
 1. Keep GET_CUR and SET_CUR evidence separate in all analysis.
-2. Compare the selector `0x02` GET_CUR float pair against the SET_CUR float pair at matching times, if a capture can be obtained with both directions present.
-3. Determine whether GET_CUR changes during independent manual pan/tilt movement and while AI tracking moves the gimbal.
-4. Only call the values live position telemetry after read-only GET_CUR values demonstrably follow physical movement and settle when the camera stops.
-5. Do not add a new SET_CUR movement implementation from this capture alone.
+2. Obtain a capture that includes host-initiated selector `0x02` GET_CUR polling while the gimbal is idle, moving manually, and moving under AI tracking. The present capture contains no such requests.
+3. Compare the candidate GET_CUR float pair with the movement-associated SET_CUR pair at matching timestamps.
+4. Only call the GET_CUR values live position telemetry after read-only responses demonstrably follow physical movement and settle when the camera stops.
+5. Do not add a new SET_CUR movement implementation or decode the SET_CUR pair as confirmed velocity/position from this capture alone.
