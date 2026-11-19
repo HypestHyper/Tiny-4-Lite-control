@@ -548,6 +548,29 @@ fn set_radio_distance(device: &str, distance: u8) -> Result<(), String> {
     Ok(())
 }
 
+// Experimental Pop filter implementation: replay the captured 60-byte commands verbatim.
+// The sequence/check fields are not decoded or regenerated.
+fn pop_filter_payload(enabled: bool) -> [u8; 60] {
+    if enabled {
+        [0xaa,0x25,0x10,0x00,0x0c,0x00,0x79,0x00,0x0a,0x02,0x82,0xc0,0x04,0x00,0xef,0x4f,
+         0x06,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,0xc8,0xd7,0xb9,0x0f,0x22,
+         0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00]
+    } else {
+        [0xaa,0x25,0x0f,0x00,0x0c,0x00,0x48,0xa5,0x0a,0x02,0x82,0xc0,0x04,0x00,0xbe,0x8f,
+         0x06,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,0xc8,0xd7,0xb9,
+         0x0f,0x22,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00]
+    }
+}
+
+fn set_pop_filter(device: &str, enabled: bool) -> Result<(), String> {
+    let mut data = pop_filter_payload(enabled);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.pop_filter_enabled = Some(enabled));
+    Ok(())
+}
+
 fn set_auto_gain(device: &str, enabled: bool) -> Result<(), String> {
     set_xu_status_byte(device, XU_AUDIO_AUTO_GAIN_OFFSET, u8::from(enabled))?;
     update_config(|config| config.audio_auto_gain = Some(enabled));
@@ -740,8 +763,41 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     radio_row.append(&radio_distance);
     layout.append(&radio_row);
 
+    let pop_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    pop_row.add_css_class("adaptive-row");
+    let pop_label = gtk::Label::new(Some("Pop filter"));
+    pop_label.set_xalign(0.0);
+    pop_label.set_hexpand(true);
+    let pop_switch = gtk::Switch::new();
+    pop_switch.set_valign(gtk::Align::Center);
+    let initial_pop = current_config().pop_filter_enabled;
+    pop_switch.set_active(initial_pop.unwrap_or(false));
+    pop_switch.set_tooltip_text(Some(if initial_pop.is_some() {
+        "Shows the last successfully submitted state; camera read-back is not established."
+    } else {
+        "Initial state is unknown; the switch starts visually Off. Camera read-back is not established."
+    }));
+    let pop_device = device.to_string();
+    let pop_status = status.clone();
+    pop_switch.connect_state_set(move |switch, enabled| {
+        match set_pop_filter(&pop_device, enabled) {
+            Ok(()) => {
+                pop_status.set_text(if enabled { "Pop filter enabled (captured payload replay)." } else { "Pop filter disabled (captured payload replay)." });
+                gtk::glib::Propagation::Proceed
+            }
+            Err(error) => {
+                switch.set_active(!enabled);
+                pop_status.set_text(&format!("Could not change Pop filter: {error}"));
+                gtk::glib::Propagation::Stop
+            }
+        }
+    });
+    pop_row.append(&pop_label);
+    pop_row.append(&pop_switch);
+    layout.append(&pop_row);
+
     let note = gtk::Label::new(Some(
-        "Auto gain and noise reduction read the current 60-byte configuration block and modify only their verified byte. Radio distance uses a separate fixed 60-byte command (1b 01 <value>); camera read-back is not established, so the last successful selection is saved locally."
+        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads verbatim; unknown sequence fields are not regenerated and camera read-back is not established."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
