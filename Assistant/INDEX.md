@@ -13,6 +13,7 @@
 
 | Need | Read |
 |---|---|
+| 2026-11-20 device-specific V4L2 control inventory, full observed ranges/current values, USB/media identity, video formats, and experimentally confirmed exposure/focus/white-balance dependencies | [reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md) |
 | Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
 | Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
 | Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
@@ -32,6 +33,7 @@
 ## Critical facts
 
 - Tiny 2 Lite USB ID: `3564:fef9`; regular Tiny 2: `3564:fef8`.
+- The 2026-11-20 device-specific V4L2 inventory and controlled dependency matrix are recorded in [reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md). This is a hardware/driver baseline; the app must still query live V4L2 metadata.
 - Camera controls use standard V4L2 and vendor UVC Extension Unit requests. Do not conflate these with USB HID feature reports.
 - Domatix `obsbot-control` and its `docs/PROTOCOL.md` are the primary Lite-specific reference in the supplied research.
 - Windows OBSBOT Center USB traces were captured and parsed on 2026-11-17. A separate 2026-11-18 Tiny 2 Lite capture established the Dynamic Zoom Direction ON/OFF payload inversion and showed a rolling frame sequence across Direction Flip and a separate Dynamic Zoom disable command. See [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) and [reference/02-feature-inventory.md](reference/02-feature-inventory.md) for the latest implementation and evidence.
