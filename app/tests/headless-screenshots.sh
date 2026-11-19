@@ -69,6 +69,51 @@ capture_one manual controls controls-manual-top 1
 capture_one auto capture capture-page 0
 capture_one auto diagnostics diagnostics-page 0
 
+# Prove that a wheel event over a slider or dropdown does not alter it or
+# scroll the containing page. The same pointer position is cleared before
+# each screenshot so cursor rendering cannot create a false image difference.
+config="$(mktemp -d)"
+cache="$(mktemp -d)"
+data="$(mktemp -d)"
+(
+    export TINY4LITE_UI_TEST=1
+    export TINY4LITE_UI_TEST_STATE=auto
+    export TINY4LITE_UI_TEST_PAGE=controls
+    export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1
+    export XDG_CONFIG_HOME="$config" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$data"
+    "$APP" >"$OUT/wheel-lock.log" 2>&1 &
+    app_pid=$!
+    trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
+    window=""
+    for _ in $(seq 1 80); do
+        window="$(xdotool search --onlyvisible --name "Tiny 2 Lite Control" 2>/dev/null | head -n1 || true)"
+        [[ -n "$window" ]] && break
+        sleep 0.25
+    done
+    [[ -n "$window" ]] || { cat "$OUT/wheel-lock.log"; exit 1; }
+    sleep 1.5
+    xdotool mousemove --window "$window" 1370 930
+    xdotool click --repeat 9 --delay 70 5
+    sleep 0.5
+    xdotool mousemove 1590 1180
+    import -window "$window" "$OUT/wheel-lock-before.png"
+
+    xdotool mousemove --window "$window" 720 640
+    xdotool click 5
+    sleep 0.3
+    xdotool mousemove 1590 1180
+    import -window "$window" "$OUT/wheel-lock-after-slider.png"
+    compare -metric AE "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-slider.png" null: >/dev/null 2>"$OUT/wheel-slider-diff.txt"
+
+    xdotool mousemove --window "$window" 1350 790
+    xdotool click 5
+    sleep 0.3
+    xdotool mousemove 1590 1180
+    import -window "$window" "$OUT/wheel-lock-after-dropdown.png"
+    compare -metric AE "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-diff.txt"
+)
+rm -rf "$config" "$cache" "$data"
+
 for image in "$OUT"/*.png; do
     test -s "$image"
     identify "$image"
