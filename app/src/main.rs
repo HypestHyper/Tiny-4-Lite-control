@@ -565,7 +565,7 @@ fn exposure_compensation_label(position: u8) -> String {
     else { format!("{:+.1}", -3.0 + position as f64 / 3.0) }
 }
 
-fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status: &gtk::Label, auto_exposure_enabled: bool) {
     let frame = gtk::Frame::new(Some("Exposure compensation"));
     ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:exposure_compensation");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -585,6 +585,7 @@ fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status:
     scale.set_digits(0);
     scale.set_draw_value(false);
     scale.set_hexpand(true);
+    scale.set_sensitive(auto_exposure_enabled);
     scale.add_mark(0.0, gtk::PositionType::Bottom, Some("−3"));
     scale.add_mark(9.0, gtk::PositionType::Bottom, Some("0"));
     scale.add_mark(18.0, gtk::PositionType::Bottom, Some("+3"));
@@ -615,9 +616,12 @@ fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status:
         }
     });
 
-    let note = gtk::Label::new(Some(
+    let note_text = if auto_exposure_enabled {
         "19 positions from −3.0 to +3.0. This is the UVC Processing Unit Backlight Compensation control, not a V4L2 exposure-bias control."
-    ));
+    } else {
+        "Unavailable: Exposure mode is not Auto. Set Exposure mode to Auto to adjust exposure compensation."
+    };
+    let note = gtk::Label::new(Some(note_text));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -750,6 +754,60 @@ fn set_noise_reduction(device: &str, level: u8) -> Result<(), String> {
     set_xu_status_byte(device, XU_AUDIO_NOISE_REDUCTION_OFFSET, level)?;
     update_config(|config| config.audio_noise_reduction = Some(level));
     Ok(())
+}
+
+
+fn add_mirror_image_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Image orientation"));
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    layout.set_margin_top(6);
+    layout.set_margin_bottom(6);
+    layout.set_margin_start(8);
+    layout.set_margin_end(8);
+        let mirror_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        mirror_row.add_css_class("adaptive-row");
+        let mirror_label = gtk::Label::new(Some("Mirror image"));
+        mirror_label.set_xalign(0.0);
+        mirror_label.set_hexpand(true);
+        let mirror_switch = gtk::Switch::new();
+        mirror_switch.set_valign(gtk::Align::Center);
+        let initial_mirror = current_config().mirror_image_enabled;
+        mirror_switch.set_active(initial_mirror.unwrap_or(false));
+        mirror_switch.set_tooltip_text(Some(if initial_mirror.is_some() {
+            "Shows the last successfully submitted state; camera read-back is not established."
+        } else {
+            "Initial state is unknown; the switch starts visually Off. Camera read-back is not established."
+        }));
+        let mirror_device = device.to_string();
+        let mirror_status = status.clone();
+        mirror_switch.connect_state_set(move |switch, enabled| {
+            match set_mirror_image(&mirror_device, enabled) {
+                Ok(()) => {
+                    mirror_status.set_text(if enabled {
+                        "Mirror image enabled (captured payload)."
+                    } else {
+                        "Mirror image disabled (captured payload)."
+                    });
+                    gtk::glib::Propagation::Proceed
+                }
+                Err(error) => {
+                    switch.set_active(!enabled);
+                    mirror_status.set_text(&format!("Could not change Mirror image: {error}"));
+                    gtk::glib::Propagation::Stop
+                }
+            }
+        });
+        mirror_row.append(&mirror_label);
+        mirror_row.append(&mirror_switch);
+        layout.append(&mirror_row);
+    
+    let note = gtk::Label::new(Some("Mirror image uses a captured vendor command. Camera read-back is not established; the switch shows the last successfully submitted state."));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    layout.append(&note);
+    frame.set_child(Some(&layout));
+    container.append(&frame);
 }
 
 fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
@@ -962,45 +1020,9 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     pop_row.append(&pop_switch);
     layout.append(&pop_row);
 
-    let mirror_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    mirror_row.add_css_class("adaptive-row");
-    let mirror_label = gtk::Label::new(Some("Mirror image"));
-    mirror_label.set_xalign(0.0);
-    mirror_label.set_hexpand(true);
-    let mirror_switch = gtk::Switch::new();
-    mirror_switch.set_valign(gtk::Align::Center);
-    let initial_mirror = current_config().mirror_image_enabled;
-    mirror_switch.set_active(initial_mirror.unwrap_or(false));
-    mirror_switch.set_tooltip_text(Some(if initial_mirror.is_some() {
-        "Shows the last successfully submitted state; camera read-back is not established."
-    } else {
-        "Initial state is unknown; the switch starts visually Off. Camera read-back is not established."
-    }));
-    let mirror_device = device.to_string();
-    let mirror_status = status.clone();
-    mirror_switch.connect_state_set(move |switch, enabled| {
-        match set_mirror_image(&mirror_device, enabled) {
-            Ok(()) => {
-                mirror_status.set_text(if enabled {
-                    "Mirror image enabled (captured payload)."
-                } else {
-                    "Mirror image disabled (captured payload)."
-                });
-                gtk::glib::Propagation::Proceed
-            }
-            Err(error) => {
-                switch.set_active(!enabled);
-                mirror_status.set_text(&format!("Could not change Mirror image: {error}"));
-                gtk::glib::Propagation::Stop
-            }
-        }
-    });
-    mirror_row.append(&mirror_label);
-    mirror_row.append(&mirror_switch);
-    layout.append(&mirror_row);
 
     let note = gtk::Label::new(Some(
-        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads; Mirror image sends captured 60-byte ON/OFF payloads through selector 0x06. Neither has reliable camera read-back; both remain experimental pending physical validation."
+        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads. Pop filter remains experimental pending physical validation."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
@@ -1119,7 +1141,7 @@ fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<(), Strin
     Ok(())
 }
 
-fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label, auto_exposure_enabled: bool) {
     let frame = gtk::Frame::new(Some("Auto Exposure priority"));
     ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:auto-exposure-mode");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -1136,6 +1158,7 @@ fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &g
     face.set_group(Some(&global));
     global.add_css_class("flat");
     face.add_css_class("flat");
+    selector.set_sensitive(auto_exposure_enabled);
 
     let saved_mode = current_config().auto_exposure_mode;
     match saved_mode.as_deref() {
@@ -1179,9 +1202,12 @@ fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &g
         });
     }
 
-    let note = gtk::Label::new(Some(
+    let note_text = if auto_exposure_enabled {
         "Face and Global control Auto Exposure priority, not autofocus. The camera has no confirmed read-back for this setting; the selection is the last successfully submitted command."
-    ));
+    } else {
+        "Unavailable: Exposure mode is not Auto. Set Exposure mode to Auto to enable Face / Global exposure priority."
+    };
+    let note = gtk::Label::new(Some(note_text));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -1314,8 +1340,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     led_layout.append(&led_note);
     led_frame.set_child(Some(&led_layout));
     layout.append(&led_frame);
-
-    add_audio_controls(&layout, device, status);
+    add_mirror_image_control(&layout, device, status);
 
     let note = gtk::Label::new(Some("Image controls are discovered from V4L2 metadata; camera-reported ranges, steps, menus and inactive flags are authoritative."));
     note.set_wrap(true);
@@ -1344,7 +1369,7 @@ fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label) {
+fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label, autofocus_enabled: bool) {
     let frame = gtk::Frame::new(Some("Autofocus priority"));
     ui::layout::mark_compact_item(frame.upcast_ref(), "obsbot:focus_mode");
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -1363,6 +1388,7 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     face.set_group(Some(&global));
     global.add_css_class("flat");
     face.add_css_class("flat");
+    selector.set_sensitive(autofocus_enabled);
     let saved_focus_mode = current_config().focus_mode;
     match saved_focus_mode.as_deref() {
         Some("global") => global.set_active(true),
@@ -1411,7 +1437,12 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
         });
     }
 
-    let note = gtk::Label::new(Some("Global and Face are mutually exclusive autofocus priorities. The camera has no confirmed read-back for this setting, so the selected value is the last successfully submitted command."));
+    let note_text = if autofocus_enabled {
+        "Global and Face are mutually exclusive autofocus priorities. The camera has no confirmed read-back for this setting, so the selected value is the last successfully submitted command."
+    } else {
+        "Unavailable: Autofocus is disabled. Turn Autofocus on to enable Global / Face priority."
+    };
+    let note = gtk::Label::new(Some(note_text));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
