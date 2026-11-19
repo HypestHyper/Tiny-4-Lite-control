@@ -571,6 +571,21 @@ fn set_pop_filter(device: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Mirror image command captured from three controlled OBSBOT Center transitions.
+/// Only payload byte 2 changes: 1 = On, 0 = Off; the remaining 57 bytes are zero.
+fn mirror_image_payload(enabled: bool) -> [u8; 60] {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x14, 0x01, u8::from(enabled)]);
+    data
+}
+
+fn set_mirror_image(device: &str, enabled: bool) -> Result<(), String> {
+    let mut data = mirror_image_payload(enabled);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut data)?;
+    update_config(|config| config.mirror_image_enabled = Some(enabled));
+    Ok(())
+}
+
 fn set_auto_gain(device: &str, enabled: bool) -> Result<(), String> {
     set_xu_status_byte(device, XU_AUDIO_AUTO_GAIN_OFFSET, u8::from(enabled))?;
     update_config(|config| config.audio_auto_gain = Some(enabled));
@@ -795,6 +810,43 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     pop_row.append(&pop_label);
     pop_row.append(&pop_switch);
     layout.append(&pop_row);
+
+    let mirror_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    mirror_row.add_css_class("adaptive-row");
+    let mirror_label = gtk::Label::new(Some("Mirror image"));
+    mirror_label.set_xalign(0.0);
+    mirror_label.set_hexpand(true);
+    let mirror_switch = gtk::Switch::new();
+    mirror_switch.set_valign(gtk::Align::Center);
+    let initial_mirror = current_config().mirror_image_enabled;
+    mirror_switch.set_active(initial_mirror.unwrap_or(false));
+    mirror_switch.set_tooltip_text(Some(if initial_mirror.is_some() {
+        "Shows the last successfully submitted state; camera read-back is not established."
+    } else {
+        "Initial state is unknown; the switch starts visually Off. Camera read-back is not established."
+    }));
+    let mirror_device = device.to_string();
+    let mirror_status = status.clone();
+    mirror_switch.connect_state_set(move |switch, enabled| {
+        match set_mirror_image(&mirror_device, enabled) {
+            Ok(()) => {
+                mirror_status.set_text(if enabled {
+                    "Mirror image enabled (captured payload)."
+                } else {
+                    "Mirror image disabled (captured payload)."
+                });
+                gtk::glib::Propagation::Proceed
+            }
+            Err(error) => {
+                switch.set_active(!enabled);
+                mirror_status.set_text(&format!("Could not change Mirror image: {error}"));
+                gtk::glib::Propagation::Stop
+            }
+        }
+    });
+    mirror_row.append(&mirror_label);
+    mirror_row.append(&mirror_switch);
+    layout.append(&mirror_row);
 
     let note = gtk::Label::new(Some(
         "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads verbatim; unknown sequence fields are not regenerated and camera read-back is not established."
@@ -2179,6 +2231,16 @@ mod xu_protocol_tests {
         (0..s.len()).step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn mirror_image_payload_matches_captured_on_off_commands() {
+        let on = mirror_image_payload(true);
+        let off = mirror_image_payload(false);
+        assert_eq!(&on[..3], &[0x14, 0x01, 0x01]);
+        assert_eq!(&off[..3], &[0x14, 0x01, 0x00]);
+        assert!(on[3..].iter().all(|byte| *byte == 0));
+        assert!(off[3..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
