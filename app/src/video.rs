@@ -97,19 +97,40 @@ pub fn current_mode(device: &str) -> Option<VideoMode> {
     })
 }
 
-/// Apply a mode immediately. The caller owns preview restart and persistence.
-pub fn set_mode(device: &str, mode: &VideoMode) -> Result<(), String> {
+/// Apply a mode, then verify what the driver actually negotiated.
+/// V4L2 setters may return success while the driver rounds or falls back to
+/// another mode, so callers must not treat the requested tuple as active
+/// until GET_FMT and G_PARM confirm it.
+pub fn set_mode(device: &str, mode: &VideoMode) -> Result<VideoMode, String> {
     if mode.width == 0 || mode.height == 0 || mode.frame_rate_milli == 0
         || mode.pixel_format.len() != 4 || !mode.pixel_format.is_ascii() {
         return Err("Invalid video capture mode.".into());
     }
+
     run_v4l2(device, &format!(
         "--set-fmt-video=width={},height={},pixelformat={}",
         mode.width, mode.height, mode.pixel_format
     ))?;
     let fps = mode.frame_rate_milli as f64 / 1000.0;
     run_v4l2(device, &format!("--set-parm={fps:.3}"))?;
-    Ok(())
+
+    let actual = current_mode(device)
+        .ok_or_else(|| "The driver accepted the mode requests but did not return a readable active format and frame rate.".to_string())?;
+    let same_format = actual.width == mode.width
+        && actual.height == mode.height
+        && actual.pixel_format == mode.pixel_format;
+    // Drivers commonly report fractional rates such as 29.970 for nominal
+    // 30 fps. Allow a small reporting tolerance, never a format fallback.
+    let rate_matches = actual.frame_rate_milli.abs_diff(mode.frame_rate_milli) <= 500;
+    if !same_format || !rate_matches {
+        return Err(format!(
+            "The camera did not retain the requested mode. Requested {}×{} {} {:.3} fps; driver reports {}×{} {} {:.3} fps. Another application may own the stream, or the driver may have rejected the combination.",
+            mode.width, mode.height, mode.pixel_format, fps,
+            actual.width, actual.height, actual.pixel_format,
+            actual.frame_rate_milli as f64 / 1000.0
+        ));
+    }
+    Ok(actual)
 }
 
 #[cfg(test)]
