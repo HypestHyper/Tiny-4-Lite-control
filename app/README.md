@@ -6,6 +6,40 @@ not the final UI. UI redesign is deferred.
 
 ## Current capabilities
 
+## UI layout and availability
+
+The Controls page keeps the complete supported control set visible and groups standard V4L2 settings in this order: Exposure, White balance, Focus, Zoom, and Image. Gimbal movement, autofocus priority, Auto Exposure priority, exposure compensation, OBSBOT camera features, microphone processing, video capture, presets, and camera power are kept in separate related sections.
+
+A setting that is unavailable because of another setting remains visible but disabled, with a note naming the blocking mode. Confirmed dependencies are:
+
+- Red balance, blue balance, and white-balance temperature require Auto White Balance Off.
+- Shutter speed requires Exposure mode Manual (menu value 1).
+- Manual focus requires Continuous Autofocus Off.
+- Auto Exposure priority and exposure compensation require Exposure mode Auto (menu value 0).
+
+These controls are rebuilt after their controlling mode changes. Device-reported ranges, steps, and menu choices are used; a menu default that the driver reports outside its advertised choices is replaced with the current valid choice. A numeric current value outside its declared range is retained for diagnosis and shown disabled with the reported range. The Tiny 2 Lite's invalid `zoom_continuous` value is therefore not sent; `zoom_absolute` remains the supported zoom path.
+
+The mouse wheel is prevented from changing dropdown selections or slider values. Pointer dragging and keyboard operation remain available. Mirror image is grouped under Image orientation rather than microphone processing.
+
+## Headless UI validation
+
+The application has an explicit synthetic-device mode for visual tests. It is enabled only by setting `TINY4LITE_UI_TEST=1`; this bypasses USB discovery and all V4L2/UVC I/O, and supplies fixture camera metadata instead. Optional variables select the fixture state and page:
+
+- `TINY4LITE_UI_TEST_STATE=auto|manual`
+- `TINY4LITE_UI_TEST_PAGE=controls|capture|diagnostics`
+
+Run the screenshot harness after building:
+
+```sh
+xvfb-run -a -s "-screen 0 1600x1200x24" \
+  bash app/tests/headless-screenshots.sh \
+  app/target/release/tiny4lite-control \
+  app/artifacts/headless-ui
+```
+
+The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads screenshots for Auto mode, Manual mode, the lower Controls page, Capture, and Diagnostics. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
+
+
 ### Device discovery and standard V4L2 controls
 
 - Discovers camera video nodes through sysfs and matches USB ID
