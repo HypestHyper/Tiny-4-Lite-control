@@ -91,8 +91,10 @@ fn ui_test_mode() -> bool {
 }
 
 fn mock_v4l2_output(option: &str) -> String {
-    let manual = std::env::var("TINY4LITE_UI_TEST_STATE").is_ok_and(|value| value == "manual");
-    let exposure_mode = if manual { 1 } else { 0 };
+    let fixture_state = std::env::var("TINY4LITE_UI_TEST_STATE").unwrap_or_default();
+    let manual = fixture_state == "manual";
+    let aperture_priority = fixture_state == "aperture";
+    let exposure_mode = if manual { 1 } else if aperture_priority { 3 } else { 0 };
     let awb = if manual { 0 } else { 1 };
     let autofocus = if manual { 0 } else { 1 };
     let dependent_flags = |inactive: bool| if inactive { " flags=inactive" } else { "" };
