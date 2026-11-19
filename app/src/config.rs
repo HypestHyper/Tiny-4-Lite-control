@@ -44,6 +44,8 @@ pub struct AppConfig {
     pub audio_noise_reduction: Option<u8>,
     /// Last successfully submitted radio distance: 0 Close, 1 Standard, 2 Far; no camera read-back is established.
     pub audio_radio_distance: Option<u8>,
+    /// Last successfully submitted Pop filter state; camera read-back is not established.
+    pub pop_filter_enabled: Option<bool>,
     pub gesture_states: BTreeMap<String, bool>,
     pub gesture_zoom_ratio: Option<f32>,
     pub joystick_sensitivity_percent: u16,
@@ -96,6 +98,7 @@ impl Default for AppConfig {
             audio_microphone_disabled: None,
             audio_noise_reduction: None,
             audio_radio_distance: None,
+            pop_filter_enabled: None,
             gesture_states: BTreeMap::new(),
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
