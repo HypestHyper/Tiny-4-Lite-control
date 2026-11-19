@@ -108,6 +108,24 @@ run_wheel_test() {
         convert "$OUT/wheel-lock-before.png" -crop 50x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-before.png"
         convert "$OUT/wheel-lock-after-dropdown.png" -crop 50x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-after.png"
         compare -metric AE "$OUT/wheel-theme-before.png" "$OUT/wheel-theme-after.png" null: >/dev/null 2>"$OUT/wheel-dropdown-value-diff.txt"
+
+        # In Auto mode, the exposure compensation slider must remain draggable.
+        xdotool mousemove --window "$window" 30 930
+        xdotool click --repeat 9 --delay 70 5
+        sleep 0.3
+        xdotool mousemove 1590 1180
+        import -window "$window" "$OUT/exposure-comp-before-drag.png"
+        xdotool mousemove --window "$window" 720 346
+        xdotool mousedown 1
+        xdotool mousemove --sync --window "$window" 1120 346
+        xdotool mouseup 1
+        sleep 0.4
+        xdotool mousemove 1590 1180
+        import -window "$window" "$OUT/exposure-comp-after-drag.png"
+        if compare -metric AE -crop 180x40+24+290 "$OUT/exposure-comp-before-drag.png" "$OUT/exposure-comp-after-drag.png" null: >/dev/null 2>"$OUT/exposure-comp-value-diff.txt"; then
+            echo "Exposure compensation value label did not change after dragging the enabled slider." >&2
+            exit 1
+        fi
     )
     rm -rf "$config" "$cache" "$data"
 }
