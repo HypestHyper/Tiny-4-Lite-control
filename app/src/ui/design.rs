@@ -162,19 +162,24 @@ scale slider {{ min-width: 18px; min-height: 18px; border-radius: 99px; backgrou
 textview, textview text {{ background: @tiny_surface_dim; color: @tiny_on_surface; }}
 scrolledwindow {{ border: none; background: transparent; }}
 separator {{ background: alpha(@tiny_outline, 0.24); }}
-/* Compact utility styling for tiled Hyprland windows. */
-.tiny4-root {{ padding: 8px; }}
-.content-page {{ padding: 12px 10px; }}
+/* Compact, readable defaults for a dense camera-control workspace. */
+.tiny4-root {{ padding: 6px 8px; }}
+.content-page {{ padding: 8px; }}
+.app-header {{ min-height: 52px; }}
+.device-row {{ padding: 8px 12px; border-radius: 18px; }}
+.status-chip {{ padding: 6px 10px; margin-bottom: 2px; }}
 .preview-panel {{ border-radius: 20px; padding: 4px; }}
 .preview-panel picture {{ border-radius: 14px; }}
 .preview-meta {{ font-size: 8px; }}
-frame {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.20); border-radius: 20px; padding: 10px; }}
-frame > label {{ color: @tiny_on_surface; font-weight: 650; padding: 0 6px; }}
-.adaptive-row {{ min-height: 38px; }}
-.status-chip {{ background: @tiny_surface_low; border: 1px solid alpha(@tiny_outline, 0.16); border-radius: 16px; padding: 9px 12px; }}
+frame {{ background: @tiny_surface; border: 1px solid alpha(@tiny_outline, 0.20); border-radius: 18px; padding: 7px; }}
+frame > label {{ color: @tiny_on_surface; font-weight: 650; padding: 0 4px; }}
+.adaptive-row {{ min-height: 34px; }}
+.control-label {{ font-size: 13px; }}
+.availability-note {{ font-size: 11px; padding: 1px 6px 4px; }}
+button {{ min-height: 35px; padding: 4px 12px; font-size: 13px; }}
 button:disabled, scale:disabled, switch:disabled, checkbutton:disabled {{ opacity: 0.42; }}
-scale trough {{ min-height: 8px; border-radius: 99px; background: @tiny_surface_highest; }}
-scale highlight {{ min-height: 8px; border-radius: 99px; background: @tiny_primary; }}
+scale trough {{ min-height: 6px; border-radius: 99px; background: @tiny_surface_highest; }}
+scale highlight {{ min-height: 6px; border-radius: 99px; background: @tiny_primary; }}
 scale slider {{ min-width: 18px; min-height: 18px; border-radius: 99px; background: @tiny_primary; }}
 scrolledwindow > viewport {{ background: transparent; }}
 "#)
