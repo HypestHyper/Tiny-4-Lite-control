@@ -26,7 +26,7 @@ This file records what is currently implemented in the repository and the protoc
 - Known dependent controls remain visible while unavailable, with the blocker named below the control: manual white balance requires Auto White Balance Off; shutter speed requires Manual exposure; manual focus requires Continuous Autofocus Off; Auto Exposure priority and compensation require Auto exposure.
 - Changing the relevant V4L2 mode rebuilds the page so dependent controls update immediately. Reported ranges, steps, and menu choices are retained. Invalid menu defaults are normalized to a supported choice; out-of-range numeric current values are displayed disabled with the driver-reported range.
 - Mouse-wheel input is blocked on dropdowns and sliders so page scrolling does not accidentally alter settings. Dragging and keyboard operation remain available.
-- A synthetic-device mode guarded by `TINY4LITE_UI_TEST=1` bypasses hardware discovery and every V4L2/UVC operation. GitHub Actions builds the GTK app, runs unit tests, launches it under Xvfb, and uploads Auto/Manual Controls, scrolled Controls, Capture, and Diagnostics screenshots. These are UI-only checks, not hardware validation.
+- A synthetic-device mode guarded by `TINY4LITE_UI_TEST=1` bypasses hardware discovery and every V4L2/UVC operation. GitHub Actions builds the GTK app, runs unit tests, launches it under Xvfb, and uploads Auto/Manual/Aperture Priority Controls, scrolled Controls, Capture, and Diagnostics screenshots. These are UI-only checks, not hardware validation.
 
 The application is a Rust + GTK4 test bench. Current source of truth:
 
