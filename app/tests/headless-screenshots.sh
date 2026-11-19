@@ -59,6 +59,9 @@ capture_one() {
             xdotool click --repeat 12 --delay 70 5
             sleep 0.5
             import -window "$window" "$OUT/${name%-top}-bottom.png"
+            xdotool click --repeat 18 --delay 70 5
+            sleep 0.5
+            import -window "$window" "$OUT/${name%-top}-tail.png"
         fi
     )
     rm -rf "$config" "$cache" "$data"
