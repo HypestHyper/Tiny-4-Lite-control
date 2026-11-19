@@ -81,7 +81,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
     layout.set_margin_start(10);
     layout.set_margin_end(10);
 
-    let note = gtk::Label::new(Some("Resolution, pixel format and frame rate are read from this video node's advertised V4L2 capabilities. Changes apply immediately."));
+    let note = gtk::Label::new(Some("Choose a supported format, resolution and frame rate. The app reads the mode back after applying it and reports the driver's actual result. Close OBS, CameraControls and other camera viewers before changing modes; another active stream can reclaim the previous mode."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
@@ -184,7 +184,7 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
                     status_apply.set_text(&format!("Video mode changed, but could not save the selection: {error}"));
                 } else {
                     status_apply.set_text(&format!(
-                        "Capture mode set to {} × {} · {} · {:.3} fps.",
+                        "Driver confirmed capture mode: {} × {} · {} · {:.3} fps.",
                         selected.width, selected.height, selected.pixel_format,
                         selected.frame_rate_milli as f64 / 1000.0
                     ));
@@ -202,7 +202,6 @@ pub(crate) fn append(container: &gtk::Box, device: &str, status: &gtk::Label) {
                     fill_rates(&rate_restore, &modes_apply, &previous.pixel_format,
                         &format!("{}x{}", previous.width, previous.height), Some(previous.frame_rate_milli));
                     updating_apply.set(false);
-                } else {
                 }
             }
         }
