@@ -160,6 +160,12 @@ Implemented XU operations:
     payload with prefix `1c 01 <state>` and zero-filled remaining bytes,
     not the GET_CUR status block. No matching read-back is established;
     the UI displays the last successfully submitted local state only.
+  - Microphone during sleep: byte offset 16 in the shared 60-byte
+    GET_CUR configuration block, Off = 0, On = 1. The 2026-11-18
+    controlled capture confirmed both transitions and matching read-back.
+    The UI reads this value on page construction and uses GET_CUR / patch
+    byte 16 / SET_CUR for changes, preserving all other bytes. It is a
+    separate setting from Disable microphone.
   - Auto gain: byte offset 25 in the GET_CUR configuration block,
     Off = 0, On = 1. The capture sequence
     was Off → On → Off → On, with matching read-backs.
