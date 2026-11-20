@@ -17,7 +17,7 @@ Read [`AGENTS.md`](AGENTS.md) for evidence, safety, and scope rules. Then use th
 | Preview, snapshots, recording, audio, Linux/firmware failure modes | [`reference/03-media-and-limitations.md`](reference/03-media-and-limitations.md) |
 | Proposed module boundaries, architecture rules, milestone sequence, phased hardware test plan | [`reference/04-architecture-and-hardware-testing.md`](reference/04-architecture-and-hardware-testing.md) |
 | License cautions, reusable build prompt, all source URLs, confidence questions, success definition | [`reference/05-licensing-handoff-and-open-questions.md`](reference/05-licensing-handoff-and-open-questions.md) |
-| Hardware-verified standard UVC Backlight Compensation SET_CUR/GET_CUR protocol, test evidence, and unresolved OBSBOT Center slider mapping | [`reference/06-standard-uvc-backlight-compensation.md`](reference/06-standard-uvc-backlight-compensation.md) |
+| Hardware-verified standard UVC Backlight Compensation SET_CUR/GET_CUR protocol and OBSBOT Center +2.0/+2.3 slider cross-checks | [`reference/06-standard-uvc-backlight-compensation.md`](reference/06-standard-uvc-backlight-compensation.md) |
 
 ## Critical facts
 
