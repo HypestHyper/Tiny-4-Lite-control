@@ -125,17 +125,15 @@ selector `0x06` for the 60-byte status block.
   V4L2 slider covers 0–100.
 - HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
 - Microphone controls use XU unit 2 / selector 0x06. **Microphone
-  during sleep** is a shared status-block setting at byte offset 16
-  (Off=0, On=1), confirmed by the 2026-11-18 capture with GET_CUR
-  read-back. The UI initializes from the camera and changes this setting
-  with GET_CUR / patch-one-byte / SET_CUR, preserving unrelated fields.
-  This is separate from **Disable microphone**, which uses its own
-  captured 60-byte command payload with prefix `1c 01 <state>`
-  (0=disabled, 1=enabled) and has no established GET_CUR read-back.
-  Auto gain and noise reduction also initialize from the 60-byte GET_CUR
-  configuration block and patch only their respective bytes. OBSBOT
-  Center restarted the camera after each Disable microphone toggle; the
-  restart mechanism is unknown. App-side hardware validation is pending.
+  during sleep** reads the shared status block at byte offset 0x10
+  (Off=0, On=1). Its write is a separate tagged command:
+  `13 01 <state>` (0=Off, 1=On), not a rewrite of the status block.
+  This matches the documented Tiny 2 Lite command mapping. It is separate
+  from **Disable microphone**, which uses its own fixed command
+  `1c 01 <state>` (0=disabled, 1=enabled) and has no established GET_CUR
+  read-back. Auto gain and noise reduction continue to read their
+  respective status bytes. OBSBOT Center restarted the camera after each
+  Disable microphone toggle; the restart mechanism is unknown.
 - Pop filter: experimental On/Off switch under Microphone processing.
   It replays fixed session-specific data through XU unit 2 / selector
   0x02 (OFF uses byte-2 value 0x0f; ON uses 0x10). Sequence/check fields
@@ -160,9 +158,17 @@ selector `0x06` for the 60-byte status block.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
   treated as LED power: observed On makes the indicator blink, while
   Off leaves it continuously lit.
-- Local application presets can capture and apply settings. Camera-native
-   preset-slot create/delete/recall/read/rename/list/update operations are
-   not implemented.
+- Local application presets remain available for app-managed settings.
+- Camera-native presets are now exposed separately. The Controls page
+  reads the Tiny 2 Lite selector 0x0C occupancy list and selector 0x0D
+  entry cursor, then supports create/update, rename, recall, and the
+  two-frame delete sequence. Presets store the camera's live pose and
+  zoom, not stale V4L2 target values.
+- **Power-on initial state** is a separate camera feature. The Controls
+  page reads its stored pose from query 0x3884 and can set the current
+  live pose as the initial state using 0x3EC4 followed by 0x3E44. The
+  existing 40-byte startup picture-settings block is read from 0x3E84
+  and preserved.
 
 The selector `0x06` status block provides AI tracking state/mode and
 selected settings where documented, but it does not provide reliable
@@ -222,16 +228,16 @@ change, rather than independently guessing defaults.
 The Diagnostics page provides read-only XU reads for selectors `0x02`
 and `0x06`, plus the model/stream name from selector `0x08` and USB
 descriptor identity. USB `bcdDevice` is labelled as the device-release
-field, not as installed firmware. The Controls page currently polls
-selector `0x02` GET_CUR as a candidate live-position source: it accepts
-the two observed response signatures and decodes float32 pan/tilt at
-offsets 20/24. The UI initializes immediately and refreshes every 250 ms,
-but Linux live-position behavior remains unverified because the
-2026-11-19 movement capture contained selector `0x02` SET_CUR records,
-not GET_CUR. The earlier standard Camera Terminal selector `0x0D`
-path is documented in reference 12 but is not the active implementation.
-The separate “set initial state” command remains unimplemented until its
-host-to-camera request is isolated from the capture.
+field, not as installed firmware. The Controls page polls the framed gimbal-controller query
+`0x0043` (receiver 3) every 250 ms for live physical pan/tilt. The reply
+contains signed hundredths-of-a-degree pitch and yaw at offsets 8 and 10.
+Zoom is read separately through `0x6804`. The `0x6484` command seen in
+the captures is gimbal rate/speed control, not a position read-back.
+Power-on initial state is read with `0x3884`; setting it uses the
+captured `0x3EC4` pose frame followed by `0x3E44` startup settings.
+The original 2026-11-19 capture contains both writes in the save-action
+sequence. Linux physical position read-back still needs validation on
+the user's camera.
 
 The Capture page:
 
