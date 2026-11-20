@@ -245,3 +245,75 @@ The last user checkpoint recorded HDR Off, but no corresponding outgoing command
 ### App implementation
 
 The test app now exposes an HDR switch in Camera settings. It reads status byte `0x06` on startup to initialize the switch, falls back to the last successfully submitted local setting if the status read is unavailable, sends the captured 60-byte selector `0x06` payload on change, and persists the preference in `config.toml`. Unit tests cover both command prefixes and the status-byte interpretation. A successful ioctl confirms host-side request completion; the independent status read-back is the stronger state verification.
+
+
+---
+
+## 2026-11-20 Tiny 2 Lite Auto Exposure priority: controlled SET / GET read-back
+
+**Target:** OBSBOT Tiny 2 Lite, VID:PID `3564:fef9`  
+**Capture interface:** Linux `usbmon3` while the camera was passed through to the Windows VM running OBSBOT Center  
+**USB device address in this capture:** `42`  
+**Raw capture:** `/tmp/face-ae-priority-raw.pcapng`  
+**Filtered capture:** `~/face-ae-priority.pcapng`  
+**Full decoded export:** `~/face-ae-priority-all-details.txt`  
+**Raw capture SHA-256:** `27c8727dcdeaf28c7a39b81b8988c61e50767105f95a385a9a72b53990110bdf`
+
+The user performed repeated deliberate Face / Global changes in OBSBOT Center. The trace contains alternating 60-byte selector `0x06` SET_CUR writes and corresponding GET_CUR responses. The GET_CUR responses were paired with their control-transfer submissions by URB ID and inspected in chronological order.
+
+### UVC transport
+
+| Property | Value |
+|---|---|
+| XU unit | `2` |
+| Selector | `0x06` |
+| SET_CUR | `bRequest = 0x01`, `wValue = 0x0600`, `wIndex = 0x0200` |
+| GET_CUR | `bRequest = 0x81`, `wValue = 0x0600`, `wIndex = 0x0200` |
+| Transfer buffer length | 60 bytes |
+| GET_LEN | `bRequest = 0x85`, response `3c 00` = 60 bytes |
+
+### SET mapping
+
+All observed writes are complete 60-byte buffers. The first three bytes identify the selection; the remaining 57 bytes are zero.
+
+| Selection | Payload prefix |
+|---|---|
+| Face | `03 01 00` |
+| Global | `03 01 01` |
+
+### GET_CUR mapping
+
+The complete 60-byte GET_CUR responses are stable apart from zero-based byte offset 7:
+
+- Face response: byte 7 = `00`
+- Global response: byte 7 = `01`
+
+Representative response bodies:
+
+```text
+Face:
+27 01 00 02 00 00 00 00 02 01 a8 fd 00 00 01 64
+00 00 00 00 01 00 21 00 00 00 03 00 00 00 00 1e
+00 03 11 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+Global:
+27 01 00 02 00 00 00 01 02 01 a8 fd 00 00 01 64
+00 00 00 00 01 00 21 00 00 00 03 00 00 00 00 1e
+00 03 11 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+The chronological trace shows repeated deliberate transitions. After Face SET_CUR (`03 01 00`), subsequent GET_CUR reports byte 7 = `00`. After Global SET_CUR (`03 01 01`), subsequent GET_CUR reports byte 7 = `01`. This correspondence repeats across the alternating changes. The other response bytes remain identical in the observed samples.
+
+### Implementation contract
+
+- Send the complete 60-byte SET_CUR payload, not a short three-byte transfer.
+- Read the complete 60-byte GET_CUR status block after writing.
+- Decode only response byte offset 7: `00` = Face, `01` = Global. Treat other values as unknown/error.
+- Initialize the UI from camera GET_CUR. Use the persisted local selection only if the read fails.
+- After each write, use the GET_CUR result as authoritative. Persist and display the actual returned state, including when it differs from the requested state.
+- Keep this setting separate from autofocus priority, which uses selector `0x02` and the framed `CAM_SET_FACE_FOCUS` command.
+- Keep the UI dependency on V4L2 `auto_exposure = Auto`.
+
+**Evidence status:** The selector, transfer length, SET values, GET offset, and Face / Global read-back mapping are directly supported by repeated controlled hardware traces. This supersedes the earlier 2026-11-18 note that stated no reliable read-back mapping had been established. The new backend path still requires an integrated physical-camera test.
