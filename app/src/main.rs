@@ -590,7 +590,7 @@ pub(crate) fn obsbot_query_frame(receiver: u8, command: u16, sequence: u16) -> [
 }
 
 fn query_obsbot(device: &str, receiver: u8, command: u16) -> Result<Vec<u8>, String> {
-    let sequence = next_xu_sequence();
+    let sequence = next_xu_sequence(xu_sequence_counter());
     let mut request = obsbot_query_frame(receiver, command, sequence);
     xu_query(device, 0x02, UVC_SET_CUR, &mut request)?;
     for _ in 0..20 {
@@ -1321,14 +1321,17 @@ static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 
-fn next_xu_sequence() -> u16 {
-    let counter = XU_SEQUENCE.get_or_init(|| {
+fn xu_sequence_counter() -> &'static AtomicU16 {
+    XU_SEQUENCE.get_or_init(|| {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis() as u16)
             .unwrap_or(0);
         AtomicU16::new(seed)
-    });
+    })
+}
+
+fn next_xu_sequence(counter: &AtomicU16) -> u16 {
     counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
@@ -2940,7 +2943,7 @@ mod xu_protocol_tests {
 
         // The capture's sequence values advance across commands, including
         // the separate Dynamic Zoom disable packet: 0x0f, 0x10, 0x11, 0x12.
-        let sequence = AtomicU16::new(0x000f);
+        let sequence = AtomicU16::new(0x000e);
         assert_eq!(next_xu_sequence(&sequence), 0x000f);
         assert_eq!(next_xu_sequence(&sequence), 0x0010);
         assert_eq!(next_xu_sequence(&sequence), 0x0011);
