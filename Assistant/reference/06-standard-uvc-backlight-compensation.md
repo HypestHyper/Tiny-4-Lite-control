@@ -141,19 +141,22 @@ A Windows USB capture of the OBSBOT Center Exposure Compensation slider recorded
 
 The 18 captured writes occurred while stepping through the displayed slider labels from -3 to +3. This strongly indicates that OBSBOT Center uses the standard UVC Backlight Compensation control for that slider.
 
-### Direct cross-check: +2.3 = BLC 16
+### Direct cross-checks: +2.0 = BLC 15 and +2.3 = BLC 16
 
-The mapping was subsequently confirmed on the Linux test host using the camera itself:
+The mappings were confirmed on the Linux test host using the camera itself:
 
-1. The camera was sent a direct UVC `SET_CUR` request for BLC value `16` (`10 00`).
-2. A subsequent UVC `GET_CUR` returned `10 00`, decoded as `16`.
-3. OBSBOT Center was opened and its Exposure Compensation slider displayed `+2.3`.
+| OBSBOT Center label | Direct SET_CUR value | SET_CUR payload | GET_CUR response |
+|---:|---:|---|---|
+| `+2.0` | 15 | `0f 00` | `0f 00` |
+| `+2.3` | 16 | `10 00` | `10 00` |
 
-This establishes the specific mapping **OBSBOT Center `+2.3` ↔ UVC BLC integer `16`** on the tested Tiny 2 Lite. The test used a direct USB write and hardware readback, not a V4L2 cached value.
+For each point, a direct UVC SET_CUR was followed by GET_CUR with matching readback. The camera was then passed to Windows, where OBSBOT Center displayed the corresponding slider label.
 
-The original Windows capture and this cross-check together support the slider's use of the standard UVC BLC control. The exact mapping of every other fractional label has not yet been individually verified. This also does not establish that the slider is equivalent to a conventional exposure-time control.
+This establishes **OBSBOT Center `+2.0` ↔ BLC 15** and **`+2.3` ↔ BLC 16** on the tested Tiny 2 Lite. These adjacent points support a zero-based mapping of the 19 slider positions to BLC values 0–18. The earlier capture summary that listed payloads 1–18 did not establish the exact label mapping; the former app's position+1 assumption was incorrect for these two directly checked positions.
 
-Do not infer every remaining label's mapping solely from this one confirmed point or the capture endpoints. The confirmed primitive is BLC integer 0–18 with direct USB readback.
+The exact mapping of every other fractional label has not yet been individually checked against OBSBOT Center. This also does not establish that the slider is equivalent to a conventional exposure-time control.
+
+The confirmed primitive is BLC integer 0–18 with direct USB readback.
 
 ## Implementation guidance
 
