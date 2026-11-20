@@ -454,7 +454,9 @@ extern "C" {
 
 fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x03 && data[1] == 0x01 {
+        if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x16 && data[1] == 0x02 {
+            LAST_UI_TEST_AI_MODE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
+        } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x03 && data[1] == 0x01 {
             LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.store(data[2], Ordering::Relaxed);
         } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
             LAST_UI_TEST_QUERY_SEQUENCE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
@@ -491,6 +493,9 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
                     data[16..16 + payload.len()].copy_from_slice(&payload);
                 }
             } else if selector == 0x06 && data.len() >= 0x25 {
+                let mode = LAST_UI_TEST_AI_MODE.load(Ordering::Relaxed);
+                data[0x18] = mode as u8;
+                data[0x1c] = (mode >> 8) as u8;
                 data[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] = LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.load(Ordering::Relaxed);
                 data[0x10] = 1;
                 data[0x21] = 1;
@@ -1348,6 +1353,7 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
 static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
 
@@ -1968,6 +1974,14 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     data[2] = mode.0;
     data[3] = mode.1;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    let readback = xu_status(device)?;
+    let actual = (readback[0x18], readback[0x1c]);
+    if actual != mode {
+        return Err(format!(
+            "AI mode read-back mismatch: requested {:02x}/{:02x}, camera reports {:02x}/{:02x}.",
+            mode.0, mode.1, actual.0, actual.1
+        ));
+    }
     let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x03, 0x00) => "hand", (0x01, 0x00) => "group", _ => "unknown" };
     update_config(|config| config.ai_tracking_mode = Some(name.into()));
     Ok(())
@@ -2155,7 +2169,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
         match result {
             Ok(()) => {
                 *last_mode_change.borrow_mut() = Some(id.clone());
-                status_mode.set_text(&format!("AI tracking mode set to {}. Device status can be refreshed to verify.", id));
+                status_mode.set_text(&format!("AI tracking mode set to {}. Camera read-back confirmed.", id));
             }
             Err(error) => {
                 changing_mode_state.set(true);

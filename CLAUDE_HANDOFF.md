@@ -18,7 +18,7 @@ Continue the GTK UI redesign and implementation on the existing Rust/GTK4 app. T
 - Do not interpret selector `0x06` byte `0x07` as Zoom gesture state.
 - Gesture command payloads, Dynamic Zoom Direction inversion, rolling frame sequence, and CRC/frame builder are existing protocol code. Preserve them.
 - The meanings of selector `0x03` byte 0 and selector `0x09` byte 0 are unknown. Do not expose them as user-facing status.
-- Desk and Whiteboard are out of the product scope and must not be reintroduced in UI, enums, docs, examples, or tests.
+- Only the eight enumerated AI modes are in product scope. Do not add other mode choices without new hardware evidence and an explicit product decision.
 
 ## UI design objectives
 
