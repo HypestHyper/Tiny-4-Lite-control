@@ -848,10 +848,8 @@ fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), Stri
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
-fn microphone_during_sleep_payload(enabled: bool) -> [u8; 60] {
-    let mut data = [0u8; 60];
-    data[..3].copy_from_slice(&[0x13, 0x01, u8::from(enabled)]);
-    data
+fn microphone_during_sleep_payload(enabled: bool) -> [u8; 3] {
+    [0x13, 0x01, u8::from(enabled)]
 }
 
 fn set_microphone_during_sleep(device: &str, enabled: bool) -> Result<(), String> {
@@ -3012,7 +3010,6 @@ mod xu_protocol_tests {
         for (enabled, expected) in [(false, [0x13, 0x01, 0x00]), (true, [0x13, 0x01, 0x01])] {
             let payload = microphone_during_sleep_payload(enabled);
             assert_eq!(&payload[..3], &expected);
-            assert!(payload[3..].iter().all(|byte| *byte == 0));
         }
     }
 
