@@ -12,6 +12,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::OnceLock;
 
 thread_local! {
     static APP_CONFIG: RefCell<config::AppConfig> = RefCell::new(config::AppConfig::default());
@@ -589,7 +590,7 @@ pub(crate) fn obsbot_query_frame(receiver: u8, command: u16, sequence: u16) -> [
 }
 
 fn query_obsbot(device: &str, receiver: u8, command: u16) -> Result<Vec<u8>, String> {
-    let sequence = next_xu_sequence(&XU_SEQUENCE);
+    let sequence = next_xu_sequence();
     let mut request = obsbot_query_frame(receiver, command, sequence);
     xu_query(device, 0x02, UVC_SET_CUR, &mut request)?;
     for _ in 0..20 {
@@ -1316,12 +1317,19 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
 // OBSBOT's frame sequence is a rolling transaction counter shared by
 // framed XU commands. The capture shows consecutive values 0x000f..0x0012
 // across Direction Flip and Dynamic Zoom commands, not fixed per-feature IDs.
-static XU_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 
-fn next_xu_sequence(counter: &AtomicU16) -> u16 {
-    counter.fetch_add(1, Ordering::Relaxed)
+fn next_xu_sequence() -> u16 {
+    let counter = XU_SEQUENCE.get_or_init(|| {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u16)
+            .unwrap_or(0);
+        AtomicU16::new(seed)
+    });
+    counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
 fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
