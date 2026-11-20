@@ -113,6 +113,20 @@ fn add_gimbal_position_feedback(container: &gtk::Box, device: &str) {
     container.append(&frame);
 
     let device = device.to_string();
+    // Initialize immediately, then keep the readout live. This selector-0x02
+    // GET_CUR candidate is based on the documented position-like float pair.
+    match get_gimbal_position(&device) {
+        Ok((pan, tilt)) => {
+            pan_value.set_text(&format!("{pan:+.1}°"));
+            tilt_value.set_text(&format!("{tilt:+.1}°"));
+        }
+        Err(error) => {
+            pan_value.set_text("Unavailable");
+            tilt_value.set_text("Unavailable");
+            pan_value.set_tooltip_text(Some(&error));
+            tilt_value.set_tooltip_text(Some(&error));
+        }
+    }
     let pan_weak = pan_value.downgrade();
     let tilt_weak = tilt_value.downgrade();
     gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
@@ -245,6 +259,9 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
                 let succeeded = result.is_ok();
                 status_label.set_text(&result.map(|_| format!("{name}: {value}"))
                     .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
+                if !succeeded {
+                    button.set_active(value == 0);
+                }
                 if succeeded && matches!(name.as_str(), "white_balance_automatic" | "focus_automatic_continuous") {
                     populate_controls(&refresh_device, &controls_refresh, &window_refresh, &status_label);
                 }
@@ -330,14 +347,30 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
             let value_display = value_label.clone();
             let display_name = name.clone();
             let default_value = control.default_value;
+            let last_value = Rc::new(Cell::new(control.value));
+            let reverting = Rc::new(Cell::new(false));
+            let last_value_cb = last_value.clone();
+            let reverting_cb = reverting.clone();
             scale.connect_value_changed(move |slider| {
+                if reverting_cb.get() { return; }
                 let requested = slider.value().round() as i64;
                 value_display.set_text(&control_display_value(&display_name, requested));
                 let result = set_control(&dev, &name, requested);
-                let success = result.is_ok();
-                status_label.set_text(&result.map(|_| format!("{} set to {}", control_display_name(&name), control_display_value(&name, requested)))
-                    .unwrap_or_else(|e| format!("Could not set {name}: {e}")));
-                reset_button.set_sensitive(success && requested != default_value);
+                match result {
+                    Ok(()) => {
+                        last_value_cb.set(requested);
+                        status_label.set_text(&format!("{} set to {}", control_display_name(&name), control_display_value(&name, requested)));
+                        reset_button.set_sensitive(requested != default_value);
+                    }
+                    Err(error) => {
+                        reverting_cb.set(true);
+                        slider.set_value(last_value_cb.get() as f64);
+                        value_display.set_text(&control_display_value(&display_name, last_value_cb.get()));
+                        reverting_cb.set(false);
+                        reset_button.set_sensitive(last_value_cb.get() != default_value);
+                        status_label.set_text(&format!("Could not set {name}: {error}"));
+                    }
+                }
             });
             row.append(&scale);
             row.append(&value_label);
