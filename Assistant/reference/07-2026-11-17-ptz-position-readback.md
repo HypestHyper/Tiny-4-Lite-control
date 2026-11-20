@@ -1,5 +1,13 @@
 # 2026-11-17 PTZ position read-back investigation
 
+> **Scope update (2026-11-20):** This document investigates the
+> vendor Extension Unit 2 / selector 0x02 GET_CUR candidate fields only.
+> It is not the position-readback path currently implemented in the app.
+> Windows DirectShow later confirmed live physical Pan/Tilt feedback via
+> standard Camera Terminal PanTilt Absolute (entity 1, selector 0x0D).
+> The app now implements that read-only request; Linux hardware validation
+> is tracked separately in [reference 12](12-2026-11-19-directshow-pan-tilt-position-readback.md).
+
 **Target:** OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`  
 **Purpose:** Determine whether the camera exposes current pan/tilt position through vendor UVC Extension Unit read-back, including while AI tracking moves the gimbal.  
 **Evidence status:** Position-like data is strongly indicated in selector `0x02` GET_CUR responses, but continuous/live read-back during AI tracking is not yet verified.
