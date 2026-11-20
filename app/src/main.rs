@@ -453,9 +453,41 @@ extern "C" {
 
 fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if request == UVC_GET_CUR {
+        if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
+            LAST_UI_TEST_QUERY_SEQUENCE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
+            LAST_UI_TEST_QUERY_COMMAND.store(u16::from_le_bytes([data[10], data[11]]), Ordering::Relaxed);
+        } else if request == UVC_GET_CUR {
             data.fill(0);
-            if selector == 0x06 && data.len() >= 0x25 {
+            if selector == 0x02 && data.len() >= 60 {
+                let command = LAST_UI_TEST_QUERY_COMMAND.load(Ordering::Relaxed);
+                let sequence = LAST_UI_TEST_QUERY_SEQUENCE.load(Ordering::Relaxed);
+                let payload: Vec<u8> = match command {
+                    0x0043 => vec![0; 12],
+                    0x6804 => 1.0f32.to_le_bytes().to_vec(),
+                    0x3884 => {
+                        let mut v = 3u32.to_le_bytes().to_vec();
+                        for f in [0.0f32, 0.0, 0.0, 1.0, 0.0] { v.extend_from_slice(&f.to_le_bytes()); }
+                        v
+                    }
+                    0x3e84 => {
+                        let mut v = vec![0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+                        v.extend_from_slice(&[0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+                        v.extend_from_slice(&[0; 4]);
+                        v.extend_from_slice(&[0xff; 4]);
+                        v.extend_from_slice(&[0; 16]);
+                        v
+                    }
+                    _ => Vec::new(),
+                };
+                if !payload.is_empty() {
+                    data[0] = 0xaa; data[1] = 0x29;
+                    data[2..4].copy_from_slice(&sequence.to_le_bytes());
+                    data[4..6].copy_from_slice(&12u16.to_le_bytes());
+                    data[8..12].copy_from_slice(&[0x0a, 0x04, command as u8, (command >> 8) as u8]);
+                    data[12..14].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+                    data[16..16 + payload.len()].copy_from_slice(&payload);
+                }
+            } else if selector == 0x06 && data.len() >= 0x25 {
                 data[0x10] = 1;
                 data[0x21] = 1;
             } else if selector == 0x0d && !data.is_empty() {
@@ -544,10 +576,113 @@ fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
 /// Read the Camera Terminal Pan/Tilt Absolute control directly.
 /// Windows DirectShow testing showed that this control follows hand-moved
 /// physical position. Linux still needs on-device confirmation.
+pub(crate) fn obsbot_query_frame(receiver: u8, command: u16, sequence: u16) -> [u8; 60] {
+    let mut frame = [0u8; 60];
+    frame[0] = 0xaa;
+    frame[1] = 0x01;
+    frame[2..4].copy_from_slice(&sequence.to_le_bytes());
+    frame[4..6].copy_from_slice(&12u16.to_le_bytes());
+    frame[8..12].copy_from_slice(&[0x0a, receiver, command as u8, (command >> 8) as u8]);
+    let crc = crc16_usb(&frame[..12]);
+    frame[6..8].copy_from_slice(&crc.to_le_bytes());
+    frame
+}
+
+fn query_obsbot(device: &str, receiver: u8, command: u16) -> Result<Vec<u8>, String> {
+    let sequence = next_xu_sequence(&XU_SEQUENCE);
+    let mut request = obsbot_query_frame(receiver, command, sequence);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut request)?;
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut response = [0u8; 60];
+        if xu_query(device, 0x02, UVC_GET_CUR, &mut response).is_err() { continue; }
+        if response[0] != 0xaa || u16::from_le_bytes([response[2], response[3]]) != sequence {
+            continue;
+        }
+        match response[1] {
+            0x29 => {
+                let len = usize::from(u16::from_le_bytes([response[12], response[13]]));
+                if len > 44 { return Err(format!("OBSBOT reply 0x{command:04x} declares invalid payload length {len}.")); }
+                return Ok(response[16..16 + len].to_vec());
+            }
+            0x89 => return Err(format!("OBSBOT rejected query 0x{command:04x}.")),
+            0x09 if u16::from_le_bytes([response[10], response[11]]) == command => return Ok(Vec::new()),
+            _ => {}
+        }
+    }
+    Err(format!("No matching OBSBOT reply for query 0x{command:04x} (sequence 0x{sequence:04x})."))
+}
+
+fn decode_live_gimbal_position(data: &[u8]) -> Result<(f64, f64), String> {
+    if data.len() < 12 { return Err(format!("Live gimbal reply is {} bytes; expected at least 12.", data.len())); }
+    let pitch = i16::from_le_bytes([data[8], data[9]]) as f64 / 100.0;
+    let pan = i16::from_le_bytes([data[10], data[11]]) as f64 / 100.0;
+    Ok((pan, -pitch))
+}
+
 pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
-    let mut data = [0u8; 8];
-    camera_terminal_query(device, UVC_CT_PANTILT_ABSOLUTE, UVC_GET_CUR, &mut data)?;
-    Ok(decode_pan_tilt_absolute(&data))
+    let reply = query_obsbot(device, 0x03, 0x0043)?;
+    decode_live_gimbal_position(&reply)
+}
+
+fn get_live_zoom_factor(device: &str) -> Result<f32, String> {
+    let reply = query_obsbot(device, 0x04, 0x6804)?;
+    let bytes: [u8; 4] = reply.get(..4)
+        .ok_or_else(|| format!("Live zoom reply is {} bytes; expected 4.", reply.len()))?
+        .try_into().unwrap();
+    let zoom = f32::from_le_bytes(bytes);
+    if !zoom.is_finite() || !(1.0..=4.0).contains(&zoom) {
+        return Err(format!("Camera returned invalid live zoom factor {zoom}."));
+    }
+    Ok(zoom)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct InitialCameraState {
+    pub source: u32,
+    pub pan: f32,
+    pub tilt: f32,
+    pub zoom: f32,
+}
+
+pub(crate) fn read_initial_camera_state(device: &str) -> Result<InitialCameraState, String> {
+    let reply = query_obsbot(device, 0x04, 0x3884)?;
+    if reply.len() < 20 { return Err(format!("Initial-state pose reply is {} bytes; expected at least 20.", reply.len())); }
+    let read_float = |offset: usize| -> Result<f32, String> {
+        let bytes: [u8; 4] = reply[offset..offset + 4].try_into().unwrap();
+        let value = f32::from_le_bytes(bytes);
+        if value.is_finite() { Ok(value) } else { Err("Initial-state pose contains a non-finite value.".into()) }
+    };
+    Ok(InitialCameraState {
+        source: u32::from_le_bytes(reply[0..4].try_into().unwrap()),
+        pan: read_float(4)?,
+        tilt: -read_float(8)?,
+        zoom: read_float(16)?,
+    })
+}
+
+pub(crate) fn set_initial_camera_state(device: &str) -> Result<InitialCameraState, String> {
+    let (pan, tilt) = get_gimbal_position(device)?;
+    let zoom = get_live_zoom_factor(device)?;
+    // Read and preserve the existing initial-state picture/action block. If it
+    // cannot be read, abort before changing the boot pose.
+    let actions = query_obsbot(device, 0x04, 0x3e84)?;
+    if actions.len() != 40 {
+        return Err(format!("Initial-state settings reply is {} bytes; expected 40. Nothing was changed.", actions.len()));
+    }
+    let mut pose = Vec::with_capacity(24);
+    pose.extend_from_slice(&3u32.to_le_bytes()); // source 3 = independent pose, not a preset slot
+    for value in [pan as f32, -tilt as f32, 0.0f32, zoom, 0.0f32] {
+        pose.extend_from_slice(&value.to_le_bytes());
+    }
+    send_camera_preset_command(device, 0x3ec4, &pose)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    send_camera_preset_command(device, 0x3e44, &actions)?;
+    let saved = read_initial_camera_state(device)?;
+    if (saved.pan - pan as f32).abs() > 0.2 || (saved.tilt - tilt as f32).abs() > 0.2 {
+        return Err(format!("Initial-state write was sent, but read-back differs: requested Pan {pan:+.1}° / Tilt {tilt:+.1}°, camera reports Pan {:+.1}° / Tilt {:+.1}°.", saved.pan, saved.tilt));
+    }
+    Ok(saved)
 }
 
 fn decode_candidate_gimbal_position(data: &[u8; 60]) -> Result<(f64, f64), String> {
@@ -1173,6 +1308,8 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
 // framed XU commands. The capture shows consecutive values 0x000f..0x0012
 // across Direction Flip and Dynamic Zoom commands, not fixed per-feature IDs.
 static XU_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
+static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 
 fn next_xu_sequence(counter: &AtomicU16) -> u16 {
     counter.fetch_add(1, Ordering::Relaxed)
