@@ -226,8 +226,11 @@ change, rather than independently guessing defaults.
 The Diagnostics page provides read-only XU reads for selectors `0x02`
 and `0x06`, plus the model/stream name from selector `0x08` and USB
 descriptor identity. USB `bcdDevice` is labelled as the device-release
-field, not as installed firmware. Candidate pan/tilt float values from
-selector `0x02` remain unverified as live position telemetry.
+field, not as installed firmware. The Controls page separately polls
+standard Camera Terminal PanTilt Absolute GET_CUR (entity 1, selector
+`0x0D`) for physical position; Linux hardware validation remains pending.
+Candidate float values from vendor selector `0x02` remain a separate,
+unverified research lead.
 
 The Capture page:
 
