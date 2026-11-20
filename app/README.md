@@ -306,14 +306,15 @@ revision as build-verified.
   the in-process camera service and optional restore-on-connect behavior
   are still future work.
 - Global / Face autofocus priority remains not yet hardware-verified.
-  The 2026-11-18 capture establishes the likely payload mapping
-  (Global `bf fb 01 00`, Face `be 07 00 00`) and shows that the final
-  Face-to-Global transition emitted no focus SET_CUR. The payload mapping
-  and GTK toggle dispatch were corrected; a fresh capture and visible
-  behavior test are still required. Reliable read-back for most gesture
-  states, automatic firmware detection, live pan/tilt telemetry, HDR
-  setter verification, physical Mirror image validation, and preset mutation
-  remain unimplemented or unverified.
+  The current app mapping is Global `bf fb 01 00`, Face `be 07 00 00`.
+  The 2026-11-18 capture had a missing final transition, and the user
+  reports neither option currently produces the expected behavior. A
+  fresh action-correlated capture and visible behavior test are required.
+  Reliable read-back for most gesture states, automatic firmware
+  detection, Linux validation of Camera Terminal pan/tilt read-back,
+  HDR visible-effect validation, physical Mirror image validation,
+  pop-filter prototype validation, and camera-native preset-slot
+  operations remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
   capture evidence and explicit hardware validation.
 
