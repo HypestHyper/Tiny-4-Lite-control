@@ -113,8 +113,8 @@ fn add_gimbal_position_feedback(container: &gtk::Box, device: &str) {
     container.append(&frame);
 
     let device = device.to_string();
-    // Initialize immediately, then keep the readout live. This selector-0x02
-    // GET_CUR candidate is based on the documented position-like float pair.
+    // Initialize immediately, then poll the framed gimbal-controller
+    // query 0x0043, which returns live physical pan/tilt.
     match get_gimbal_position(&device) {
         Ok((pan, tilt)) => {
             pan_value.set_text(&format!("{pan:+.1}°"));
