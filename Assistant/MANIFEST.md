@@ -4,7 +4,7 @@
 
 - Original OBSBOT Tiny 2 Lite research: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
 - Eight topic notes under `reference/`, including the 2026-11-17 PTZ position read-back and firmware/FOV investigations.
-- Complete source preserved unchanged; topic files retain original section content/order.
+- Original research source retained and updated where later controlled hardware tests supersede its earlier candidate inventories; dated evidence notes preserve test scope and confidence.
 
 ## Tiny 2 Lite V4L2 hardware reference
 

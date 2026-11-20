@@ -332,14 +332,24 @@ update V4L2 `zoom_absolute`.
 
 ### 4.4 AI tracking / framing modes
 
-**Status:** Ten modes validated on Tiny 2 Lite in Domatix protocol
-notes.
+**Current validated scope (2026-11-20):** Eight AI tracking modes
+were individually set and read back on the Tiny 2 Lite. The older
+candidate inventory below is superseded by the controlled Linux test.
 
-Modes: 1. Normal 2. Upper Body 3. Close-up 4. Headless 5. Lower Body 6.
-Group 7. Desk 8. Whiteboard 9. Hand 10. Off
+| Mode | Selector 0x06 tuple |
+|---|---|
+| No Tracking | `00 00` |
+| Normal Tracking | `02 00` |
+| Upper Body | `02 01` |
+| Close-up | `02 02` |
+| Headless | `02 03` |
+| Lower Body | `02 04` |
+| Hand | `03 00` |
+| Group | `01 00` |
 
-Use the exact enum values from the current Domatix protocol
-document/source. Do not invent enum numbers from the display order.
+The tuple is read from selector 0x06 status offsets 0x18 and 0x1C.
+See [reference/15-2026-11-20-ai-mode-and-gesture-readback.md](../reference/15-2026-11-20-ai-mode-and-gesture-readback.md)
+for the controlled test results and evidence limits.
 
 ### 4.5 Tracking speed
 
