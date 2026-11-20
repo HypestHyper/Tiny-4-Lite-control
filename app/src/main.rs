@@ -454,7 +454,9 @@ extern "C" {
 
 fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
+        if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x03 && data[1] == 0x01 {
+            LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.store(data[2], Ordering::Relaxed);
+        } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
             LAST_UI_TEST_QUERY_SEQUENCE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
             LAST_UI_TEST_QUERY_COMMAND.store(u16::from_le_bytes([data[10], data[11]]), Ordering::Relaxed);
         } else if request == UVC_GET_CUR {
@@ -489,6 +491,7 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
                     data[16..16 + payload.len()].copy_from_slice(&payload);
                 }
             } else if selector == 0x06 && data.len() >= 0x25 {
+                data[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] = LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.load(Ordering::Relaxed);
                 data[0x10] = 1;
                 data[0x21] = 1;
             } else if selector == 0x0d && !data.is_empty() {
@@ -1320,6 +1323,7 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
 static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
