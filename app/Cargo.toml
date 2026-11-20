@@ -1,0 +1,16 @@
+[package]
+name = "tiny4lite-control"
+version = "0.1.0"
+edition = "2021"
+description = "A small GTK4 V4L2 control bench for the OBSBOT Tiny 2 Lite"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+gtk = { package = "gtk4", version = "0.9", features = ["v4_8"] }
+gdk-pixbuf = "0.20"
+jpeg-decoder = "0.3"
+async-channel = "2"
+gdk4-wayland = "0.9"
+gdk4-x11 = "0.9"

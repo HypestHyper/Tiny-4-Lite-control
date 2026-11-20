@@ -1,0 +1,49 @@
+name: Headless GTK UI validation
+
+on:
+  push:
+    branches: [test-app-v0.1]
+    paths:
+      - "app/**"
+      - ".github/workflows/headless-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headless-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install GTK and virtual-display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libfontconfig1-dev v4l-utils xvfb xdotool imagemagick
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run unit tests and build
+        working-directory: app
+        run: |
+          cargo test --release
+          cargo build --release
+
+      - name: Render UI screenshots with a synthetic camera
+        run: |
+          mkdir -p app/artifacts/headless-ui
+          bash app/tests/headless-screenshots.sh \
+            app/target/release/tiny4lite-control \
+            app/artifacts/headless-ui
+
+      - name: Upload screenshots and render logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiny4lite-headless-ui
+          path: app/artifacts/headless-ui/
+          if-no-files-found: warn
+          retention-days: 14

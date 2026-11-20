@@ -1,0 +1,176 @@
+//! Application start-up, window switching and camera connection.
+
+use super::full::FullWindow;
+use super::popup::PreviewWindow;
+use super::preview::PreviewHub;
+use super::slim::SlimWindow;
+use super::store::{Connection, Store};
+use super::style::Style;
+use super::windowing;
+use crate::backend::worker::Camera;
+use crate::backend::{self, current_config, install_config, update_config};
+use crate::config;
+use gtk::glib;
+use gtk::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Duration;
+
+pub struct Ctx {
+    pub app: gtk::Application,
+    pub store: Store,
+    pub hub: PreviewHub,
+    pub style: Rc<Style>,
+    full: RefCell<Option<FullWindow>>,
+    slim: RefCell<Option<SlimWindow>>,
+    popup: RefCell<Option<PreviewWindow>>,
+    scan_timer: RefCell<Option<glib::SourceId>>,
+}
+
+/// Find the camera and describe how reachable it is.
+fn discover() -> (Option<String>, Connection) {
+    match backend::discover_tiny4lite().into_iter().next() {
+        Some(path) => (Some(path), Connection::Connected),
+        None if backend::usb_camera_present() => (None, Connection::NoVideoNode),
+        None => (None, Connection::Absent),
+    }
+}
+
+impl Ctx {
+    fn build(app: &gtk::Application) -> Rc<Ctx> {
+        match config::load() {
+            Ok(loaded) => install_config(loaded),
+            Err(error) => eprintln!("Using default settings: {error}"),
+        }
+        let style = Style::install();
+        if crate::backend::ui_test_mode() {
+            if let Ok(mode) = std::env::var("TINY4LITE_UI_TEST_THEME") { style.set_mode(super::theme::ThemeMode::from_name(&mode)); }
+            if let Ok(scale) = std::env::var("TINY4LITE_UI_TEST_SCALE") { style.set_scale(super::theme::UiScale::from_name(&scale)); }
+        }
+        let (path, connection) = discover();
+        let camera = Camera::spawn(path.as_deref().unwrap_or(""));
+        let store = Store::new(camera, connection);
+        let hub = PreviewHub::new(&store);
+        let ctx = Rc::new(Ctx {
+            app: app.clone(), store, hub, style,
+            full: RefCell::default(), slim: RefCell::default(), popup: RefCell::default(), scan_timer: RefCell::default(),
+        });
+        if connection == Connection::Connected {
+            // Restore the remembered capture mode; this never moves the gimbal.
+            ctx.store.call(None, |device| backend::apply_saved_video_mode(device), |_| {});
+            ctx.store.refresh();
+        } else {
+            ctx.start_scanning();
+        }
+        ctx
+    }
+
+    /// Look for the camera now; `announce` reports the outcome.
+    pub fn reconnect(self: &Rc<Self>, announce: bool) {
+        let (path, connection) = discover();
+        match (path, connection) {
+            (Some(path), Connection::Connected) => {
+                let was = self.store.connection();
+                self.store.set_camera(Camera::spawn(&path), Connection::Connected);
+                if let Some(id) = self.scan_timer.borrow_mut().take() { id.remove(); }
+                if was != Connection::Connected { self.store.toast("Camera connected"); }
+            }
+            (_, connection) => {
+                if self.store.connection() != connection {
+                    self.store.set_camera(Camera::spawn(""), connection);
+                }
+                if announce {
+                    self.store.error(match connection {
+                        Connection::NoVideoNode => "The camera is plugged in, but has no video device yet.",
+                        _ => "Still no camera found.",
+                    });
+                }
+                self.start_scanning();
+            }
+        }
+    }
+
+    /// While disconnected, look again every few seconds. Costs a directory read.
+    fn start_scanning(self: &Rc<Self>) {
+        if self.scan_timer.borrow().is_some() { return; }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local(Duration::from_secs(3), move || {
+            let Some(ctx) = weak.upgrade() else { return glib::ControlFlow::Break };
+            let (path, connection) = discover();
+            if let (Some(path), Connection::Connected) = (path, connection) {
+                ctx.scan_timer.borrow_mut().take();
+                ctx.store.set_camera(Camera::spawn(&path), Connection::Connected);
+                ctx.store.toast("Camera connected");
+                return glib::ControlFlow::Break;
+            }
+            if ctx.store.connection() != connection { ctx.store.set_camera(Camera::spawn(""), connection); }
+            glib::ControlFlow::Continue
+        });
+        *self.scan_timer.borrow_mut() = Some(id);
+    }
+
+    pub fn show_full(self: &Rc<Self>) {
+        update_config(|c| c.last_window = "full".into());
+        if let Some(slim) = self.slim.borrow().as_ref() {
+            slim.joystick.release();
+            slim.window.set_visible(false);
+        }
+        let mut full = self.full.borrow_mut();
+        let window = full.get_or_insert_with(|| FullWindow::new(self));
+        window.window.present();
+    }
+
+    pub fn show_slim(self: &Rc<Self>) {
+        update_config(|c| c.last_window = "slim".into());
+        if let Some(full) = self.full.borrow().as_ref() {
+            full.joystick.release();
+            full.window.set_visible(false);
+        }
+        let mut slim = self.slim.borrow_mut();
+        let window = slim.get_or_insert_with(|| SlimWindow::new(self));
+        window.window.present();
+    }
+
+    /// Move the preview into its own window, or back.
+    pub fn set_popped_out(self: &Rc<Self>, popped: bool) {
+        update_config(|c| c.preview_popped_out = popped);
+        if let Some(full) = self.full.borrow().as_ref() { full.set_popped_out(popped); }
+        if popped {
+            let mut popup = self.popup.borrow_mut();
+            let window = popup.get_or_insert_with(|| PreviewWindow::new(self));
+            window.window.present();
+        } else if let Some(popup) = self.popup.borrow().as_ref() {
+            popup.window.set_visible(false);
+        }
+    }
+
+    pub fn quit(&self) {
+        self.hub.stop();
+        self.app.quit();
+    }
+}
+
+pub fn run() {
+    let app = gtk::Application::builder()
+        .application_id(windowing::APP_ID)
+        .flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
+        .build();
+    // Options: --slim / --full choose the window; --preview opens the pop-out too.
+    app.add_main_option("slim", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the slim window", None);
+    app.add_main_option("full", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the full window", None);
+    app.add_main_option("preview", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the pop-out preview", None);
+
+    let ctx_cell: Rc<RefCell<Option<Rc<Ctx>>>> = Rc::default();
+    let cell = ctx_cell.clone();
+    app.connect_command_line(move |app, command_line| {
+        let options = command_line.options_dict();
+        let ctx = cell.borrow_mut().get_or_insert_with(|| Ctx::build(app)).clone();
+        let want_slim = options.contains("slim");
+        let want_full = options.contains("full");
+        let last_slim = current_config().last_window == "slim";
+        if want_slim || (!want_full && last_slim) { ctx.show_slim(); } else { ctx.show_full(); }
+        if options.contains("preview") || current_config().preview_popped_out { ctx.set_popped_out(true); }
+        0
+    });
+    app.run();
+}

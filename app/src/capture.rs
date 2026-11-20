@@ -1,0 +1,918 @@
+use gtk::prelude::*;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::rc::Rc;
+use std::thread::{self, JoinHandle};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+struct Checkpoint {
+    elapsed: f64,
+    note: String,
+}
+
+struct ActionWindow {
+    start_elapsed: f64,
+    start_epoch: f64,
+    end_elapsed: f64,
+    end_epoch: f64,
+    note: String,
+}
+
+struct CaptureSession {
+    child: Child,
+    pcap_path: PathBuf,
+    bus: u32,
+    address: u32,
+    started: Instant,
+    started_epoch: u64,
+    test_name: String,
+    checkpoints: Vec<Checkpoint>,
+    actions: Vec<ActionWindow>,
+    pending_action: Option<(f64, f64, String)>,
+    writer: Option<JoinHandle<io::Result<()>>>,
+    stderr_reader: Option<JoinHandle<String>>,
+    stopped: bool,
+}
+
+
+fn summarize_control_transfers(decoded: &str) -> String {
+    let mut lines = decoded.lines();
+    let Some(header) = lines.next() else { return "No decoded transfer rows.\n".into(); };
+    let columns: Vec<&str> = header.split('\t').collect();
+    let index = |name: &str| columns.iter().position(|column| *column == name);
+    let (Some(urb_type_i), Some(urb_id_i), Some(request_i), Some(value_i), Some(index_i)) =
+        (index("usb.urb_type"), index("usb.urb_id"), index("usb.setup.bRequest"),
+         index("usb.setup.wValue"), index("usb.setup.wIndex")) else {
+        return "Summary unavailable: expected TShark fields were not present in the decoded output.\n".into();
+    };
+
+    let mut transfer_types = BTreeMap::<String, usize>::new();
+    let mut request_groups = BTreeMap::<(String, String, String), usize>::new();
+    let mut urb_ids = BTreeMap::<String, usize>::new();
+    let mut rows = 0usize;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() <= [urb_type_i, urb_id_i, request_i, value_i, index_i].into_iter().max().unwrap_or(0) {
+            continue;
+        }
+        rows += 1;
+        *transfer_types.entry(fields[urb_type_i].to_string()).or_default() += 1;
+        *request_groups.entry((
+            fields[request_i].to_string(),
+            fields[value_i].to_string(),
+            fields[index_i].to_string(),
+        )).or_default() += 1;
+        *urb_ids.entry(fields[urb_id_i].to_string()).or_default() += 1;
+    }
+
+    let mut report = format!("TRANSFER SUMMARY\n----------------\nDecoded rows: {rows}\n\nURB types:\n");
+    for (kind, count) in transfer_types {
+        report.push_str(&format!("  {kind}: {count}\n"));
+    }
+    report.push_str("\nControl request groups (bRequest / wValue / wIndex):\n");
+    for ((request, value, index), count) in request_groups {
+        report.push_str(&format!("  {request} / {value} / {index}: {count}\n"));
+    }
+    let reused = urb_ids.values().filter(|count| **count > 1).count();
+    report.push_str(&format!(
+        "\nURB IDs appearing more than once: {reused}\nPair submissions and completions by URB ID in capture order; IDs can be reused.\n\n"
+    ));
+    report
+}
+
+fn packets_in_action_windows(decoded: &str, actions: &[ActionWindow]) -> String {
+    if actions.is_empty() {
+        return String::new();
+    }
+    let mut lines = decoded.lines();
+    let Some(header) = lines.next() else {
+        return "\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\nNo decoded packet rows.\n".into();
+    };
+    let columns: Vec<&str> = header.split('\t').collect();
+    let Some(epoch_index) = columns.iter().position(|column| *column == "frame.time_epoch") else {
+        return "\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\nUnavailable: frame.time_epoch was not present.\n".into();
+    };
+    let rows: Vec<Vec<String>> = lines.map(|line| line.split('\t').map(str::to_string).collect()).collect();
+    let mut report = String::from("\nPACKETS INSIDE ACTION WINDOWS\n-----------------------------\n");
+    for (index, action) in actions.iter().enumerate() {
+        report.push_str(&format!("\nAction {:02}: {}\n", index + 1, action.note));
+        let mut matched = 0usize;
+        for row in &rows {
+            let Some(epoch) = row.get(epoch_index).and_then(|value| value.parse::<f64>().ok()) else {
+                continue;
+            };
+            if epoch >= action.start_epoch && epoch <= action.end_epoch {
+                report.push_str(&row.join("\t"));
+                report.push('\n');
+                matched += 1;
+            }
+        }
+        if matched == 0 {
+            report.push_str("  No decoded control-transfer rows fell inside this time window.\n");
+        } else {
+            report.push_str(&format!("Matched rows: {matched}\n"));
+        }
+    }
+    report
+}
+
+impl CaptureSession {
+    fn add_checkpoint(&mut self, note: String) -> Result<f64, String> {
+        if self.child.try_wait().map_err(|e| e.to_string())?.is_some() {
+            return Err("The capture process has stopped. Finish this session and inspect its error log.".into());
+        }
+        let elapsed = self.started.elapsed().as_secs_f64();
+        self.checkpoints.push(Checkpoint { elapsed, note });
+        Ok(elapsed)
+    }
+
+    fn begin_action(&mut self, note: String) -> Result<f64, String> {
+        if self.child.try_wait().map_err(|e| e.to_string())?.is_some() {
+            return Err("The capture process has stopped. Finish this session and inspect its error log.".into());
+        }
+        if self.pending_action.is_some() {
+            return Err("An action window is already open. End it before starting another.".into());
+        }
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let epoch = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_secs_f64();
+        self.pending_action = Some((elapsed, epoch, note));
+        Ok(elapsed)
+    }
+
+    fn end_action(&mut self) -> Result<(f64, f64), String> {
+        let (start_elapsed, start_epoch, note) = self.pending_action.take()
+            .ok_or_else(|| "No action window is open.".to_string())?;
+        let end_elapsed = self.started.elapsed().as_secs_f64();
+        let end_epoch = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_secs_f64();
+        self.actions.push(ActionWindow {
+            start_elapsed, start_epoch, end_elapsed, end_epoch, note,
+        });
+        Ok((end_elapsed, end_epoch))
+    }
+
+    fn stop_process(&mut self) -> Result<String, String> {
+        if self.child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            let pid = self.child.id();
+            let _ = Command::new("kill").arg("-INT").arg(pid.to_string()).status();
+        }
+        let status = self.child.wait().map_err(|e| format!("Could not stop tshark: {e}"))?;
+        self.stopped = true;
+
+        match self.writer.take().map(|join| join.join()) {
+            Some(Ok(Err(error))) => return Err(format!("Could not finish writing the capture: {error}")),
+            Some(Err(_)) => return Err("The capture writer thread failed.".into()),
+            _ => {}
+        }
+
+        let stderr = self.stderr_reader.take()
+            .and_then(|join| join.join().ok()).unwrap_or_default();
+        if !status.success() && !status.code().is_some_and(|code| code == 130 || code == 2) {
+            return Err(format!("tshark exited with {status}. {}", stderr.trim()));
+        }
+        Ok(stderr)
+    }
+
+    fn finish(mut self) -> Result<(String, PathBuf), String> {
+        let stderr = self.stop_process()?;
+        let filter = format!("usb.device_address == {} && usb.transfer_type == 0x02", self.address);
+        let decoded = Command::new("tshark")
+            .arg("-r").arg(&self.pcap_path)
+            .arg("-Y").arg(&filter)
+            .args(["-T", "fields", "-E", "header=y", "-E", "separator=/t"])
+            .args([
+                "-e", "frame.number",
+                "-e", "usb.urb_id",
+                "-e", "frame.time_relative",
+                "-e", "frame.time_epoch",
+                "-e", "usb.urb_type",
+                "-e", "usb.urb_status",
+                "-e", "usb.endpoint_address",
+                "-e", "usb.bmRequestType",
+                "-e", "usb.setup.bRequest",
+                "-e", "usb.setup.wValue",
+                "-e", "usb.setup.wIndex",
+                "-e", "usb.data_len",
+                "-e", "usb.control.Response",
+                "-e", "usb.capdata",
+            ])
+            .output()
+            .map_err(|e| format!("Could not run tshark to decode the capture: {e}"))?;
+
+        let mut report = String::new();
+        report.push_str("OBSBOT TINY 2 LITE USB CAPTURE\n");
+        report.push_str("==============================\n\n");
+        report.push_str(&format!("Test: {}\n", self.test_name));
+        report.push_str(&format!("Started (Unix seconds): {}\n", self.started_epoch));
+        report.push_str(&format!("USB ID: 3564:fef9\nBus: {}\nDevice address: {}\nMonitor: usbmon{}\n",
+            self.bus, self.address, self.bus));
+        report.push_str(&format!("Raw capture: {}\n", self.pcap_path.display()));
+        report.push_str(&format!("Capture size: {} bytes\n\n",
+            fs::metadata(&self.pcap_path).map(|m| m.len()).unwrap_or(0)));
+
+        report.push_str("CHECKPOINTS\n-----------\n");
+        for (index, checkpoint) in self.checkpoints.iter().enumerate() {
+            report.push_str(&format!("{:02}. +{:.6}s  {}\n",
+                index + 1, checkpoint.elapsed, checkpoint.note));
+        }
+
+        report.push_str("\nACTION WINDOWS\n--------------\n");
+        report.push_str("Each window brackets the time spent switching to OBSBOT Center and making one change. Match USB packets by frame.time_epoch (Unix time) between the start and end timestamps; frame.time_relative is also retained for convenience.\n");
+        if self.actions.is_empty() {
+            report.push_str("No completed action windows.\n");
+        } else {
+            for (index, action) in self.actions.iter().enumerate() {
+                report.push_str(&format!(
+                    "{:02}. {} | elapsed +{:.6}s to +{:.6}s | epoch {:.6} to {:.6}\n",
+                    index + 1, action.note, action.start_elapsed, action.end_elapsed,
+                    action.start_epoch, action.end_epoch
+                ));
+            }
+        }
+        if let Some((start_elapsed, start_epoch, note)) = &self.pending_action {
+            report.push_str(&format!(
+                "INCOMPLETE. {} | started +{:.6}s | epoch {:.6}; no End action was recorded.\n",
+                note, start_elapsed, start_epoch
+            ));
+        }
+
+        report.push_str("\nCAMERA CONTROL TRANSFERS\n------------------------\n");
+        report.push_str("Filtered to this camera's USB device address and control transfers.\n");
+        if decoded.status.success() {
+            let decoded_text = String::from_utf8_lossy(&decoded.stdout);
+            report.push_str(&summarize_control_transfers(&decoded_text));
+            report.push_str(&packets_in_action_windows(&decoded_text, &self.actions));
+            report.push_str("RAW TRANSFER ROWS\n-----------------\n");
+            report.push_str(&decoded_text);
+        } else {
+            report.push_str("Could not decode the capture with tshark:\n");
+            report.push_str(&String::from_utf8_lossy(&decoded.stderr));
+        }
+
+        if !stderr.trim().is_empty() {
+            report.push_str("\nCAPTURE PROCESS LOG\n-------------------\n");
+            report.push_str(stderr.trim());
+            report.push('\n');
+        }
+
+        let report_path = self.pcap_path.with_extension("txt");
+        fs::write(&report_path, &report)
+            .map_err(|e| format!("Could not save report {}: {e}", report_path.display()))?;
+        Ok((report, report_path))
+    }
+}
+
+impl Drop for CaptureSession {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.stop_process();
+        }
+    }
+}
+
+fn usb_location() -> Result<(u32, u32), String> {
+    // Discover the USB device directly. Do not depend on /dev/videoN:
+    // the camera may be claimed by usbfs while passed through to a VM.
+    let entries = fs::read_dir("/sys/bus/usb/devices")
+        .map_err(|e| format!("Could not enumerate USB devices: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let vendor = fs::read_to_string(path.join("idVendor")).unwrap_or_default();
+        let product = fs::read_to_string(path.join("idProduct")).unwrap_or_default();
+        if vendor.trim().eq_ignore_ascii_case("3564")
+            && product.trim().eq_ignore_ascii_case("fef9")
+        {
+            let bus = fs::read_to_string(path.join("busnum"))
+                .map_err(|e| format!("Could not read camera USB bus number: {e}"))?
+                .trim().parse::<u32>().map_err(|e| e.to_string())?;
+            let address = fs::read_to_string(path.join("devnum"))
+                .map_err(|e| format!("Could not read camera USB device address: {e}"))?
+                .trim().parse::<u32>().map_err(|e| e.to_string())?;
+            return Ok((bus, address));
+        }
+    }
+    Err("OBSBOT Tiny 2 Lite (USB 3564:fef9) was not found in /sys/bus/usb/devices.".into())
+}
+
+fn capture_directory() -> Result<PathBuf, String> {
+    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .ok_or_else(|| "Could not determine the user's data directory.".to_string())?;
+    let directory = base.join("tiny4lite-control").join("captures");
+    fs::create_dir_all(&directory)
+        .map_err(|e| format!("Could not create {}: {e}", directory.display()))?;
+    Ok(directory)
+}
+
+fn start_session(test_name: String, baseline: String) -> Result<CaptureSession, String> {
+    if Command::new("tshark").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+        return Err("tshark is not installed. Install Wireshark/tshark first.".into());
+    }
+    let (bus, address) = usb_location()?;
+    let directory = capture_directory()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?;
+    let started_epoch = now.as_secs();
+    let file_name = format!("obsbot-capture-{}-{:09}.pcapng", now.as_secs(), now.subsec_nanos());
+    let pcap_path = directory.join(file_name);
+
+    // usbmon requires elevated access on many distributions. pkexec prompts once,
+    // while stdout is piped back into a file owned by the logged-in user.
+    let interface = format!("usbmon{bus}");
+    let mut child = Command::new("pkexec")
+        .arg("tshark")
+        .arg("-i").arg(interface)
+        .args(["-w", "-"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start pkexec/tshark: {e}. Install polkit (pkexec) and tshark."))?;
+
+    let stdout = child.stdout.take()
+        .ok_or_else(|| "Could not open tshark capture output.".to_string())?;
+    let stderr = child.stderr.take()
+        .ok_or_else(|| "Could not open tshark error output.".to_string())?;
+    let writer_path = pcap_path.clone();
+    let writer = thread::spawn(move || -> io::Result<()> {
+        let mut output = File::create(writer_path)?;
+        let mut input = stdout;
+        io::copy(&mut input, &mut output)?;
+        output.flush()?;
+        output.sync_all()
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut input = stderr;
+        let mut text = String::new();
+        let _ = input.read_to_string(&mut text);
+        text
+    });
+
+    let mut session = CaptureSession {
+        child, pcap_path, bus, address, started: Instant::now(), started_epoch,
+        test_name, checkpoints: Vec::new(), actions: Vec::new(), pending_action: None,
+        writer: Some(writer),
+        stderr_reader: Some(stderr_reader), stopped: false,
+    };
+    session.add_checkpoint(baseline)?;
+    Ok(session)
+}
+
+
+fn saved_report_paths() -> Vec<PathBuf> {
+    let Ok(directory) = capture_directory() else { return Vec::new(); };
+    let mut paths: Vec<PathBuf> = fs::read_dir(directory).ok().into_iter().flatten()
+        .flatten().map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "txt"))
+        .collect();
+    paths.sort_by_key(|path| fs::metadata(path).and_then(|m| m.modified()).ok());
+    paths.reverse();
+    paths
+}
+
+fn refresh_saved_list(list: &gtk::ListBox, paths: &Rc<RefCell<Vec<PathBuf>>>) {
+    while let Some(child) = list.first_child() { list.remove(&child); }
+    let found = saved_report_paths();
+    if found.is_empty() {
+        let empty = gtk::Label::new(Some("No saved captures yet. Finish a session to create a report."));
+        empty.set_xalign(0.0);
+        empty.add_css_class("dim-label");
+        empty.set_margin_top(12);
+        empty.set_margin_bottom(12);
+        empty.set_margin_start(12);
+        empty.set_margin_end(12);
+        list.append(&empty);
+    }
+    for path in &found {
+        let label = gtk::Label::new(Some(&format!(
+            "{}\n{}",
+            path.file_stem().unwrap_or_default().to_string_lossy(),
+            path.parent().unwrap_or(Path::new("")).display()
+        )));
+        label.set_xalign(0.0);
+        label.set_margin_top(8);
+        label.set_margin_bottom(8);
+        label.set_margin_start(12);
+        label.set_margin_end(12);
+        label.set_wrap(true);
+        let row = gtk::ListBoxRow::new();
+        row.set_child(Some(&label));
+        list.append(&row);
+    }
+    *paths.borrow_mut() = found;
+}
+
+fn text_view_contents(view: &gtk::TextView) -> String {
+    let buffer = view.buffer();
+    buffer.text(&buffer.start_iter(), &buffer.end_iter(), true).to_string()
+}
+
+pub fn build_page() -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    page.add_css_class("content-page");
+    page.set_margin_top(12);
+    page.set_margin_bottom(12);
+    page.set_margin_start(12);
+    page.set_margin_end(12);
+
+    let heading = gtk::Label::new(Some("USB capture session"));
+    heading.add_css_class("title-2");
+    heading.set_xalign(0.0);
+    page.append(&heading);
+
+    let help = gtk::Label::new(Some(
+        "Record one continuous USB trace while changing one camera setting at a time. Start with a baseline, enter the intended new state, click Begin action, switch to OBSBOT Center and make the change, then return and click End action. Each action is recorded as a time window, so you do not need to click at the exact instant of the camera change. Finish saves the raw trace and decoded report; Clear discards the current session."
+    ));
+    help.set_wrap(true);
+    help.set_xalign(0.0);
+    help.add_css_class("dim-label");
+    page.append(&help);
+
+    let test_name = gtk::Entry::new();
+    test_name.set_placeholder_text(Some("Test name, e.g. HDR"));
+    page.append(&test_name);
+
+    let note_label = gtk::Label::new(Some("Describe the next action (include the target value)"));
+    note_label.set_xalign(0.0);
+    page.append(&note_label);
+
+    let note = gtk::TextView::new();
+    note.set_wrap_mode(gtk::WrapMode::WordChar);
+    note.set_vexpand(false);
+    note.set_size_request(-1, 76);
+    note.buffer().set_text("Baseline: before changing anything.");
+    let note_scroll = gtk::ScrolledWindow::new();
+    note_scroll.set_min_content_height(76);
+    note_scroll.set_child(Some(&note));
+    page.append(&note_scroll);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.add_css_class("adaptive-row");
+    let start = gtk::Button::with_label("Start capture + baseline");
+    let synthetic_test_mode = std::env::var("TINY4LITE_UI_TEST").is_ok_and(|value| value == "1");
+    if synthetic_test_mode { start.set_sensitive(false); }
+    let begin_action = gtk::Button::with_label("Begin action");
+    let end_action = gtk::Button::with_label("End action");
+    let finish = gtk::Button::with_label("Finish session");
+    let clear = gtk::Button::with_label("Clear recording");
+    let copy = gtk::Button::with_label("Copy report");
+    let open_folder = gtk::Button::with_label("Open capture folder");
+    begin_action.set_sensitive(false);
+    end_action.set_sensitive(false);
+    finish.set_sensitive(false);
+    clear.set_sensitive(false);
+    copy.set_sensitive(false);
+    open_folder.set_sensitive(false);
+    actions.append(&start);
+    actions.append(&begin_action);
+    actions.append(&end_action);
+    actions.append(&finish);
+    actions.append(&clear);
+    page.append(&actions);
+
+    let status_text = if synthetic_test_mode {
+        "Synthetic test mode. USB capture is disabled; no camera or tshark process will be started."
+    } else {
+        "Ready. Start a session to begin USB capture."
+    };
+    let status = gtk::Label::new(Some(status_text));
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    page.append(&status);
+
+    let checkpoints_log = gtk::Label::new(Some("No checkpoints yet."));
+    checkpoints_log.set_xalign(0.0);
+    checkpoints_log.set_wrap(true);
+    checkpoints_log.add_css_class("dim-label");
+    page.append(&checkpoints_log);
+
+    let report_view = gtk::TextView::new();
+    report_view.set_editable(false);
+    report_view.set_cursor_visible(false);
+    report_view.set_monospace(true);
+    report_view.set_wrap_mode(gtk::WrapMode::None);
+    report_view.set_size_request(-1, 220);
+    let report_scroll = gtk::ScrolledWindow::new();
+    report_scroll.set_vexpand(true);
+    report_scroll.set_child(Some(&report_view));
+    page.append(&report_scroll);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("adaptive-row");
+    footer.append(&copy);
+    footer.append(&open_folder);
+    page.append(&footer);
+
+    let saved_frame = gtk::Frame::new(Some("Saved captures"));
+    let saved_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let saved_help = gtk::Label::new(Some("Browse earlier USB sessions. Reports and raw traces stay in your user data folder."));
+    saved_help.set_xalign(0.0);
+    saved_help.set_wrap(true);
+    saved_help.add_css_class("dim-label");
+    saved_box.append(&saved_help);
+    let saved_list = gtk::ListBox::new();
+    saved_list.set_selection_mode(gtk::SelectionMode::Single);
+    saved_list.set_vexpand(false);
+    saved_list.set_size_request(-1, 150);
+    let saved_scroll = gtk::ScrolledWindow::new();
+    saved_scroll.set_min_content_height(120);
+    saved_scroll.set_max_content_height(190);
+    saved_scroll.set_child(Some(&saved_list));
+    saved_box.append(&saved_scroll);
+    let saved_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    saved_actions.add_css_class("adaptive-row");
+    let saved_refresh = gtk::Button::with_label("Refresh list");
+    let saved_open_report = gtk::Button::with_label("Open report");
+    let saved_open_raw = gtk::Button::with_label("Open raw trace");
+    saved_open_report.set_sensitive(false);
+    saved_open_raw.set_sensitive(false);
+    saved_actions.append(&saved_refresh);
+    saved_actions.append(&saved_open_report);
+    saved_actions.append(&saved_open_raw);
+    saved_box.append(&saved_actions);
+    saved_frame.set_child(Some(&saved_box));
+    page.append(&saved_frame);
+
+    let saved_paths = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+    refresh_saved_list(&saved_list, &saved_paths);
+    let selected_saved = Rc::new(RefCell::new(None::<PathBuf>));
+    let selected_state = selected_saved.clone();
+    let paths_for_selection = saved_paths.clone();
+    let open_report_button = saved_open_report.clone();
+    let open_raw_button = saved_open_raw.clone();
+    saved_list.connect_row_selected(move |_, row| {
+        let path = row.and_then(|row| paths_for_selection.borrow().get(row.index() as usize).cloned());
+        open_report_button.set_sensitive(path.is_some());
+        open_raw_button.set_sensitive(path.as_ref().is_some_and(|p| p.with_extension("pcapng").exists()));
+        *selected_state.borrow_mut() = path;
+    });
+    let list_refresh = saved_list.clone();
+    let paths_refresh = saved_paths.clone();
+    let selected_refresh = selected_saved.clone();
+    let open_report_refresh = saved_open_report.clone();
+    let open_raw_refresh = saved_open_raw.clone();
+    saved_refresh.connect_clicked(move |_| {
+        refresh_saved_list(&list_refresh, &paths_refresh);
+        *selected_refresh.borrow_mut() = None;
+        open_report_refresh.set_sensitive(false);
+        open_raw_refresh.set_sensitive(false);
+    });
+    let selected_report = selected_saved.clone();
+    let status_report = status.clone();
+    saved_open_report.connect_clicked(move |_| {
+        if let Some(path) = selected_report.borrow().as_ref() {
+            if let Err(error) = Command::new("xdg-open").arg(path).spawn() {
+                status_report.set_text(&format!("Could not open report: {error}"));
+            }
+        }
+    });
+    let selected_raw = selected_saved.clone();
+    let status_raw = status.clone();
+    saved_open_raw.connect_clicked(move |_| {
+        if let Some(path) = selected_raw.borrow().as_ref() {
+            let raw = path.with_extension("pcapng");
+            if raw.exists() {
+                if let Err(error) = Command::new("xdg-open").arg(raw).spawn() {
+                    status_raw.set_text(&format!("Could not open raw trace: {error}"));
+                }
+            } else {
+                status_raw.set_text("The raw trace for this report is not present.");
+            }
+        }
+    });
+
+    let session: Rc<RefCell<Option<CaptureSession>>> = Rc::new(RefCell::new(None));
+    let report_text = Rc::new(RefCell::new(String::new()));
+    let report_file: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+    let checkpoint_summary = Rc::new(RefCell::new(Vec::<String>::new()));
+
+    let name_start = test_name.clone();
+    let note_start = note.clone();
+    let session_start = session.clone();
+    let status_start = status.clone();
+    let begin_start = begin_action.clone();
+    let end_start = end_action.clone();
+    let finish_start = finish.clone();
+    let clear_start = clear.clone();
+    let start_button = start.clone();
+    let log_start = checkpoints_log.clone();
+    let summary_start = checkpoint_summary.clone();
+    start.connect_clicked(move |_| {
+        if session_start.borrow().is_some() { return; }
+        let name = name_start.text().trim().to_string();
+        if name.is_empty() {
+            status_start.set_text("Enter a test name first, such as HDR or tracking mode.");
+            return;
+        }
+        let baseline = text_view_contents(&note_start);
+        if baseline.trim().is_empty() {
+            status_start.set_text("Describe the baseline state before starting.");
+            return;
+        }
+        match start_session(name, baseline.clone()) {
+            Ok(new_session) => {
+                let bus = new_session.bus;
+                let address = new_session.address;
+                *session_start.borrow_mut() = Some(new_session);
+                note_start.buffer().set_text("");
+                *summary_start.borrow_mut() = vec![format!("+0.000s  Baseline: {}", baseline.trim())];
+                log_start.set_text(&summary_start.borrow().join("\n"));
+                status_start.set_text(&format!(
+                    "Capture running on usbmon{bus}, camera USB address {address}. Describe the next change, click Begin action, make the change in OBSBOT Center, then click End action."
+                ));
+                begin_start.set_sensitive(true);
+                end_start.set_sensitive(false);
+                finish_start.set_sensitive(true);
+                clear_start.set_sensitive(true);
+                start_button.set_sensitive(false);
+            }
+            Err(error) => status_start.set_text(&format!("Could not start capture: {error}")),
+        }
+    });
+
+    let session_begin = session.clone();
+    let note_begin = note.clone();
+    let status_begin = status.clone();
+    let begin_button = begin_action.clone();
+    let end_button = end_action.clone();
+    let finish_begin = finish.clone();
+    begin_action.connect_clicked(move |_| {
+        let description = text_view_contents(&note_begin);
+        if description.trim().is_empty() {
+            status_begin.set_text("Describe the intended setting and target value before beginning the action.");
+            return;
+        }
+        let mut active = session_begin.borrow_mut();
+        let Some(active) = active.as_mut() else {
+            status_begin.set_text("No capture session is running.");
+            return;
+        };
+        match active.begin_action(description.trim().to_string()) {
+            Ok(elapsed) => {
+                status_begin.set_text(&format!(
+                    "ACTION OPEN since +{elapsed:.3}s. Switch to OBSBOT Center and make this change: {}. Return here and click End action.",
+                    description.trim()
+                ));
+                begin_button.set_sensitive(false);
+                end_button.set_sensitive(true);
+                finish_begin.set_sensitive(false);
+            }
+            Err(error) => status_begin.set_text(&format!("Could not begin action: {error}")),
+        }
+    });
+
+    let session_end = session.clone();
+    let status_end = status.clone();
+    let note_end = note.clone();
+    let summary_end = checkpoint_summary.clone();
+    let log_end = checkpoints_log.clone();
+    let begin_end = begin_action.clone();
+    let end_button = end_action.clone();
+    let finish_end = finish.clone();
+    end_action.connect_clicked(move |_| {
+        let mut active = session_end.borrow_mut();
+        let Some(active) = active.as_mut() else {
+            status_end.set_text("No capture session is running.");
+            return;
+        };
+        match active.end_action() {
+            Ok((elapsed, _epoch)) => {
+                let description = active.actions.last().map(|action| action.note.clone()).unwrap_or_default();
+                summary_end.borrow_mut().push(format!(
+                    "+{:.3}s to +{elapsed:.3}s  {}",
+                    active.actions.last().map(|action| action.start_elapsed).unwrap_or(elapsed),
+                    description
+                ));
+                log_end.set_text(&summary_end.borrow().join("\n"));
+                note_end.buffer().set_text("");
+                status_end.set_text(&format!(
+                    "Action window closed at +{elapsed:.3}s. Enter the next target value and click Begin action."
+                ));
+                begin_end.set_sensitive(true);
+                end_button.set_sensitive(false);
+                finish_end.set_sensitive(true);
+            }
+            Err(error) => status_end.set_text(&format!("Could not end action: {error}")),
+        }
+    });
+
+    let session_finish = session.clone();
+    let status_finish = status.clone();
+    let begin_finish = begin_action.clone();
+    let end_finish = end_action.clone();
+    let start_finish = start.clone();
+    let report_finish = report_text.clone();
+    let report_file_finish = report_file.clone();
+    let report_view_finish = report_view.clone();
+    let finish_button = finish.clone();
+    let copy_finish = copy.clone();
+    let open_finish = open_folder.clone();
+    let clear_finish = clear.clone();
+    let saved_list_finish = saved_list.clone();
+    let saved_paths_finish = saved_paths.clone();
+    finish.connect_clicked(move |_| {
+        let Some(active) = session_finish.borrow_mut().take() else {
+            status_finish.set_text("No capture session is running.");
+            return;
+        };
+        status_finish.set_text("Stopping capture and decoding camera control transfers in the background…");
+        begin_finish.set_sensitive(false);
+        end_finish.set_sensitive(false);
+        finish_button.set_sensitive(false);
+        clear_finish.set_sensitive(false);
+        start_finish.set_sensitive(false);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = sender.send(active.finish());
+        });
+        let status_done = status_finish.clone();
+        let begin_done = begin_finish.clone();
+        let end_done = end_finish.clone();
+        let finish_done = finish_button.clone();
+        let clear_done = clear_finish.clone();
+        let start_done = start_finish.clone();
+        let report_done = report_finish.clone();
+        let report_file_done = report_file_finish.clone();
+        let view_done = report_view_finish.clone();
+        let copy_done = copy_finish.clone();
+        let open_done = open_finish.clone();
+        let list_done = saved_list_finish.clone();
+        let paths_done = saved_paths_finish.clone();
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            match receiver.try_recv() {
+                Ok(Ok((text, path))) => {
+                    view_done.buffer().set_text(&text);
+                    *report_done.borrow_mut() = text;
+                    *report_file_done.borrow_mut() = Some(path.clone());
+                    copy_done.set_sensitive(true);
+                    open_done.set_sensitive(true);
+                    start_done.set_sensitive(true);
+                    clear_done.set_sensitive(true);
+                    status_done.set_text(&format!(
+                        "Session saved. Report: {}  |  Raw trace: {}",
+                        path.display(), path.with_extension("pcapng").display()
+                    ));
+                    refresh_saved_list(&list_done, &paths_done);
+                    begin_done.set_sensitive(false);
+                    end_done.set_sensitive(false);
+                    finish_done.set_sensitive(false);
+                    gtk::glib::ControlFlow::Break
+                }
+                Ok(Err(error)) => {
+                    start_done.set_sensitive(true);
+                    clear_done.set_sensitive(true);
+                    status_done.set_text(&format!("Capture stopped, but report generation failed: {error}"));
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    start_done.set_sensitive(true);
+                    status_done.set_text("Capture worker stopped unexpectedly.");
+                    gtk::glib::ControlFlow::Break
+                }
+            }
+        });
+    });
+
+    // Clear discards the active capture, or removes the most recently completed
+    // report and raw trace. Stopping an active capture is kept off the GTK thread.
+    let session_clear = session.clone();
+    let status_clear = status.clone();
+    let start_clear = start.clone();
+    let begin_clear = begin_action.clone();
+    let end_clear = end_action.clone();
+    let finish_clear = finish.clone();
+    let clear_button = clear.clone();
+    let report_clear = report_text.clone();
+    let report_path_clear = report_file.clone();
+    let view_clear = report_view.clone();
+    let copy_clear = copy.clone();
+    let open_clear = open_folder.clone();
+    let log_clear = checkpoints_log.clone();
+    let summary_clear = checkpoint_summary.clone();
+    let list_clear = saved_list.clone();
+    let paths_clear = saved_paths.clone();
+    clear.connect_clicked(move |_| {
+        if let Some(mut active) = session_clear.borrow_mut().take() {
+            let raw_path = active.pcap_path.clone();
+            status_clear.set_text("Stopping and discarding the active capture…");
+            clear_button.set_sensitive(false);
+            start_clear.set_sensitive(false);
+            begin_clear.set_sensitive(false);
+            end_clear.set_sensitive(false);
+            finish_clear.set_sensitive(false);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            thread::spawn(move || {
+                let result = active.stop_process().and_then(|_| {
+                    fs::remove_file(&raw_path)
+                        .map_err(|e| format!("Could not remove raw capture {}: {e}", raw_path.display()))
+                });
+                let _ = sender.send(result);
+            });
+            let status_done = status_clear.clone();
+            let start_done = start_clear.clone();
+            let clear_done = clear_button.clone();
+            let view_done = view_clear.clone();
+            let report_done = report_clear.clone();
+            let report_path_done = report_path_clear.clone();
+            let copy_done = copy_clear.clone();
+            let open_done = open_clear.clone();
+            let log_done = log_clear.clone();
+            let summary_done = summary_clear.clone();
+            let list_done = list_clear.clone();
+            let paths_done = paths_clear.clone();
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                match receiver.try_recv() {
+                    Ok(Ok(())) => {
+                        view_done.buffer().set_text("");
+                        *report_done.borrow_mut() = String::new();
+                        *report_path_done.borrow_mut() = None;
+                        copy_done.set_sensitive(false);
+                        open_done.set_sensitive(false);
+                        log_done.set_text("No checkpoints yet.");
+                        summary_done.borrow_mut().clear();
+                        start_done.set_sensitive(true);
+                        clear_done.set_sensitive(false);
+                        status_done.set_text("Recording discarded. Ready for a new capture.");
+                        refresh_saved_list(&list_done, &paths_done);
+                        gtk::glib::ControlFlow::Break
+                    }
+                    Ok(Err(error)) => {
+                        start_done.set_sensitive(true);
+                        clear_done.set_sensitive(true);
+                        status_done.set_text(&format!("Could not discard capture: {error}"));
+                        gtk::glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        start_done.set_sensitive(true);
+                        status_done.set_text("Capture cleanup worker stopped unexpectedly.");
+                        gtk::glib::ControlFlow::Break
+                    }
+                }
+            });
+            return;
+        }
+
+        let completed_path = report_path_clear.borrow_mut().take();
+        if let Some(path) = completed_path {
+            let raw = path.with_extension("pcapng");
+            let mut errors = Vec::new();
+            for file in [&path, &raw] {
+                if file.exists() {
+                    if let Err(error) = fs::remove_file(file) {
+                        errors.push(format!("{}: {error}", file.display()));
+                    }
+                }
+            }
+            if !errors.is_empty() {
+                *report_path_clear.borrow_mut() = Some(path);
+                status_clear.set_text(&format!("Could not remove saved capture: {}", errors.join("; ")));
+                return;
+            }
+        }
+        view_clear.buffer().set_text("");
+        *report_clear.borrow_mut() = String::new();
+        copy_clear.set_sensitive(false);
+        open_clear.set_sensitive(false);
+        log_clear.set_text("No checkpoints yet.");
+        summary_clear.borrow_mut().clear();
+        start_clear.set_sensitive(true);
+        begin_clear.set_sensitive(false);
+        end_clear.set_sensitive(false);
+        finish_clear.set_sensitive(false);
+        clear_button.set_sensitive(false);
+        status_clear.set_text("Recording cleared. Ready for a new capture.");
+        refresh_saved_list(&list_clear, &paths_clear);
+    });
+
+    let report_copy = report_text.clone();
+    let status_copy = status.clone();
+    copy.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&report_copy.borrow());
+            status_copy.set_text("Report copied to clipboard. Attach the text report and .pcapng file to the conversation.");
+        } else {
+            status_copy.set_text("Could not access the desktop clipboard.");
+        }
+    });
+
+    let file_open = report_file.clone();
+    let status_open = status.clone();
+    open_folder.connect_clicked(move |_| {
+        let folder = file_open.borrow().as_ref().and_then(|path| path.parent()).map(Path::to_path_buf);
+        if let Some(folder) = folder {
+            let result = Command::new("xdg-open").arg(&folder).spawn();
+            if let Err(error) = result {
+                status_open.set_text(&format!("Could not open capture folder: {error}"));
+            }
+        }
+    });
+
+    page
+}
