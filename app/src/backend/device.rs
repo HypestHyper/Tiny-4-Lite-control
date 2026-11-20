@@ -69,7 +69,7 @@ mod sim {
     use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
-    pub use crate::backend::angles::{PAN_LIMIT, TILT_LIMIT};
+    use crate::backend::angles::{PAN_RANGE, TILT_RANGE};
     /// Degrees per second for each unit of speed.
     const RATE: f64 = 0.4;
 
@@ -82,7 +82,7 @@ mod sim {
             let (pan, tilt) = std::env::var("TINY4LITE_UI_TEST_GIMBAL").ok()
                 .and_then(|v| v.split_once(',').and_then(|(p, t)| Some((p.trim().parse::<f64>().ok()?, t.trim().parse::<f64>().ok()?))))
                 .unwrap_or((0.0, 0.0));
-            Mutex::new(Gimbal { pan: pan.clamp(-PAN_LIMIT, PAN_LIMIT), tilt: tilt.clamp(-TILT_LIMIT, TILT_LIMIT), pan_speed: 0.0, tilt_speed: 0.0, at: Instant::now() })
+            Mutex::new(Gimbal { pan: pan.clamp(PAN_RANGE.0, PAN_RANGE.1), tilt: tilt.clamp(TILT_RANGE.0, TILT_RANGE.1), pan_speed: 0.0, tilt_speed: 0.0, at: Instant::now() })
         })
     }
 
@@ -90,8 +90,8 @@ mod sim {
         fn advance(&mut self) {
             let seconds = self.at.elapsed().as_secs_f64();
             self.at = Instant::now();
-            self.pan = (self.pan + self.pan_speed * RATE * seconds).clamp(-PAN_LIMIT, PAN_LIMIT);
-            self.tilt = (self.tilt + self.tilt_speed * RATE * seconds).clamp(-TILT_LIMIT, TILT_LIMIT);
+            self.pan = (self.pan + self.pan_speed * RATE * seconds).clamp(PAN_RANGE.0, PAN_RANGE.1);
+            self.tilt = (self.tilt + self.tilt_speed * RATE * seconds).clamp(TILT_RANGE.0, TILT_RANGE.1);
         }
     }
 
@@ -111,8 +111,8 @@ mod sim {
             let Some((name, value)) = pair.split_once('=') else { continue };
             let Ok(value) = value.parse::<f64>() else { continue };
             match name {
-                "pan_absolute" => g.pan = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(-PAN_LIMIT, PAN_LIMIT),
-                "tilt_absolute" => g.tilt = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(-TILT_LIMIT, TILT_LIMIT),
+                "pan_absolute" => g.pan = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(PAN_RANGE.0, PAN_RANGE.1),
+                "tilt_absolute" => g.tilt = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(TILT_RANGE.0, TILT_RANGE.1),
                 "pan_speed" => g.pan_speed = value,
                 "tilt_speed" => g.tilt_speed = value,
                 _ => {}
@@ -494,7 +494,13 @@ pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, m
         return Err(format!("A step is between 1 and {MAX_STEP_DEGREES} degrees."));
     }
     let current = get_control(device, control)?;
+    // Never past the range the camera is driven over, nor past what the driver itself allows.
+    let (low, high) = if control == "pan_absolute" { super::angles::PAN_RANGE } else { super::angles::TILT_RANGE };
+    let (min, max) = (min.max(super::angles::degrees_to_raw(low)), max.min(super::angles::degrees_to_raw(high)));
     let target = (current + degrees * PANTILT_RAW_UNITS_PER_DEGREE as i64).clamp(min, max);
+    if target == current {
+        return Err(format!("Already at the end of the range ({}).", super::angles::format(super::angles::raw_to_degrees(current))));
+    }
     set_control(device, control, target)?;
     Ok(super::angles::raw_to_degrees(target))
 }
@@ -1031,7 +1037,8 @@ pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: boo
     let (pan, tilt) = get_gimbal_position(device)?;
     let zoom = get_live_zoom_factor(device)?;
     let mut payload = index.to_le_bytes().to_vec();
-    if !pan.is_finite() || !tilt.is_finite() || pan.abs() > 150.0 || !(-70.0..=90.0).contains(&(tilt as f32)) {
+    if !pan.is_finite() || !tilt.is_finite() || !(super::angles::PAN_RANGE.0..=super::angles::PAN_RANGE.1).contains(&pan)
+        || !(super::angles::TILT_RANGE.0..=super::angles::TILT_RANGE.1).contains(&tilt) {
         return Err(format!("Current live pose is outside camera preset limits: pan {pan:+.1}°, tilt {tilt:+.1}°."));
     }
     if !(1.0..=4.0).contains(&zoom) {
@@ -1397,7 +1404,7 @@ pub(crate) fn hex_dump(data: &[u8]) -> String {
 pub(crate) fn decode_xu_status(data: &[u8; 60]) -> String {
     let sleep = match data[0x02] { 0x00 => "Awake", 0x01 => "Sleep", _ => "Unknown" };
     let hdr = if data[0x06] == 0 { "Off" } else { "On / non-zero" };
-    let fov = match data[0x11] { 1 => "Wide (86°)", 2 => "Normal (78°)", v => {
+    let fov = match data[0x11] { 1 => "Wide", 2 => "Normal", v => {
         return format!("Sleep: {sleep}\nHDR: {hdr}\nFOV raw: 0x{v:02x} (unknown)\nAI tuple: {:02x}/{:02x}\nTracking speed: 0x{:02x}",
             data[0x18], data[0x1c], data[0x24]);
     }};
@@ -1468,9 +1475,9 @@ mod xu_protocol_tests {
     #[test]
     fn pan_tilt_absolute_readback_decodes_signed_little_endian_and_clamps() {
         let mut data = [0u8; 8];
-        data[0..4].copy_from_slice(&(-146_i32 * 3600).to_le_bytes());
+        data[0..4].copy_from_slice(&(-160_i32 * 3600).to_le_bytes());
         data[4..8].copy_from_slice(&(91_i32 * 3600).to_le_bytes());
-        assert_eq!(decode_pan_tilt_absolute(&data), (-130.0, 90.0));
+        assert_eq!(decode_pan_tilt_absolute(&data), (-150.0, 90.0));
         data[0..4].copy_from_slice(&(45_i32 * 3600).to_le_bytes());
         data[4..8].copy_from_slice(&(-30_i32 * 3600).to_le_bytes());
         assert_eq!(decode_pan_tilt_absolute(&data), (45.0, -30.0));
@@ -1799,7 +1806,7 @@ mod sim_gimbal_tests {
         // Moves beyond the range stop at the limit.
         sim::apply_set_ctrl("--set-ctrl=pan_absolute=99999999,tilt_absolute=-99999999");
         let (pan, tilt) = sim::position();
-        assert_eq!((pan, tilt), (sim::PAN_LIMIT, -sim::TILT_LIMIT));
+        assert_eq!((pan, tilt), (crate::backend::angles::PAN_RANGE.1, crate::backend::angles::TILT_RANGE.0));
 
         // A speed turns it steadily until a stop arrives, then it holds still.
         sim::apply_set_ctrl("--set-ctrl=pan_absolute=0,tilt_absolute=0");

@@ -937,7 +937,7 @@ mod tests {
         assert_eq!(parse_value(mode, &snapshot, "hand").unwrap(), Value::Int(6));
         assert_eq!(parse_value(mode, &snapshot, "group").unwrap(), Value::Int(7));
         let fov = registry::find("obsbot:fov").unwrap();
-        assert_eq!(parse_value(fov, &snapshot, "78").unwrap(), Value::Int(5));
+        assert_eq!(parse_value(fov, &snapshot, "60").unwrap(), Value::Int(5));
     }
 
     #[test]

@@ -14,7 +14,7 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-pub use crate::backend::angles::{PAN_LIMIT, TILT_LIMIT};
+pub use crate::backend::angles::{PAN_LIMIT, PAN_RANGE, TILT_LIMIT};
 
 type V3 = (f64, f64, f64);
 
@@ -133,8 +133,9 @@ mod shape {
     pub const DOT_CORNER: f64 = 5.2;
     /// Radius of the floor ring that shows the pan range.
     pub const FLOOR_RING: f64 = 38.0;
-    /// Diagonal field of view at zoom 0: 79.4° (OBSBOT's published spec for the Tiny 2 Lite), 16:9.
-    pub const FOV_DIAGONAL_DEGREES: f64 = 79.4;
+    /// Horizontal field of view at zoom 0: 67.2° (OBSBOT's published spec for the Tiny 2 Lite, which
+    /// gives 79.4° diagonal at 4:3). The 16:9 picture is assumed to keep the full sensor width.
+    pub const FOV_HORIZONTAL_DEGREES: f64 = 67.2;
     /// Zoom control position and the zoom factor measured there. The three presets are documented
     /// (0 → 1.00×, 5 → 1.15×, 15 → 1.47×); the top of the range (100) is OBSBOT's published 4× digital
     /// zoom, and the curve between 15 and 100 is a straight line (an assumption).
@@ -155,9 +156,9 @@ pub fn zoom_factor(zoom: f64) -> f64 {
     curve[curve.len() - 1].1
 }
 
-/// Diagonal field of view in degrees: the widest angle divided down by the zoom factor.
-pub fn fov_diagonal(zoom: f64) -> f64 {
-    let wide = (shape::FOV_DIAGONAL_DEGREES / 2.0).to_radians().tan();
+/// Horizontal field of view in degrees: the widest angle divided down by the zoom factor.
+pub fn fov_horizontal(zoom: f64) -> f64 {
+    let wide = (shape::FOV_HORIZONTAL_DEGREES / 2.0).to_radians().tan();
     2.0 * (wide / zoom_factor(zoom)).atan().to_degrees()
 }
 
@@ -265,7 +266,7 @@ fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
     close_loop(&usb, Kind::BaseBack, &mut lines);
     // The floor ring, with marks for front and the two pan limits.
     close_loop(&ring_xz(FLOOR_RING, 0.0, 44), Kind::Base, &mut lines);
-    for (deg, kind, length) in [(0.0, Kind::Base, 9.0), (PAN_LIMIT, Kind::Limit, 6.0), (-PAN_LIMIT, Kind::Limit, 6.0)] {
+    for (deg, kind, length) in [(0.0, Kind::Base, 9.0), (PAN_RANGE.1, Kind::Limit, 6.0), (PAN_RANGE.0, Kind::Limit, 6.0)] {
         let f = forward(deg, 0.0);
         lines.push(Line { a: (f.0 * FLOOR_RING, 0.0, f.2 * FLOOR_RING), b: (f.0 * (FLOOR_RING + length), 0.0, f.2 * (FLOOR_RING + length)), kind });
     }
@@ -335,9 +336,8 @@ fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
     }
     // What the camera sees: a ray and a view frustum at the official field of view, 16:9.
     let front_z = -HEAD_HALF_D;
-    let half_diagonal = (fov_diagonal(zoom) / 2.0).to_radians().tan();
-    let diagonal = (16.0f64 * 16.0 + 9.0 * 9.0).sqrt();
-    let (half_w, half_h) = (half_diagonal * 16.0 / diagonal * CONE_REACH, half_diagonal * 9.0 / diagonal * CONE_REACH);
+    let half_w = (fov_horizontal(zoom) / 2.0).to_radians().tan() * CONE_REACH;
+    let half_h = half_w * 9.0 / 16.0;
     head.push(Line { a: (LENS_X, 0.0, front_z), b: (LENS_X, 0.0, front_z - CONE_REACH * 1.2), kind: Kind::Aim });
     let far = [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)];
     for (x, y) in far { head.push(Line { a: (LENS_X, 0.0, front_z), b: (LENS_X + x, y, front_z - CONE_REACH), kind: Kind::Aim }); }
@@ -573,8 +573,9 @@ mod tests {
     }
 
     #[test]
-    fn the_limits_are_the_ranges_the_camera_reports() {
-        assert_eq!(PAN_LIMIT, 130.0);
+    fn the_marks_are_the_driven_range_and_the_clamp_is_the_mechanical_one() {
+        assert_eq!(PAN_RANGE, (-140.0, 140.0));
+        assert_eq!(PAN_LIMIT, 150.0);
         assert_eq!(TILT_LIMIT, 90.0);
     }
 
@@ -627,15 +628,23 @@ mod shape_tests {
         assert!((mm(z1 - z0) - 46.4).abs() < 1.5, "depth {}", mm(z1 - z0));
     }
 
-    /// The published 79.4° at zoom 0, narrowing with the documented zoom factors, 4× at the top.
+    /// The published 67.2° horizontal at zoom 0, narrowing with the documented zoom factors, 4× at the top.
     #[test]
     fn zoom_narrows_the_published_angle() {
         assert!((zoom_factor(5.0) - 1.15).abs() < 1e-9 && (zoom_factor(15.0) - 1.47).abs() < 1e-9);
         assert!((zoom_factor(100.0) - 4.0).abs() < 1e-9);
-        assert!((fov_diagonal(0.0) - 79.4).abs() < 0.01);
-        assert!((fov_diagonal(5.0) - 71.6).abs() < 0.3, "{}", fov_diagonal(5.0));
-        assert!((fov_diagonal(15.0) - 59.0).abs() < 0.3, "{}", fov_diagonal(15.0));
-        assert!((fov_diagonal(100.0) - 23.4).abs() < 0.3);
+        assert!((fov_horizontal(0.0) - 67.2).abs() < 0.01);
+        assert!((fov_horizontal(5.0) - 60.0).abs() < 0.3, "{}", fov_horizontal(5.0));
+        assert!((fov_horizontal(15.0) - 48.4).abs() < 0.3, "{}", fov_horizontal(15.0));
+        assert!((fov_horizontal(100.0) - 18.9).abs() < 0.3, "{}", fov_horizontal(100.0));
+    }
+
+    /// OBSBOT gives 79.4° diagonal and 67.2° horizontal at 4:3; they agree with each other.
+    #[test]
+    fn the_published_horizontal_and_diagonal_angles_agree() {
+        let half_width = (67.2f64 / 2.0).to_radians().tan();
+        let half_diagonal = half_width * 5.0 / 4.0;
+        assert!((2.0 * half_diagonal.atan().to_degrees() - 79.4).abs() < 0.1);
     }
 
     #[test]
@@ -645,16 +654,16 @@ mod shape_tests {
     }
 
     #[test]
-    fn the_view_cone_uses_the_documented_field_of_view() {
+    fn the_view_cone_uses_the_published_horizontal_field_of_view() {
         let lines = model(0.0, 0.0, 0.0, false);
         let aims: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
         // Ray, four edges from the lens, four edges of the far rectangle.
         assert_eq!(aims.len(), 9);
-        // Half the diagonal of the far rectangle, seen from the lens, is half the published 79.4°.
-        let far = &aims[1].b;
-        let lens = &aims[1].a;
+        // The far rectangle is 16:9, and its half-width seen from the lens is half the published 67.2°.
+        let (lens, far) = (&aims[1].a, &aims[1].b);
         let (dx, dy, dz) = (far.0 - lens.0, far.1 - lens.1, far.2 - lens.2);
-        let angle = (dx.hypot(dy)).atan2(dz.abs()).to_degrees();
-        assert!((angle - 79.4 / 2.0).abs() < 0.2, "half diagonal {angle}");
+        let angle = dx.abs().atan2(dz.abs()).to_degrees();
+        assert!((angle - 67.2 / 2.0).abs() < 0.2, "half width {angle}");
+        assert!((dy.abs() / dx.abs() - 9.0 / 16.0).abs() < 1e-6);
     }
 }

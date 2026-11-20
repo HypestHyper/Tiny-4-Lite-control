@@ -8,8 +8,13 @@
 //! (used to stop the gimbal).
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread;
+use std::time::{Duration, Instant};
+
+/// While the gimbal is being driven, whoever drives it renews a lease this often. If the lease runs
+/// out (the window froze, the app was suspended) the gimbal is stopped from here.
+pub const MOTION_LEASE: Duration = Duration::from_millis(700);
 
 type Run = Box<dyn FnOnce(&str) + Send>;
 
@@ -33,6 +38,8 @@ struct Shared {
 pub struct Camera {
     path: Arc<String>,
     shared: Arc<Shared>,
+    /// When the current movement command stops being trusted, if one is running.
+    lease: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Camera {
@@ -55,7 +62,47 @@ impl Camera {
                 (job.run)(&worker_path);
             })
             .expect("camera worker thread can start");
-        Camera { path, shared }
+        let lease: Arc<Mutex<Option<Instant>>> = Arc::default();
+        if !path.is_empty() { Camera::watch_motion(Arc::downgrade(&shared), lease.clone()); }
+        Camera { path, shared, lease }
+    }
+
+    /// Stop the gimbal if a movement lease runs out. Ends when the camera is dropped.
+    fn watch_motion(shared: Weak<Shared>, lease: Arc<Mutex<Option<Instant>>>) {
+        let _ = thread::Builder::new().name("camera-deadman".into()).spawn(move || loop {
+            thread::sleep(Duration::from_millis(100));
+            let Some(shared) = shared.upgrade() else { return };
+            let expired = {
+                let mut lease = lease.lock().unwrap_or_else(|e| e.into_inner());
+                match *lease {
+                    Some(until) if Instant::now() >= until => { *lease = None; true }
+                    _ => false,
+                }
+            };
+            if expired {
+                eprintln!("The gimbal command was not renewed; stopping the gimbal.");
+                let job = Job { key: Some("gimbal-speed".into()), run: Box::new(|device| {
+                    for _ in 0..3 {
+                        if crate::backend::run_v4l2(device, "--set-ctrl=pan_speed=0,tilt_speed=0").is_ok() { break; }
+                        thread::sleep(Duration::from_millis(60));
+                    }
+                }) };
+                let mut queue = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
+                queue.jobs.retain(|j| j.key.as_deref() != Some("gimbal-speed"));
+                queue.jobs.push_front(job);
+                shared.wake.notify_one();
+            }
+        });
+    }
+
+    /// Say the gimbal is being driven and renew the lease. Call this on every tick while it moves.
+    pub fn hold_motion(&self) {
+        *self.lease.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + MOTION_LEASE);
+    }
+
+    /// The gimbal was stopped on purpose: nothing to watch any more.
+    pub fn release_motion(&self) {
+        *self.lease.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn path(&self) -> &str { &self.path }
@@ -102,7 +149,22 @@ impl Drop for Shared {
 mod tests {
     use super::*;
     use std::sync::mpsc;
-    use std::time::Duration;
+
+    #[test]
+    fn a_movement_lease_that_runs_out_is_cleared_by_the_watchdog() {
+        let camera = Camera::spawn("/dev/null");
+        camera.hold_motion();
+        assert!(camera.lease.lock().unwrap().is_some());
+        std::thread::sleep(MOTION_LEASE + Duration::from_millis(500));
+        assert!(camera.lease.lock().unwrap().is_none(), "the lease should have expired and been handled");
+        // Renewing keeps it alive, and releasing ends it at once.
+        camera.hold_motion();
+        std::thread::sleep(Duration::from_millis(300));
+        camera.hold_motion();
+        assert!(camera.lease.lock().unwrap().is_some());
+        camera.release_motion();
+        assert!(camera.lease.lock().unwrap().is_none());
+    }
 
     #[test]
     fn keyed_jobs_keep_only_the_newest_waiting_value() {

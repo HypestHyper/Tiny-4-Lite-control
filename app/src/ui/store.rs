@@ -155,7 +155,7 @@ struct Inner {
     last_refresh: Cell<Option<Instant>>,
     gimbal: Cell<Option<(f64, f64)>>,
     /// The whole degrees shown, which only change when the reading moves clearly.
-    gimbal_shown: Cell<Option<(f64, f64)>>,
+    gimbal_filter: RefCell<(crate::backend::angles::Steady, crate::backend::angles::Steady)>,
     gimbal_listeners: RefCell<Vec<Box<dyn Fn(Option<(f64, f64)>) -> bool>>>,
 }
 
@@ -174,7 +174,7 @@ impl Store {
             refresh_timer: RefCell::new(None),
             last_refresh: Cell::new(None),
             gimbal: Cell::new(None),
-            gimbal_shown: Cell::new(None),
+            gimbal_filter: RefCell::default(),
             gimbal_listeners: RefCell::new(Vec::new()),
         }))
     }
@@ -273,16 +273,13 @@ impl Store {
     /// Publish a new live position (or `None` when the camera could not be read).
     pub fn set_gimbal(&self, position: Option<(f64, f64)>) {
         // Every window sees the same whole degrees, so nothing flickers between readings.
-        let position = position.map(|(pan, tilt)| {
-            let shown = self.0.gimbal_shown.get();
-            let settled = (
-                crate::backend::angles::settle(shown.map(|s| s.0), pan),
-                crate::backend::angles::settle(shown.map(|s| s.1), tilt),
-            );
-            self.0.gimbal_shown.set(Some(settled));
-            settled
-        });
-        if position.is_none() { self.0.gimbal_shown.set(None); }
+        let position = match position {
+            Some((pan, tilt)) => {
+                let mut filter = self.0.gimbal_filter.borrow_mut();
+                Some((filter.0.push(pan), filter.1.push(tilt)))
+            }
+            None => { *self.0.gimbal_filter.borrow_mut() = Default::default(); None }
+        };
         self.0.gimbal.set(position);
         let mut listeners = std::mem::take(&mut *self.0.gimbal_listeners.borrow_mut());
         listeners.retain(|listener| listener(position));

@@ -536,10 +536,10 @@ fn build() -> Vec<Setting> {
             .info("Uses the standard zoom control. The camera's separate continuous-zoom control reports an invalid value, so it is not offered."),
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
-            Kind::Choice(vec![opt(0, "86°", "Widest"), opt(5, "78°", "Normal"), opt(15, "65°", "Narrow")]),
+            Kind::Choice(vec![opt(0, "67°", "Widest"), opt(5, "60°", "Normal"), opt(15, "48°", "Narrow")]),
             |s| from_camera(s.control("zoom_absolute").map(|c| c.value).filter(|v| matches!(v, 0 | 5 | 15)).map(Value::Int)),
             |d, v| sent(set_control(d, "zoom_absolute", v.as_i64())))
-            .info("Moves the zoom control to one of three common positions."),
+            .info("Moves the zoom control to one of three common positions, 1.00×, 1.15× and 1.47×. The angles are the horizontal field of view: OBSBOT publishes 67.2° at the widest, and the others are that divided by the zoom factor, so they are approximate."),
 
         // ── Picture ──
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),

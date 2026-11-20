@@ -20,12 +20,14 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
-**Angles.** Pan and tilt are shown in whole degrees everywhere. The live position from the camera wobbles and sometimes lands between two degrees, so the shown degree only changes once the reading is 0.8° or more away from it; bumping the desk by a degree still shows. The camera's own position is read, not the last command sent.
+**Angles.** Pan and tilt are shown in whole degrees everywhere. The live position wobbles, sometimes lands between two degrees, and now and then gives one odd value, so the shown degree is the middle of the last five readings and only changes once that is 0.8° or more away from it; a real move (two readings in a row well away) is followed at once. Bumping the desk by a degree still shows.
+
+**Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.
 
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
 real pan and tilt, with the numbers on top. It is drawn straight on from the front and a little above, like a product photo: the lens and the front of the base
 face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward
-your left, because it is the camera's right. A blue cone shows the view and follows the zoom: OBSBOT's published 79.4° diagonal at zoom 0, narrowing by the documented zoom factors (1.15× at 5, 1.47× at 15) up to the published 4× at 100; the line between 15 and 100 is an assumption. The inner lens glass sits deeper as you zoom in. It is a drawing of the angles the camera reports (the same position
+your left, because it is the camera's right. A blue cone shows the view and follows the zoom: OBSBOT's published 67.2° horizontal at zoom 0 (79.4° diagonal at 4:3), narrowed by the documented zoom factors (1.15× at 5, 1.47× at 15) up to the published 4× at 100; the line between 15 and 100 is an assumption, and so is that the 16:9 picture keeps the full sensor width. The inner lens glass sits deeper as you zoom in. It is a drawing of the angles the camera reports (the same position
 query as the readout), never a command. It glides between readings rather than jumping, asks for the position
 about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
 window is in the background or the card is hidden. With no reading it dims and shows no view cone.

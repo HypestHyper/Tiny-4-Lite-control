@@ -19,13 +19,24 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const KEY: &str = "gimbal-speed";
 const POSITION_KEY: &str = "gimbal-position";
 const SEND_INTERVAL: Duration = Duration::from_millis(40);
 const DEAD_ZONE: f64 = 0.08;
 const KEYBOARD_DEFLECTION: f64 = 0.55;
+/// The most the speed may rise in one send (40 ms): full speed takes about a fifth of a second.
+/// Slowing down is never limited.
+const RAMP_PER_SEND: f64 = 0.2;
+/// Without a recent position reading the gimbal is driven gently, as it may be close to an end.
+const UNKNOWN_POSITION_CAP: f64 = 0.35;
+/// A position reading older than this is no longer trusted.
+const POSITION_FRESH: Duration = Duration::from_millis(1500);
+/// Movement this large, against what the speed asked for, shows a direction is reversed.
+const SIGN_EVIDENCE: f64 = 1.5;
 
 struct State {
     store: Store,
@@ -45,6 +56,12 @@ struct State {
     poll_timer: RefCell<Option<glib::SourceId>>,
     polling: Cell<bool>,
     last_position: Cell<Option<(f64, f64)>>,
+    last_position_at: Cell<Option<Instant>>,
+    /// The speed fractions after the limits and the ramp, as last sent.
+    ramped: Cell<(f64, f64)>,
+    /// +1 when a positive speed raises the angle, −1 if the camera turned out to be the other way.
+    axis_sign: Cell<(f64, f64)>,
+    send_failed: Arc<AtomicBool>,
     poll_error: RefCell<Option<String>>,
     animating: Cell<bool>,
     save_timer: RefCell<Option<glib::SourceId>>,
@@ -59,6 +76,13 @@ pub fn shape(deflection: f64, sensitivity: f64) -> f64 {
     if magnitude <= DEAD_ZONE { return 0.0; }
     let scaled = ((magnitude - DEAD_ZONE) / (1.0 - DEAD_ZONE)).clamp(0.0, 1.0);
     (scaled.powf(1.6) * sensitivity).clamp(0.0, 1.0) * deflection.signum()
+}
+
+/// Move a speed fraction towards `target`, rising by at most `step` at a time. Slowing down, stopping
+/// and a target of zero take effect at once.
+pub fn ramp(current: f64, target: f64, step: f64) -> f64 {
+    if target == 0.0 || (target.signum() == current.signum() && target.abs() <= current.abs()) { return target; }
+    current + (target - current).clamp(-step, step)
 }
 
 /// Convert a speed fraction to the signed range a V4L2 speed control reports.
@@ -95,7 +119,8 @@ impl Joystick {
             stick: Cell::new((0.0, 0.0)), velocity: Cell::new((0.0, 0.0)), engaged: Cell::new(false),
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
-            last_position: Cell::new(None), poll_error: RefCell::default(), animating: Cell::new(false),
+            last_position: Cell::new(None), last_position_at: Cell::new(None), ramped: Cell::new((0.0, 0.0)),
+            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
         let joystick = Joystick(state);
@@ -396,24 +421,66 @@ impl Joystick {
         let (Some(pan), Some(tilt)) = (snapshot.control("pan_speed"), snapshot.control("tilt_speed")) else { return (0, 0) };
         let (x, y) = self.0.stick.get();
         let sensitivity = self.0.sensitivity.get();
+        let (fx, fy) = self.limited(shape(x, sensitivity), shape(y, sensitivity));
+        let (rx, ry) = self.0.ramped.get();
+        let (rx, ry) = (ramp(rx, fx, RAMP_PER_SEND), ramp(ry, fy, RAMP_PER_SEND));
+        self.0.ramped.set((rx, ry));
+        (to_axis(rx, pan.min, pan.max), to_axis(ry, tilt.min, tilt.max))
+    }
+
+    /// The speeds the stick asks for, held back near the ends of the range, and gentle when the
+    /// position is not known.
+    fn limited(&self, pan: f64, tilt: f64) -> (f64, f64) {
+        let state = &self.0;
+        let fresh = state.last_position_at.get().is_some_and(|at| at.elapsed() < POSITION_FRESH);
+        let position = state.last_position.get().filter(|_| fresh);
+        let Some((at_pan, at_tilt)) = position else {
+            return (pan.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP), tilt.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP));
+        };
+        let (sign_pan, sign_tilt) = state.axis_sign.get();
+        use backend::angles::{speed_allowance, PAN_RANGE, TILT_RANGE};
         (
-            to_axis(shape(x, sensitivity), pan.min, pan.max),
-            to_axis(shape(y, sensitivity), tilt.min, tilt.max),
+            pan * speed_allowance(at_pan, pan.signum() * sign_pan, PAN_RANGE),
+            tilt * speed_allowance(at_tilt, tilt.signum() * sign_tilt, TILT_RANGE),
         )
+    }
+
+    /// Compare what the gimbal did with what was asked: if a speed turned it the other way, the limits
+    /// must work the other way round for that axis.
+    fn learn_direction(&self, before: Option<(f64, f64)>, after: (f64, f64)) {
+        let state = &self.0;
+        let (Some(before), (sent_pan, sent_tilt)) = (before, state.sent.get()) else { return };
+        let (mut sign_pan, mut sign_tilt) = state.axis_sign.get();
+        let learn = |sent: i64, moved: f64, sign: &mut f64, name: &str| {
+            if sent != 0 && moved.abs() >= SIGN_EVIDENCE {
+                let observed = moved.signum() * (sent as f64).signum();
+                if observed != *sign {
+                    eprintln!("{name}: a positive speed turned the camera the other way; the limits follow that now.");
+                    *sign = observed;
+                }
+            }
+        };
+        learn(sent_pan, after.0 - before.0, &mut sign_pan, "Pan");
+        learn(sent_tilt, after.1 - before.1, &mut sign_tilt, "Tilt");
+        state.axis_sign.set((sign_pan, sign_tilt));
     }
 
     fn send_if_changed(&self) {
         let want = self.desired();
+        let camera = self.0.store.camera();
+        // A failed send leaves the camera on the old speed, so try again rather than assume.
+        if self.0.send_failed.swap(false, Ordering::Relaxed) { self.0.sent.set((i64::MIN, i64::MIN)); }
+        if want != (0, 0) { camera.hold_motion(); } else { camera.release_motion(); }
         if want == self.0.sent.get() { return; }
         self.0.sent.set(want);
-        let store = self.0.store.clone();
-        self.0.store.camera().submit_keyed(KEY, move |device| {
+        let failed = self.0.send_failed.clone();
+        camera.submit_keyed(KEY, move |device| {
             let command = format!("--set-ctrl=pan_speed={},tilt_speed={}", want.0, want.1);
             if let Err(error) = run_v4l2(device, &command) {
                 eprintln!("Joystick update failed: {error}");
+                failed.store(true, Ordering::Relaxed);
             }
         });
-        let _ = store;
     }
 
     /// Let go: stop the gimbal now and let the stick spring home.
@@ -423,6 +490,8 @@ impl Joystick {
         let was_engaged = state.engaged.replace(false);
         let moving = state.sent.get() != (0, 0);
         state.keys.borrow_mut().clear();
+        state.ramped.set((0.0, 0.0));
+        state.store.camera().release_motion();
         if was_engaged || moving {
             state.sent.set((0, 0));
             let store = state.store.clone();
@@ -452,6 +521,8 @@ impl Joystick {
         let (sender, receiver) = std::sync::mpsc::channel::<()>();
         if let Some(id) = self.0.send_timer.borrow_mut().take() { id.remove(); }
         self.0.engaged.set(false);
+        self.0.ramped.set((0.0, 0.0));
+        self.0.store.camera().release_motion();
         self.0.store.camera().submit_urgent(KEY, move |device| {
             let _ = run_v4l2(device, "--set-ctrl=pan_speed=0,tilt_speed=0");
             let _ = sender.send(());
@@ -543,13 +614,17 @@ impl Joystick {
             let state = &this.0;
             let (position, moving) = match result {
                 Ok(position) => {
-                    let moved = state.last_position.get().is_none_or(|(p, t)| (p - position.0).abs() > 0.2 || (t - position.1).abs() > 0.2);
+                    let before = state.last_position.get();
+                    let moved = before.is_none_or(|(p, t)| (p - position.0).abs() > 0.2 || (t - position.1).abs() > 0.2);
+                    this.learn_direction(before, position);
                     state.last_position.set(Some(position));
+                    state.last_position_at.set(Some(Instant::now()));
                     *state.poll_error.borrow_mut() = None;
                     (Some(position), moved)
                 }
                 Err(error) => {
                     state.last_position.set(None);
+                    state.last_position_at.set(None);
                     *state.poll_error.borrow_mut() = Some(error);
                     (None, false)
                 }
@@ -671,6 +746,22 @@ mod tests {
     fn sensitivity_limits_top_speed_but_never_exceeds_full_scale() {
         assert!((shape(1.0, 0.5) - 0.5).abs() < 1e-12);
         assert_eq!(shape(1.0, 2.0), 1.0);
+    }
+
+    #[test]
+    fn speed_rises_gradually_but_stops_at_once() {
+        let mut speed = 0.0;
+        let mut sends = 0;
+        while speed < 1.0 { speed = ramp(speed, 1.0, RAMP_PER_SEND); sends += 1; assert!(sends < 20); }
+        assert_eq!(sends, 5);
+        assert_eq!(ramp(1.0, 0.0, RAMP_PER_SEND), 0.0);
+        assert_eq!(ramp(1.0, 0.4, RAMP_PER_SEND), 0.4);
+        // Reversing passes through zero step by step, never jumping from one way to the other.
+        let mut speed = 1.0;
+        let mut seen = vec![speed];
+        for _ in 0..12 { speed = ramp(speed, -1.0, RAMP_PER_SEND); seen.push(speed); }
+        assert!(seen.windows(2).all(|w| (w[1] - w[0]).abs() <= RAMP_PER_SEND + 1e-9), "{seen:?}");
+        assert_eq!(*seen.last().unwrap(), -1.0);
     }
 
     #[test]

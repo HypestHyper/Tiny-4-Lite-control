@@ -14,9 +14,38 @@
 
 /// V4L2 raw units (arcseconds) in one degree.
 pub const RAW_PER_DEGREE: f64 = 3600.0;
-/// How far the camera turns each way, in degrees.
-pub const PAN_LIMIT: f64 = 130.0;
+/// How far the gimbal can physically turn each way (OBSBOT's mechanical range), in degrees.
+pub const PAN_LIMIT: f64 = 150.0;
 pub const TILT_LIMIT: f64 = 90.0;
+
+/// How far the camera will be driven (OBSBOT's published controllable range): pan ±140°, and tilt from
+/// 30° down to 70° up. In this app tilt is positive looking up, so that is −30 to +70.
+pub const PAN_RANGE: (f64, f64) = (-140.0, 140.0);
+pub const TILT_RANGE: (f64, f64) = (-30.0, 70.0);
+
+/// Keep a pan angle inside the range the camera is driven over.
+pub fn clamp_pan(degrees: f64) -> f64 { degrees.clamp(PAN_RANGE.0, PAN_RANGE.1) }
+/// Keep a tilt angle inside the range the camera is driven over.
+pub fn clamp_tilt(degrees: f64) -> f64 { degrees.clamp(TILT_RANGE.0, TILT_RANGE.1) }
+
+/// Within this many degrees of an end, driving further is refused.
+pub const END_MARGIN: f64 = 2.0;
+/// Within this many degrees of an end, the speed tapers off so it arrives gently.
+pub const SLOW_ZONE: f64 = 25.0;
+/// The slowest the taper goes before the margin, as a fraction of the speed asked for.
+pub const CREEP: f64 = 0.15;
+
+/// How much of the asked speed to allow, 0 to 1, for turning in `direction` (+1 or −1, 0 is still)
+/// from `at` inside `range`: all of it far from the end, a tapering share near it, and none within
+/// the margin. Turning away from an end is always allowed. A position outside the range may only
+/// be driven back inside.
+pub fn speed_allowance(at: f64, direction: f64, range: (f64, f64)) -> f64 {
+    if direction == 0.0 { return 1.0; }
+    let room = if direction > 0.0 { range.1 - at } else { at - range.0 };
+    if room <= END_MARGIN { return 0.0; }
+    if room >= SLOW_ZONE { return 1.0; }
+    CREEP + (1.0 - CREEP) * (room - END_MARGIN) / (SLOW_ZONE - END_MARGIN)
+}
 
 /// A V4L2 pan or tilt value as degrees.
 pub fn raw_to_degrees(raw: i64) -> f64 { raw as f64 / RAW_PER_DEGREE }
@@ -49,6 +78,46 @@ pub fn settle(shown: Option<f64>, reading: f64) -> f64 {
     }
 }
 
+/// Turns a stream of live readings into a steady whole-degree angle.
+///
+/// The camera's reading wobbles by a fraction of a degree, sometimes lands between two degrees, and
+/// now and then gives one odd value. So: take the middle one of the last five readings (a single odd
+/// reading cannot move it), follow the newest reading when it has clearly gone elsewhere twice in a
+/// row (a real move, so it does not lag), and only change the shown degree once the result is
+/// `SETTLE_DEGREES` or more away from it.
+#[derive(Clone, Debug, Default)]
+pub struct Steady {
+    recent: std::collections::VecDeque<f64>,
+    shown: Option<f64>,
+}
+
+/// How many readings the middle is taken from.
+const WINDOW: usize = 5;
+/// A reading this far from the middle is a move, not a wobble, if the one before agrees.
+const MOVE_DEGREES: f64 = 3.0;
+
+impl Steady {
+    pub fn new() -> Steady { Steady::default() }
+
+    /// Feed one reading; get the degree to show.
+    pub fn push(&mut self, reading: f64) -> f64 {
+        if self.recent.len() == WINDOW { self.recent.pop_front(); }
+        self.recent.push_back(reading);
+        let mut sorted: Vec<f64> = self.recent.iter().copied().collect();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let middle = sorted[sorted.len() / 2];
+        let n = self.recent.len();
+        let moving = n >= 3 && {
+            let (last, before) = (self.recent[n - 1] - middle, self.recent[n - 2] - middle);
+            last.abs() > MOVE_DEGREES && before.abs() > MOVE_DEGREES && last.signum() == before.signum()
+        };
+        let value = if moving { reading } else { middle };
+        let shown = settle(self.shown, value);
+        self.shown = Some(shown);
+        shown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,8 +129,44 @@ mod tests {
         assert_eq!(degrees_to_raw(12.4), 43_200);
         assert_eq!(degrees_to_raw(-0.4), 0);
         // The documented V4L2 ranges are exactly the limits.
-        assert_eq!(raw_to_degrees(468_000), PAN_LIMIT);
+        // The V4L2 pan range is narrower than the mechanical one; the driven range is narrower still.
+        assert_eq!(raw_to_degrees(468_000), 130.0);
         assert_eq!(raw_to_degrees(324_000), TILT_LIMIT);
+        assert!(PAN_RANGE.1 <= PAN_LIMIT && TILT_RANGE.1 <= TILT_LIMIT && -TILT_RANGE.0 <= TILT_LIMIT);
+    }
+
+    #[test]
+    fn the_driven_range_is_the_published_one() {
+        assert_eq!((PAN_RANGE.0, PAN_RANGE.1), (-140.0, 140.0));
+        // Down 30 and up 70, with tilt positive looking up.
+        assert_eq!((TILT_RANGE.0, TILT_RANGE.1), (-30.0, 70.0));
+        assert_eq!(clamp_pan(200.0), 140.0);
+        assert_eq!(clamp_tilt(-50.0), -30.0);
+    }
+
+    #[test]
+    fn speed_tapers_towards_an_end_and_stops_before_it() {
+        let r = PAN_RANGE;
+        // Far from either end: full speed both ways.
+        assert_eq!(speed_allowance(0.0, 1.0, r), 1.0);
+        assert_eq!(speed_allowance(0.0, -1.0, r), 1.0);
+        // Approaching +140 tapers, and never increases as it gets closer.
+        let mut last = 1.0;
+        for at in (100..=138).map(f64::from) {
+            let now = speed_allowance(at, 1.0, r);
+            assert!(now <= last + 1e-12, "{at}: {now} after {last}");
+            last = now;
+        }
+        assert_eq!(speed_allowance(138.0, 1.0, r), 0.0);
+        assert!(speed_allowance(137.0, 1.0, r) >= CREEP);
+        // Turning away from the end is free, even right at it, or beyond it.
+        assert_eq!(speed_allowance(140.0, -1.0, r), 1.0);
+        assert_eq!(speed_allowance(145.0, -1.0, r), 1.0);
+        assert_eq!(speed_allowance(145.0, 1.0, r), 0.0);
+        // Tilt has different room each way.
+        assert_eq!(speed_allowance(-28.0, -1.0, TILT_RANGE), 0.0);
+        assert_eq!(speed_allowance(60.0, 1.0, TILT_RANGE) < 1.0, true);
+        assert_eq!(speed_allowance(0.0, 0.0, r), 1.0);
     }
 
     #[test]
@@ -94,6 +199,46 @@ mod tests {
         // The first reading is just rounded, and zero is never negative.
         assert_eq!(settle(None, 7.6), 8.0);
         assert!(settle(None, -0.3).is_sign_positive());
+    }
+
+    fn run(readings: &[f64]) -> Vec<f64> {
+        let mut steady = Steady::new();
+        readings.iter().map(|r| steady.push(*r)).collect()
+    }
+
+    #[test]
+    fn one_odd_reading_never_shows() {
+        let shown = run(&[10.0, 10.2, 9.9, 10.1, 24.0, 10.0, 10.1, 9.8, 10.0]);
+        assert!(shown.iter().all(|s| *s == 10.0), "{shown:?}");
+        // Not even a spike on the very first reading after a settled run.
+        let shown = run(&[-40.0, -40.1, -39.9, -40.0, -40.2, 90.0]);
+        assert_eq!(*shown.last().unwrap(), -40.0);
+    }
+
+    #[test]
+    fn a_wobble_between_degrees_stays_on_one_degree() {
+        let shown = run(&[5.4, 5.6, 5.5, 5.45, 5.55, 5.5, 5.6, 5.4]);
+        let first = shown[0];
+        assert!(shown.iter().all(|s| *s == first), "{shown:?}");
+    }
+
+    #[test]
+    fn a_real_move_is_followed_without_waiting() {
+        // Still at 0, then turning quickly to 30: it follows within two readings of the move.
+        let shown = run(&[0.0, 0.1, 0.0, 0.0, 8.0, 17.0, 26.0, 30.0, 30.1, 30.0]);
+        assert_eq!(shown[3], 0.0);
+        assert!(shown[5] >= 16.0, "{shown:?}");
+        assert_eq!(shown[7], 30.0);
+        assert_eq!(*shown.last().unwrap(), 30.0);
+    }
+
+    #[test]
+    fn a_small_real_move_shows_once_it_is_large_enough() {
+        // A 1° bump shows, then back again shows.
+        let shown = run(&[5.0, 5.0, 5.0, 5.0, 6.0, 6.0, 6.0, 6.0, 5.0, 5.0, 5.0, 5.0]);
+        assert_eq!(shown[3], 5.0);
+        assert_eq!(shown[7], 6.0);
+        assert_eq!(*shown.last().unwrap(), 5.0);
     }
 
     #[test]

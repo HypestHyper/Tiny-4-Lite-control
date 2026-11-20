@@ -159,6 +159,12 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         }
     }
     for (name, value) in controls {
+        // A saved position is never driven past the range the camera is driven over.
+        let value = match name.as_str() {
+            "pan_absolute" => backend::angles::degrees_to_raw(backend::angles::clamp_pan(backend::angles::raw_to_degrees(value))),
+            "tilt_absolute" => backend::angles::degrees_to_raw(backend::angles::clamp_tilt(backend::angles::raw_to_degrees(value))),
+            _ => value,
+        };
         match set_control(device, &name, value) {
             Ok(()) => applied += 1,
             Err(error) => errors.push(format!("{name}: {error}")),
