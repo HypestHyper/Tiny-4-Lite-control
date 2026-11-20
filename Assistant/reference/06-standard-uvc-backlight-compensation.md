@@ -173,5 +173,5 @@ The confirmed primitive is BLC integer 0–18 with direct USB readback.
 - **High:** UVC entity/interface/selector and exact SET_CUR/GET_CUR request fields.
 - **High:** direct hardware write and matching two-byte GET_CUR readback for 0, 15, 16, and 18 on the tested Tiny 2 Lite.
 - **High:** Windows OBSBOT Center capture sent BLC SET_CUR payloads 1 through 18 while the slider was stepped.
-- **High:** OBSBOT Center `+2.3` corresponds to BLC integer `16`, confirmed by direct SET_CUR, matching GET_CUR readback, and the app's displayed slider value on the tested camera.
+- **High:** OBSBOT Center `+2.0` corresponds to BLC integer `15` and `+2.3` corresponds to BLC integer `16`, each confirmed by direct SET_CUR, matching GET_CUR readback, and the app's displayed slider value on the tested camera.
 - **Not yet fully verified:** exact label-to-integer mapping for every other slider position and whether the same behavior applies across firmware versions.
