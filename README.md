@@ -18,4 +18,4 @@ The app identifies the Lite by USB ID `3564:fef9`, reads V4L2 controls dynamical
 **Original feature research:** [Assistant/source/obsbot_tiny_2_lite_linux_research_handoff.md](Assistant/source/obsbot_tiny_2_lite_linux_research_handoff.md)  
 **USB tracing workflow:** [Assistant/tracing on main](https://github.com/HypestHyper/Tiny-4-Lite-control/tree/main/Assistant/tracing)
 
-Windows OBSBOT Center captures from 2026-11-17 and a Tiny 2 Lite Direction Flip capture from 2026-11-18 have been analyzed. Current evidence, verified features, implemented controls, and remaining gaps are maintained in [Assistant/APP-IMPLEMENTATION-STATUS.md](Assistant/APP-IMPLEMENTATION-STATUS.md) and the linked feature inventory.
+The 2026-11-20 Linux tests now verify all eight AI tracking-mode tuples and Target Selection gesture state read-back. The updated protocol evidence and UI state contract are in [Assistant/reference/15-2026-11-20-ai-mode-and-gesture-readback.md](Assistant/reference/15-2026-11-20-ai-mode-and-gesture-readback.md). [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md) is the starting point for the remaining visual UI work.

@@ -3,7 +3,7 @@
 **Branch:** `test-app-v0.1`  
 **Application:** `app/`  
 **Target:** OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`  
-**Stage:** Feature/protocol test bench. Core device discovery, generic V4L2 controls, selected vendor XU commands, diagnostics, and USB capture are implemented. The current GTK UI is temporary; further UI redesign is deferred.
+**Stage:** Feature/protocol test bench. Core device discovery, generic V4L2 controls, selected vendor XU commands, diagnostics, and USB capture are implemented. The current GTK UI is functional but remains a test-bench layout; visual redesign is handed off to Claude.
 
 This file records what is currently implemented in the repository and the protocol findings used by it. It is not a claim that every command has been independently validated on every firmware version.
 
@@ -218,22 +218,24 @@ Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has 
 
 ### AI tracking modes
 
-The application currently maps these status/setter tuples:
+**Verified 2026-11-20 on the user's Tiny 2 Lite:** all eight supported modes were set through selector `0x06`, opcode `0x16`, and read back exactly from status offsets `0x18` (mode) and `0x1C` (submode).
 
-| Mode | Tuple |
-|---|---|
-| Off | `00 00` |
-| Normal tracking | `02 00` |
-| Upper body | `02 01` |
-| Close-up | `02 02` |
-| Headless | `02 03` |
-| Lower body | `02 04` |
-| Group | `01 00` |
-| Desk mode | `05 00` |
-| Whiteboard | `04 00` |
-| Hand | setter `03 00`; status decoder accepts `03 00` or `06 00` |
+| Mode | SET_CUR tuple | GET_CUR tuple |
+|---|---|---|
+| No Tracking | `00 00` | `00 00` |
+| Normal tracking | `02 00` | `02 00` |
+| Upper body | `02 01` | `02 01` |
+| Close-up | `02 02` | `02 02` |
+| Headless | `02 03` | `02 03` |
+| Lower body | `02 04` | `02 04` |
+| Hand | `03 00` | `03 00` |
+| Group | `01 00` | `01 00` |
 
-The Hand tuple discrepancy is intentionally visible in code: the Lite-tested setter uses `(0x03, 0x00)`, while the status decoder accepts both reported forms. Do not normalize this without new capture/read-back evidence.
+The full 60-byte setter block begins `16 02 m n` and is zero-padded.
+Selector `0x03` byte 0 correlates with tracking enabled for several modes,
+but its meaning is unknown. Selector `0x09` byte 0 also varies with mode,
+but its meaning is unknown and must not be used as a mode decoder.
+See [reference/15-2026-11-20-ai-mode-and-gesture-readback.md](reference/15-2026-11-20-ai-mode-and-gesture-readback.md).
 
 ### Tracking speed
 
@@ -245,14 +247,14 @@ The Hand tuple discrepancy is intentionally visible in code: the Lite-tested set
 
 ### Gesture commands
 
-Four command groups are encoded. The user has physically confirmed Target selection (open palm/fingers spread enables normal tracking), Zoom/L-pose, and Dynamic Zoom (both hands form L shapes and move apart/together). The 2026-11-18 capture establishes the Direction Flip wire payload mapping, and the user has now physically confirmed that the corrected direction reversal works on the camera. Direction Flip modifies the direction of the Dynamic Zoom gesture, so the two settings work together. It is not related to Zoom/L-pose or Global/Face autofocus priority. Device read-back remains unavailable, so the UI tracks the last successfully sent state only. These are live hardware observations, not protocol read-back.
+Four command groups are encoded. The user has physically confirmed Target Selection (open palm/fingers spread enables normal tracking), Zoom/L-pose, Dynamic Zoom (both hands form L shapes and move apart/together), and Dynamic Zoom Direction (direction modifier for Dynamic Zoom). Controlled GET_CUR tests on 2026-11-20 established one gesture read-back: selector 0x06 byte 0x01 changes 0 -> 1 when Target Selection is enabled and 1 -> 0 when disabled. The other three gesture commands were accepted, but selectors 0x03, 0x06, and 0x09 did not change during their ON/OFF tests. This is a read-back limitation, not evidence that those commands fail to work.
 
 - Target selection: `0a 04 c4 30 01 00`
 - Zoom/L-pose: `0a 04 44 31 01 00`
 - Dynamic zoom: `0a 04 44 33 01 00`
 - Dynamic zoom direction: `0a 04 c4 33 01 00`; unlike the other gesture commands, its wire-state payload is inverted: OFF = `27 ff 01 00`, ON = `e6 3f 00 00`. Unit tests check both payload choices and rolling sequence increments. The capture-derived full frame prefixes are recorded in the evidence section below.
 
-Enable/disable frames are built with the current frame builder. The status block does not provide reliable per-gesture read-back for Target Selection, Dynamic Zoom, or Direction Flip, so a successful ioctl only confirms host-driver request completion. The user has separately confirmed the visible behavior of all four gesture controls on the camera; the app still cannot reconstruct the initial state of most gestures from device read-back.
+Enable/disable frames are built with the current frame builder. Target Selection is initialized from selector 0x06 status byte 0x01 (0 = disabled, 1 = enabled). Zoom/L-pose, Dynamic Zoom, and Dynamic Zoom Direction still initialize from saved local state or Unknown because no confirmed status read-back was observed. The user has separately confirmed the visible behavior of all four gesture controls on the camera.
 
 ### Frame construction and tests
 
@@ -275,7 +277,7 @@ Enable/disable frames are built with the current frame builder. The status block
 
 - No automatic byte-diff view or semantic inference for unknown XU records; capture reports now include a transfer summary and pairing aids, while preserving raw decoded rows.
 - No automatic firmware-version identification. USB `bcdDevice` and XU model identity are displayed, but neither is treated as the installed OBSBOT firmware revision.
-- No reliable per-gesture state read-back for Target Selection, Dynamic Zoom, or Direction Flip. Their controls therefore start as **Unknown** unless a previous successful local setting is saved; the first click from Unknown sends Enable. Zoom/L-pose has a status-byte read-back. All four gesture behaviours have been physically confirmed, including Direction Flip reversing Dynamic Zoom. Unknown is a read-back limitation, not a claim that the gesture feature itself is unsupported.
+- Target Selection now has confirmed read-back from selector 0x06 byte 0x01. Zoom/L-pose, Dynamic Zoom, and Dynamic Zoom Direction have no confirmed read-back and use saved/local state or Unknown. All four gesture behaviours have been physically confirmed, including Direction Flip reversing Dynamic Zoom. Unknown is a read-back limitation, not a claim that the gesture feature itself is unsupported.
 - Global / Face autofocus priority remains **not yet hardware-verified**. The 2026-11-18 capture establishes the likely payload mapping (Global `bf fb 01 00`, Face `be 07 00 00`) and shows that the final Face-to-Global UI transition emitted no focus SET_CUR. The app payload mapping and grouped-toggle dispatch were corrected in commit `8fd0878`; a fresh capture and visible camera-behavior test are still required. The camera exposes no reliable read-back, and successful USB completion must not be presented as proof of applied focus behavior.
 - No complete protocol coverage for all features listed in the research inventory.
 - Pop filter has an experimental fixed-payload prototype in the Controls page. It is not a complete protocol implementation: sequence/session fields remain unresolved, GET_CUR read-back is unavailable, and focused ON/OFF hardware validation is pending. The source currently sets payload byte 32 to `0x01`; [reference/09](reference/09-pop-filter-protocol-investigation.md) describes bytes 32–59 as zero for the captured prototype. Resolve this discrepancy against the raw fresh-session capture before changing the payload.

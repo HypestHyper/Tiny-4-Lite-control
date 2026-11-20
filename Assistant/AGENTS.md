@@ -6,9 +6,10 @@ This directory is the authoritative project handoff for the OBSBOT Tiny 2 Lite L
 
 1. Read [INDEX.md](INDEX.md).
 2. For app work, read [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md).
-3. Read only the relevant topic file(s) under `reference/`.
-4. Consult `source/obsbot_tiny_2_lite_linux_research_handoff.md` for original context.
-5. The USB tracing workflow is linked from the index and currently lives on the repository's `main` branch under `Assistant/tracing/`.
+3. For the remaining UI redesign, read the root [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md) before editing GTK presentation.
+4. Read only the relevant topic file(s) under `reference/`.
+5. Consult `source/obsbot_tiny_2_lite_linux_research_handoff.md` for original context.
+6. The USB tracing workflow is linked from the index and currently lives on the repository's `main` branch under `Assistant/tracing/`.
 
 ## Evidence discipline
 

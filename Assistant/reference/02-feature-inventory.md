@@ -93,13 +93,24 @@ not update `zoom_absolute`.
 
 ### 4.4 AI tracking / framing modes
 
-**Current app scope:** Off, Normal, Upper Body, Close-up, Headless,
-Lower Body, and Group. Desk, Whiteboard, and Hand are intentionally
-excluded from the app. Do not expose them as selectable modes.
+**Current app scope:** No Tracking, Normal Tracking, Upper Body, Close-up,
+Headless, Lower Body, Hand, and Group. All eight tuples have been tested
+with selector 0x06 SET_CUR and read back from status offsets 0x18/0x1C.
 
-Use the exact enum values from the current Tiny 2 Lite protocol
-implementation/source. Do not invent enum numbers from the display
-order.
+| Mode | SET_CUR tuple | GET_CUR tuple |
+|---|---|---|
+| No Tracking | `00 00` | `00 00` |
+| Normal Tracking | `02 00` | `02 00` |
+| Upper Body | `02 01` | `02 01` |
+| Close-up | `02 02` | `02 02` |
+| Headless | `02 03` | `02 03` |
+| Lower Body | `02 04` | `02 04` |
+| Hand | `03 00` | `03 00` |
+| Group | `01 00` | `01 00` |
+
+The setter payload is 60 bytes: `16 02 m n` followed by zero padding.
+See [reference/15-2026-11-20-ai-mode-and-gesture-readback.md](15-2026-11-20-ai-mode-and-gesture-readback.md)
+for the controlled test matrix and confidence limits.
 
 ### 4.5 Tracking speed
 
@@ -153,13 +164,14 @@ not an independent gesture: it modifies the direction of the Dynamic
 Zoom gesture, so the two settings work together. Direction Flip does
 not change the Zoom/L-pose gesture or Global/Face autofocus priority.
 
-The selector 0x06 status block does not provide reliable read-back for
-Target Selection, Dynamic Zoom, or Direction Flip. In the app these
-controls therefore start as **Unknown** unless a previously successful
-local setting was saved; the first click from Unknown sends Enable.
-Zoom/L-pose has a status-byte read-back. The Unknown label means the app
-cannot determine the initial state, not that the camera reports an error.
-A successful ioctl confirms host-side request completion, not that the
+Selector 0x06 status byte `0x01` provides confirmed Target Selection
+read-back: `0x00` = Off and `0x01` = On. The app reads this value on
+startup and treats camera state as authoritative over saved local state.
+Zoom/L-pose, Dynamic Zoom, and Dynamic Zoom Direction have no confirmed
+read-back in the tested status selectors. Those controls start from the
+last saved local setting or **Unknown**; the first click from Unknown
+sends Enable. A successful ioctl confirms host-side request completion,
+not that the
 camera applied the feature. Keep the controls separate and preserve this
 evidence distinction.
 

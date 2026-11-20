@@ -10,12 +10,14 @@
 
 - [2026-11-20 V4L2 inventory and dependency matrix](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md): device identity, nodes, USB/media topology, video/audio descriptors, complete reported V4L2 controls and values, invalid driver values, and experimentally confirmed mode dependencies.
 
+- [2026-11-20 AI mode and gesture read-back](reference/15-2026-11-20-ai-mode-and-gesture-readback.md): verified mode tuples, selector inventory, Target Selection state byte, gesture read-back limits, and test evidence.
+
 ## Current app handoff
 
 - [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md): current framework implementation, protocol details, gaps, and next investigation.
 - App source of truth: `../app/src/main.rs` on branch `test-app-v0.1`.
 - App runtime/build notes: `../app/README.md`.
-- Current app is a Rust/GTK4 hardware-control test bench. UI redesign is deferred.
+- Current app is a Rust/GTK4 hardware-control test bench. Functional AI mode and gesture state handling is updated; visual redesign is specified in the root [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md).
 
 ## USB tracing workflow
 

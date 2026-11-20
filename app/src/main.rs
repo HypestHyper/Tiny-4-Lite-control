@@ -1968,7 +1968,7 @@ fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     data[2] = mode.0;
     data[3] = mode.1;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
-    let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x01, 0x00) => "group", _ => "unknown" };
+    let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x03, 0x00) => "hand", (0x01, 0x00) => "group", _ => "unknown" };
     update_config(|config| config.ai_tracking_mode = Some(name.into()));
     Ok(())
 }
@@ -2094,6 +2094,7 @@ fn ai_mode_label(status: &[u8; 60]) -> &'static str {
         (0x02, 0x02) => "Close-up",
         (0x02, 0x03) => "Headless",
         (0x02, 0x04) => "Lower body",
+        (0x03, 0x00) => "Hand",
         (0x01, 0x00) => "Group",
         _ => "Unknown mode",
     }
@@ -2116,13 +2117,14 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     mode_label.set_xalign(0.0);
     let mode = gtk::ComboBoxText::new();
     mode.set_hexpand(true);
-    let modes: [(&str, &str, u8, u8); 7] = [
-        ("off", "Off", 0x00, 0x00),
+    let modes: [(&str, &str, u8, u8); 8] = [
+        ("off", "No tracking", 0x00, 0x00),
         ("normal", "Normal tracking", 0x02, 0x00),
         ("upper", "Upper body", 0x02, 0x01),
         ("close", "Close-up", 0x02, 0x02),
         ("headless", "Headless", 0x02, 0x03),
         ("lower", "Lower body", 0x02, 0x04),
+        ("hand", "Hand", 0x03, 0x00),
         ("group", "Group", 0x01, 0x00),
     ];
     for (id, label, _, _) in modes { mode.append(Some(id), label); }
@@ -2213,15 +2215,20 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     speed_row.append(&speed);
     layout.append(&speed_row);
 
-    // Status byte 0x07 is inverted for the L-pose Zoom gesture:
-    // 1 = disabled, 0 = enabled. Other gesture states have no confirmed
-    // device read-back, so those start Unknown and become state-aware after
-    // the first successful command in this session.
+    // Selector 0x06 status byte 0x01 is the confirmed Target Selection
+    // read-back: 0 = disabled, 1 = enabled. The other three gesture
+    // commands have no confirmed status read-back.
     let saved_gestures = current_config().gesture_states;
+    let target_selection_readback = xu_status(device).ok().and_then(|data| match data[0x01] {
+        0x00 => Some(false),
+        0x01 => Some(true),
+        _ => None,
+    });
     let gestures: [(&str, [u8; 6], Option<bool>); 4] = [
-        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00], saved_gestures.get("target_selection").copied()),
+        ("Target selection gesture", [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00],
+            target_selection_readback.or_else(|| saved_gestures.get("target_selection").copied())),
         ("Zoom (L-pose) gesture", [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00],
-            xu_status(device).ok().map(|data| data[0x07] == 0).or_else(|| saved_gestures.get("zoom_l_pose").copied())),
+            saved_gestures.get("zoom_l_pose").copied()),
         ("Dynamic zoom gesture", [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00], saved_gestures.get("dynamic_zoom").copied()),
         ("Dynamic zoom direction", [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00], saved_gestures.get("dynamic_zoom_direction").copied()),
     ];
@@ -2260,10 +2267,10 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
                     button_click.set_label(if enabled { "Enabled · Disable" } else { "Disabled · Enable" });
                     status_gesture.set_text(&format!("{label}: {} command sent.{}",
                         if enabled { "enabled" } else { "disabled" },
-                        if label == "Zoom (L-pose) gesture" {
-                            " Device state is readable from status byte 0x07."
+                        if label == "Target selection gesture" {
+                            " Camera state is read back from selector 0x06 status byte 0x01."
                         } else {
-                            " No confirmed device read-back exists; state reflects successful commands in this session."
+                            " No confirmed device read-back exists; state reflects the last saved or successfully sent setting."
                         }));
                 }
                 Err(error) => status_gesture.set_text(&format!("{label} change failed: {error}")),
@@ -2318,7 +2325,7 @@ fn add_ai_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     refresh_row.append(&refresh);
     layout.append(&refresh_row);
 
-    let note = gtk::Label::new(Some("AI commands use OBSBOT's vendor XU. Gesture zoom ratio is sent as a little-endian f32 using command 0x3244. The L-pose Zoom gesture has device read-back at status byte 0x07; other gesture states are unknown on startup and tracked locally after a successful toggle. Desk, Whiteboard, and Hand tracking are omitted."));
+    let note = gtk::Label::new(Some("Eight AI tracking modes are available. Mode state is read from selector 0x06 offsets 0x18/0x1C. Target Selection state is read from selector 0x06 byte 0x01; Zoom, Dynamic Zoom, and Dynamic Zoom Direction have no confirmed device read-back and use saved/local state. Gesture zoom ratio is sent as a little-endian f32 using command 0x3244."));
     note.set_wrap(true);
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
