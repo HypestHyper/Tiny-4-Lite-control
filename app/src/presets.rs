@@ -74,6 +74,20 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         }
     }
 
+    // The position comes from the camera's live pose, not the V4L2 value, which can be the last
+    // command sent. Pan and tilt agree in sign with it (checked on a real camera: +1 step is +1°).
+    // The V4L2 controls move in whole degrees, so round to one.
+    if let Ok((pan, tilt)) = get_gimbal_position(device) {
+        if pan.is_finite() && tilt.is_finite() {
+            for (name, degrees) in [("pan_absolute", pan), ("tilt_absolute", tilt)] {
+                if let Some(control) = parse_controls(&output).into_iter().find(|c| c.name == name && !c.disabled) {
+                    let raw = (degrees.round() as i64) * 3600;
+                    settings.insert(format!("v4l2:{name}"), raw.clamp(control.min, control.max));
+                }
+            }
+        }
+    }
+
     if let Ok(status) = xu_status(device) {
         if status[0x21] <= 3 {
             settings.insert("obsbot:led_brightness".into(), status[0x21] as i64);
