@@ -23,7 +23,7 @@ follows the window width.
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
 real pan and tilt, with the numbers on top. It is drawn straight on from the front and a little above, like a product photo: the lens and the front of the base
 face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward
-your left, because it is the camera's right. A blue cone shows the view and follows the zoom: 86° at zoom 0 (Wide), about 78° at 5 (Normal) and 65° at 15 (Narrow), from the documented zoom factors of 1.00×, 1.15× and 1.47×; the inner lens glass sits deeper as you zoom in. The factor at zoom 100 is not documented, so the model assumes 2.0× there. It is a drawing of the angles the camera reports (the same position
+your left, because it is the camera's right. A blue cone shows the view and follows the zoom: OBSBOT's published 79.4° diagonal at zoom 0, narrowing by the documented zoom factors (1.15× at 5, 1.47× at 15) up to the published 4× at 100; the line between 15 and 100 is an assumption. The inner lens glass sits deeper as you zoom in. It is a drawing of the angles the camera reports (the same position
 query as the readout), never a command. It glides between readings rather than jumping, asks for the position
 about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
 window is in the background or the card is hidden. With no reading it dims and shows no view cone.

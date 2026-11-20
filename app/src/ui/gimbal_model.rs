@@ -134,12 +134,12 @@ mod shape {
     pub const DOT_CORNER: f64 = 5.2;
     /// Radius of the floor ring that shows the pan range.
     pub const FLOOR_RING: f64 = 38.0;
-    /// Diagonal field of view at zoom 0 (the "Widest" preset, 86°), 16:9.
-    pub const FOV_DIAGONAL_DEGREES: f64 = 86.0;
+    /// Diagonal field of view at zoom 0: 79.4° (OBSBOT's published spec for the Tiny 2 Lite), 16:9.
+    pub const FOV_DIAGONAL_DEGREES: f64 = 79.4;
     /// Zoom control position and the zoom factor measured there. The three presets are documented
-    /// (0 → 1.00×, 5 → 1.15×, 15 → 1.47×); the factor at the top of the range (100) is NOT
-    /// documented, so 2.0× is an assumption and only the end of the curve depends on it.
-    pub const ZOOM_CURVE: [(f64, f64); 4] = [(0.0, 1.0), (5.0, 1.15), (15.0, 1.47), (100.0, 2.0)];
+    /// (0 → 1.00×, 5 → 1.15×, 15 → 1.47×); the top of the range (100) is OBSBOT's published 4× digital
+    /// zoom, and the curve between 15 and 100 is a straight line (an assumption).
+    pub const ZOOM_CURVE: [(f64, f64); 4] = [(0.0, 1.0), (5.0, 1.15), (15.0, 1.47), (100.0, 4.0)];
     pub const CONE_REACH: f64 = 40.0;
     /// One drawing unit is this many millimetres.
     pub const UNIT: f64 = 32.0;
@@ -628,14 +628,15 @@ mod shape_tests {
         assert!((mm(z1 - z0) - 46.4).abs() < 1.5, "depth {}", mm(z1 - z0));
     }
 
-    /// The three documented presets give the documented angles: 86° wide, 78° normal, 65° narrow.
+    /// The published 79.4° at zoom 0, narrowing with the documented zoom factors, 4× at the top.
     #[test]
-    fn zoom_presets_give_the_documented_angles() {
+    fn zoom_narrows_the_published_angle() {
         assert!((zoom_factor(5.0) - 1.15).abs() < 1e-9 && (zoom_factor(15.0) - 1.47).abs() < 1e-9);
-        assert!((fov_diagonal(0.0) - 86.0).abs() < 0.01);
-        assert!((fov_diagonal(5.0) - 78.0).abs() < 0.6, "{}", fov_diagonal(5.0));
-        assert!((fov_diagonal(15.0) - 65.0).abs() < 0.6, "{}", fov_diagonal(15.0));
-        assert!(fov_diagonal(100.0) < fov_diagonal(15.0));
+        assert!((zoom_factor(100.0) - 4.0).abs() < 1e-9);
+        assert!((fov_diagonal(0.0) - 79.4).abs() < 0.01);
+        assert!((fov_diagonal(5.0) - 71.6).abs() < 0.3, "{}", fov_diagonal(5.0));
+        assert!((fov_diagonal(15.0) - 59.0).abs() < 0.3, "{}", fov_diagonal(15.0));
+        assert!((fov_diagonal(100.0) - 23.4).abs() < 0.3);
     }
 
     #[test]
@@ -650,11 +651,11 @@ mod shape_tests {
         let aims: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
         // Ray, four edges from the lens, four edges of the far rectangle.
         assert_eq!(aims.len(), 9);
-        // Half the diagonal of the far rectangle, seen from the lens, is half the widest 86°.
+        // Half the diagonal of the far rectangle, seen from the lens, is half the published 79.4°.
         let far = &aims[1].b;
         let lens = &aims[1].a;
         let (dx, dy, dz) = (far.0 - lens.0, far.1 - lens.1, far.2 - lens.2);
         let angle = (dx.hypot(dy)).atan2(dz.abs()).to_degrees();
-        assert!((angle - 86.0 / 2.0).abs() < 0.2, "half diagonal {angle}");
+        assert!((angle - 79.4 / 2.0).abs() < 0.2, "half diagonal {angle}");
     }
 }
