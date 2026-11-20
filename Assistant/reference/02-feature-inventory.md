@@ -162,36 +162,28 @@ A successful ioctl confirms host-side request completion, not that the
 camera applied the feature. Keep the controls separate and preserve this
 evidence distinction.
 
-### 4.7 Presets
+### 4.7 Presets and power-on initial state
 
-**Current app:** Local application presets can capture and apply
-supported V4L2, selected OBSBOT, gesture, and video-mode settings.
-These are app-managed snapshots, not camera-native preset slots.
+**Local application presets:** The app retains its own local preset
+snapshots for supported V4L2, selected OBSBOT, gesture, and video-mode
+settings. These are not camera-resident presets.
 
-**Camera-native presets:** The Tiny 2 Lite command family is documented
-in the Domatix protocol notes, but native slot create/delete/recall/read/
-rename/list/update operations are not implemented in the current app.
-Validate the read/list/recall path before adding native slot mutations.
+**Camera-native presets:** Implemented in the Controls page under
+**Camera-native presets**. Selector `0x0C` provides the occupancy list;
+echo-writing that block resets the consuming selector `0x0D` entry
+cursor. Entries contain slot, pitch/yaw, zoom and a Base64-encoded name.
+The UI supports list/read, create, update, rename, recall and delete.
+Create/update use live pose query `0x0043` and zoom query `0x6804`;
+delete sends both the slot-delete frame and the follow-up cleared-action
+frame. The Tiny 2 Lite has three user slots.
 
-Operations/opcodes: - Create: `0x3944` - Delete: `0x3984` - Recall:
-`0x39C4` - Read pose: `0x3A44` - Rename: `0x3A84` - Read name:
-`0x3B04` - List: `0x3B44` - Update: `0x3E04`
-
-Preset command family is derived as `(index << 6) | 0x04`.
-
-Important behavior: - Delete may ACK even if a slot does not exist.
-Verify the preset list after deletion. - Preset names use padded
-Base64. - Preset list selector is `0x0C`. - Preset entry cursor is
-`0x0D`. - The cursor is consuming; reset it by echo-writing the selector
-`0x0C` block before a new enumeration. - Recall payload requires four
-`1.0f32` floats. - Pose uses raw V4L2 pan/tilt/zoom integer values
-converted to `f32` (scale 1.0).
-
-**Documentation discrepancy:** Older README text may say only preset
-recall is supported. The newer protocol document reports
-create/update/delete/rename/read-back verified on Tiny 2 Lite. Prefer
-the newer protocol notes and source implementation, and validate each
-operation on hardware.
+**Power-on initial state:** Implemented separately under
+**Power-on initial state**. Query `0x3884` reads the startup pose and
+query `0x3E84` reads the 40-byte startup picture/action block. The
+**Set current position as initial state** action reads live pose and zoom,
+sends `0x3EC4` with source index 3 (an independent pose), then sends
+`0x3E44` with the existing action block preserved. It verifies the new
+pose through `0x3884`.
 
 ### 4.8 Field of view (FOV)
 
@@ -412,7 +404,7 @@ Close / Standard / Far selector and remembers only the last successful
 local submission. A successful ioctl is transport evidence, not
 independent proof that the camera applied the setting.
 
-**Microphone during sleep:** Implemented as a distinct setting from Disable microphone. The controlled 2026-11-18 Tiny 2 Lite capture established selector `0x06` GET_CUR/SET_CUR on XU unit 2, using the shared 60-byte configuration block. Byte offset 16 maps Off=`0x00`, On=`0x01`; GET_CUR read-back confirmed the state transitions. The setter must GET_CUR, patch only byte 16, then SET_CUR the complete block so the other 59 bytes are preserved. The GTK control is labelled **Microphone during sleep** and initializes from camera read-back, with the last successful local value as fallback. This does not mean the app automatically sleeps/wakes the camera, and it is not the separate fixed-payload **Disable microphone** command (`1c 01 <state>`).
+**Microphone during sleep:** Implemented as a distinct setting from Disable microphone. The camera's selector `0x06` GET_CUR status block reports this setting at byte offset `0x10` (Off=`0x00`, On=`0x01`). The write is the separate tagged selector `0x06` SET_CUR command `13 01 <state>`, not a GET_CUR / patch / SET_CUR rewrite of the status block. The GTK control is labelled **Microphone during sleep** and initializes from camera read-back, with the last successful local value as fallback. This does not mean the app automatically sleeps/wakes the camera, and it is not the separate fixed-payload **Disable microphone** command (`1c 01 <state>`).
 
 **Pop filter:** An experimental fixed-payload prototype is present in the app. The protocol investigation remains incomplete: XU unit 2 / selector `0x02`, 60-byte SET_CUR writes, with byte 17 On=`01` / Off=`00` and bytes 14–15 On=`ef 4f` / Off=`be 8f`. Byte 2 behaves as a sequence counter; bytes 6–7 repeat for matching counter values, but their generation rule is unknown. The prototype uses captured session-specific payload data and is not a general payload builder. Its current source sets byte 32 to `01`, while the investigation's section 7 describes offsets 32–59 as zero. Resolve this source/evidence discrepancy against the raw fresh-session capture before changing the payload. No reliable GET_CUR read-back exists. The prototype still needs a focused ON/OFF hardware test; do not infer success from ioctl completion.
 
