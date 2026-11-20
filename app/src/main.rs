@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 thread_local! {
@@ -454,7 +454,17 @@ extern "C" {
 
 fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
+        if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 20
+            && data[..2] == [0xaa, 0x25]
+            && data[8..12] == [0x0a, 0x02, 0x02, 0x36]
+        {
+            LAST_UI_TEST_FOCUS_VALUE.store(
+                u32::from_le_bytes(data[16..20].try_into().unwrap()),
+                Ordering::Relaxed,
+            );
+        } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12
+            && data[0] == 0xaa && data[1] == 0x01
+        {
             LAST_UI_TEST_QUERY_SEQUENCE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
             LAST_UI_TEST_QUERY_COMMAND.store(u16::from_le_bytes([data[10], data[11]]), Ordering::Relaxed);
         } else if request == UVC_GET_CUR {
@@ -514,6 +524,46 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
             std::io::Error::last_os_error()));
     }
     Ok(())
+}
+
+// GET_CUR for framed selector-0x02 replies must retain the actual UVC
+// transfer length. The camera returns a one-byte empty-mailbox response
+// after a matching reply has been consumed.
+fn xu_get_cur_with_length(device: &str, selector: u8, data: &mut [u8]) -> Result<usize, String> {
+    if ui_test_mode() {
+        data.fill(0);
+        if selector == 0x02 && data.len() >= 18
+            && LAST_UI_TEST_QUERY_COMMAND.load(Ordering::Relaxed) == 0x35c2
+        {
+            let sequence = LAST_UI_TEST_QUERY_SEQUENCE.load(Ordering::Relaxed);
+            data[0..2].copy_from_slice(&[0xaa, 0x29]);
+            data[2..4].copy_from_slice(&sequence.to_le_bytes());
+            data[4..6].copy_from_slice(&12u16.to_le_bytes());
+            data[8..12].copy_from_slice(&[0x02, 0x0a, 0xc2, 0x35]);
+            data[12..14].copy_from_slice(&4u16.to_le_bytes());
+            data[14..18].copy_from_slice(
+                &LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes(),
+            );
+            let crc = crc16_usb(&data[..12]);
+            data[6..8].copy_from_slice(&crc.to_le_bytes());
+            return Ok(18);
+        }
+        return Ok(data.len());
+    }
+
+    use std::os::fd::AsRawFd;
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
+        .map_err(|e| format!("Cannot open {device} for OBSBOT read-back: {e}"))?;
+    let mut query = UvcXuControlQuery {
+        unit: XU_UNIT, selector, query: UVC_GET_CUR, _pad: 0,
+        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
+    };
+    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
+    if result < 0 {
+        return Err(format!("OBSBOT XU selector 0x{selector:02x} GET_CUR: {}",
+            std::io::Error::last_os_error()));
+    }
+    Ok(usize::from(query.size))
 }
 
 fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
@@ -1320,6 +1370,8 @@ fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8; 6]) -> [u8
 static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
+static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
 
 fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
@@ -1783,22 +1835,101 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     container.append(&frame);
 }
 
-// Tiny 2 Lite focus-priority command (wire command 0x3602, Camera receiver 0x02).
-// The Nov 18 capture correlates Global -> Face with BE 07 00 00 and
-// Face -> Global with BF FB 01 00. The camera does not provide reliable
-// read-back, so this records the last successfully submitted command.
-fn face_focus_payload(face_priority: bool) -> [u8; 4] {
-    if face_priority { [0xbe, 0x07, 0x00, 0x00] }
-    else { [0xbf, 0xfb, 0x01, 0x00] }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FaceFocusPriority {
+    Face,
+    Global,
 }
 
-fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
+impl FaceFocusPriority {
+    fn payload(self) -> [u8; 4] {
+        match self {
+            Self::Face => [0xbf, 0xfb, 0x01, 0x00],
+            Self::Global => [0xbe, 0x07, 0x00, 0x00],
+        }
+    }
+
+    fn from_payload(payload: [u8; 4]) -> Result<Self, String> {
+        match payload {
+            [0xbf, 0xfb, 0x01, 0x00] => Ok(Self::Face),
+            [0xbe, 0x07, 0x00, 0x00] => Ok(Self::Global),
+            value => Err(format!("Camera returned unknown autofocus-priority value {:02x?}.", value)),
+        }
+    }
+
+    fn config_value(self) -> &'static str {
+        match self { Self::Face => "face", Self::Global => "global" }
+    }
+
+    fn label(self) -> &'static str {
+        match self { Self::Face => "Face", Self::Global => "Global" }
+    }
+}
+
+fn face_focus_get_frame(sequence: u16) -> [u8; 60] {
+    let mut frame = [0u8; 60];
+    frame[0] = 0xaa;
+    frame[1] = 0x01; // Header-only vendor GET request.
+    frame[2..4].copy_from_slice(&sequence.to_le_bytes());
+    frame[4..6].copy_from_slice(&12u16.to_le_bytes());
+    frame[8..12].copy_from_slice(&[0x0a, 0x02, 0xc2, 0x35]);
+    // CRC16/USB covers the complete 12-byte header with bytes 6-7 zeroed.
+    let crc = crc16_usb(&frame[..12]);
+    frame[6..8].copy_from_slice(&crc.to_le_bytes());
+    frame
+}
+
+fn decode_face_focus_reply(data: &[u8], sequence: u16) -> Result<Option<FaceFocusPriority>, String> {
+    if data.len() < 18 || data[..2] != [0xaa, 0x29]
+        || data[2..4] != sequence.to_le_bytes()
+        || data[10..12] != [0xc2, 0x35]
+    {
+        return Ok(None);
+    }
+    if data[4..6] != [0x0c, 0x00] || data[8..10] != [0x02, 0x0a] {
+        return Err("CAM_GET_FACE_FOCUS reply has an unexpected header.".into());
+    }
+    if u16::from_le_bytes([data[12], data[13]]) != 4 {
+        return Err("CAM_GET_FACE_FOCUS reply did not contain a four-byte priority value.".into());
+    }
+    let mut header = data[..12].to_vec();
+    let received_crc = u16::from_le_bytes([header[6], header[7]]);
+    header[6] = 0;
+    header[7] = 0;
+    if crc16_usb(&header) != received_crc {
+        return Err("CAM_GET_FACE_FOCUS reply header CRC is invalid.".into());
+    }
+    let payload = [data[14], data[15], data[16], data[17]];
+    FaceFocusPriority::from_payload(payload).map(Some)
+}
+
+fn get_face_focus(device: &str) -> Result<FaceFocusPriority, String> {
+    let sequence = next_xu_sequence(xu_sequence_counter());
+    let mut request = face_focus_get_frame(sequence);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut request)?;
+
+    for _ in 0..8 {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let mut response = [0u8; 60];
+        let length = xu_get_cur_with_length(device, 0x02, &mut response)?;
+        if let Some(priority) = decode_face_focus_reply(&response[..length.min(response.len())], sequence)? {
+            return Ok(priority);
+        }
+    }
+    Err("Timed out waiting for a matching CAM_GET_FACE_FOCUS reply.".into())
+}
+
+fn set_face_focus(device: &str, requested: FaceFocusPriority) -> Result<FaceFocusPriority, String> {
     let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
     let mut command = [0u8; 6];
-    command[2..6].copy_from_slice(&face_focus_payload(face_priority));
+    command[2..6].copy_from_slice(&requested.payload());
     xu_send_frame(device, group, command)?;
-    update_config(|config| config.focus_mode = Some(if face_priority { "face" } else { "global" }.into()));
-    Ok(())
+
+    // A successful SET_CUR is only host-transport evidence. Confirm the
+    // camera's state with the independent CAM_GET_FACE_FOCUS transaction.
+    let actual = get_face_focus(device)?;
+    update_config(|config| config.focus_mode = Some(actual.config_value().into()));
+    Ok(actual)
 }
 
 fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label, autofocus_enabled: bool) {
@@ -1810,8 +1941,6 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     layout.set_margin_start(10);
     layout.set_margin_end(10);
 
-    // A grouped ToggleButton pair behaves as one segmented choice: exactly
-    // one priority is selected, and changing it sends the corresponding XU command.
     let selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     selector.add_css_class("linked");
     selector.set_halign(gtk::Align::Start);
@@ -1821,58 +1950,84 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     global.add_css_class("flat");
     face.add_css_class("flat");
     selector.set_sensitive(autofocus_enabled);
-    let saved_focus_mode = current_config().focus_mode;
-    match saved_focus_mode.as_deref() {
-        Some("global") => global.set_active(true),
-        Some("face") => face.set_active(true),
-        _ => {} // No confirmed local selection: leave both segments unselected.
+
+    // Camera read-back is authoritative. Never initialize from stale config.
+    let initial = get_face_focus(device).ok();
+    if let Some(priority) = initial {
+        global.set_active(priority == FaceFocusPriority::Global);
+        face.set_active(priority == FaceFocusPriority::Face);
+        update_config(|config| config.focus_mode = Some(priority.config_value().into()));
     }
     selector.append(&global);
     selector.append(&face);
     layout.append(&selector);
 
-    let current_face = Rc::new(Cell::new(match saved_focus_mode.as_deref() {
-        Some("face") => Some(true),
-        Some("global") => Some(false),
-        _ => None,
-    }));
-    // Dispatch from the clicked segment, not both buttons' toggled signals.
-    // A grouped ToggleButton emits toggled for the segment being deselected as
-    // well as the one being selected. Handling only a user click guarantees one
-    // command for the newly selected priority and avoids depending on signal order.
-    for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
+    let current = Rc::new(Cell::new(initial));
+    for (button, requested) in [
+        (global.clone(), FaceFocusPriority::Global),
+        (face.clone(), FaceFocusPriority::Face),
+    ] {
         let dev = device.to_string();
         let status_label = status.clone();
-        let current = current_face.clone();
-        let global_restore = global.clone();
-        let face_restore = face.clone();
+        let current_state = current.clone();
+        let global_button = global.clone();
+        let face_button = face.clone();
         button.connect_clicked(move |selected| {
-            if !selected.is_active() {
-                return;
-            }
-            let previous = current.get();
-            match set_face_focus(&dev, face_priority) {
-                Ok(()) => {
-                    current.set(Some(face_priority));
-                    status_label.set_text(if face_priority {
-                        "Face-priority autofocus command submitted. Verify the camera's focus behavior."
+            if !selected.is_active() { return; }
+            match set_face_focus(&dev, requested) {
+                Ok(actual) => {
+                    current_state.set(Some(actual));
+                    global_button.set_active(actual == FaceFocusPriority::Global);
+                    face_button.set_active(actual == FaceFocusPriority::Face);
+                    if actual == requested {
+                        status_label.set_text(&format!("{} autofocus priority set and confirmed by camera read-back.", actual.label()));
                     } else {
-                        "Global autofocus command submitted. Verify the camera's focus behavior."
-                    });
+                        status_label.set_text(&format!("Requested {} priority, but camera reports {}. UI reflects camera state.", requested.label(), actual.label()));
+                    }
                 }
                 Err(error) => {
-                    global_restore.set_active(previous == Some(false));
-                    face_restore.set_active(previous == Some(true));
-                    status_label.set_text(&format!("Could not change autofocus priority: {error}"));
+                    // The setter may have reached the camera even if GET timed
+                    // out. Do not display the old selection as if still known.
+                    current_state.set(None);
+                    global_button.set_active(false);
+                    face_button.set_active(false);
+                    status_label.set_text(&format!("Autofocus priority is unknown: {error}"));
                 }
             }
         });
     }
 
+    let refresh_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let refresh = gtk::Button::with_label("Read camera state");
+    let dev_refresh = device.to_string();
+    let status_refresh = status.clone();
+    let current_refresh = current.clone();
+    let global_refresh = global.clone();
+    let face_refresh = face.clone();
+    refresh.connect_clicked(move |_| {
+        match get_face_focus(&dev_refresh) {
+            Ok(actual) => {
+                current_refresh.set(Some(actual));
+                global_refresh.set_active(actual == FaceFocusPriority::Global);
+                face_refresh.set_active(actual == FaceFocusPriority::Face);
+                update_config(|config| config.focus_mode = Some(actual.config_value().into()));
+                status_refresh.set_text(&format!("Camera reports {} autofocus priority.", actual.label()));
+            }
+            Err(error) => {
+                current_refresh.set(None);
+                global_refresh.set_active(false);
+                face_refresh.set_active(false);
+                status_refresh.set_text(&format!("Autofocus priority is unknown: {error}"));
+            }
+        }
+    });
+    refresh_row.append(&refresh);
+    layout.append(&refresh_row);
+
     let note_text = if autofocus_enabled {
-        "Global and Face are mutually exclusive autofocus priorities. The camera has no confirmed read-back for this setting, so the selected value is the last successfully submitted command."
+        "The selected priority is initialized from camera read-back and verified again after each change. If the camera cannot be queried, the state remains Unknown. This is autofocus priority, separate from Auto Exposure Face / Global."
     } else {
-        "Unavailable: Autofocus is disabled. Turn Autofocus on to enable Global / Face priority."
+        "Autofocus is disabled. Enable continuous autofocus to change priority. Camera read-back remains available."
     };
     let note = gtk::Label::new(Some(note_text));
     note.set_wrap(true);
@@ -1882,6 +2037,7 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     frame.set_child(Some(&layout));
     container.append(&frame);
 }
+
 
 fn add_autofocus_control(
     container: &gtk::Box,
@@ -2966,22 +3122,63 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn face_focus_frames_match_tiny_2_lite_capture_values() {
+    fn face_focus_setter_values_match_camera_readback_mapping() {
         let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
-        assert_eq!(face_focus_payload(true), hex("be070000").as_slice());
-        assert_eq!(face_focus_payload(false), hex("bffb0100").as_slice());
+        assert_eq!(FaceFocusPriority::Face.payload(), hex("bffb0100").as_slice());
+        assert_eq!(FaceFocusPriority::Global.payload(), hex("be070000").as_slice());
 
         let mut face_command = [0u8; 6];
-        face_command[2..6].copy_from_slice(&face_focus_payload(true));
+        face_command[2..6].copy_from_slice(&FaceFocusPriority::Face.payload());
         let face = obsbot_frame(0x0040, group, face_command);
         assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&face[16..20], hex("be070000").as_slice());
+        assert_eq!(&face[16..20], hex("bffb0100").as_slice());
 
         let mut global_command = [0u8; 6];
-        global_command[2..6].copy_from_slice(&face_focus_payload(false));
+        global_command[2..6].copy_from_slice(&FaceFocusPriority::Global.payload());
         let global = obsbot_frame(0x0041, group, global_command);
         assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&global[16..20], hex("bffb0100").as_slice());
+        assert_eq!(&global[16..20], hex("be070000").as_slice());
+    }
+
+    #[test]
+    fn face_focus_get_request_uses_header_only_get_opcode_and_full_header_crc() {
+        let frame = face_focus_get_frame(0x0016);
+        assert_eq!(&frame[..6], hex("aa0116000c00").as_slice());
+        assert_eq!(&frame[8..12], hex("0a02c235").as_slice());
+        assert_eq!(u16::from_le_bytes([frame[6], frame[7]]), crc16_usb(&frame[..12]));
+    }
+
+    #[test]
+    fn face_focus_get_reply_decodes_both_camera_states() {
+        for (payload, expected) in [
+            (hex("bffb0100"), FaceFocusPriority::Face),
+            (hex("be070000"), FaceFocusPriority::Global),
+        ] {
+            let mut reply = [0u8; 60];
+            reply[..6].copy_from_slice(&hex("aa2916000c00"));
+            reply[8..14].copy_from_slice(&hex("020ac2350400"));
+            reply[14..18].copy_from_slice(&payload);
+            let crc = crc16_usb(&reply[..12]);
+            reply[6..8].copy_from_slice(&crc.to_le_bytes());
+            assert_eq!(decode_face_focus_reply(&reply, 0x0016).unwrap(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn face_focus_get_reply_rejects_stale_bad_crc_and_unknown_values() {
+        let mut reply = [0u8; 60];
+        reply[..6].copy_from_slice(&hex("aa2916000c00"));
+        reply[8..14].copy_from_slice(&hex("020ac2350400"));
+        reply[14..18].copy_from_slice(&hex("bffb0100"));
+        let crc = crc16_usb(&reply[..12]);
+        reply[6..8].copy_from_slice(&crc.to_le_bytes());
+
+        assert_eq!(decode_face_focus_reply(&reply, 0x0017).unwrap(), None);
+        reply[6] ^= 0x01;
+        assert!(decode_face_focus_reply(&reply, 0x0016).is_err());
+        reply[6] ^= 0x01;
+        reply[14..18].copy_from_slice(&hex("01020304"));
+        assert!(decode_face_focus_reply(&reply, 0x0016).is_err());
     }
 
     #[test]
