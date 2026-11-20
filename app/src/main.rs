@@ -1747,44 +1747,6 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     zoom_frame.set_child(Some(&zoom_layout));
     layout.append(&zoom_frame);
 
-    let hdr_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    hdr_row.add_css_class("adaptive-row");
-    ui::layout::mark_compact_item(hdr_row.upcast_ref(), "obsbot:hdr");
-    let hdr_label = gtk::Label::new(Some("HDR"));
-    hdr_label.set_xalign(0.0);
-    hdr_label.set_hexpand(true);
-    let hdr_switch = gtk::Switch::new();
-    hdr_switch.set_valign(gtk::Align::Center);
-    let initial_hdr = xu_status(device).ok().and_then(|data| hdr_state_from_status(&data))
-        .or_else(|| current_config().hdr_enabled);
-    if let Some(enabled) = initial_hdr {
-        hdr_switch.set_active(enabled);
-    } else {
-        hdr_switch.set_sensitive(false);
-        hdr_switch.set_tooltip_text(Some("HDR state is unavailable from the camera status block."));
-    }
-    let hdr_status = status.clone();
-    let hdr_device = device.to_string();
-    hdr_switch.connect_state_set(move |_switch, enabled| {
-        match set_hdr_enabled(&hdr_device, enabled) {
-            Ok(()) => {
-                hdr_status.set_text(if enabled {
-                    "HDR enable command submitted."
-                } else {
-                    "HDR disable command submitted."
-                });
-            }
-            Err(error) => {
-                hdr_status.set_text(&format!("Could not change HDR: {error}"));
-                return gtk::glib::Propagation::Stop;
-            }
-        }
-        gtk::glib::Propagation::Proceed
-    });
-    hdr_row.append(&hdr_label);
-    hdr_row.append(&hdr_switch);
-    layout.append(&hdr_row);
-
     let led_frame = gtk::Frame::new(Some("LED illumination"));
     let led_layout = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let led_level_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
