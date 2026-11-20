@@ -108,9 +108,9 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
 The XU transport uses unit 2, selector `0x02` for framed commands and
 selector `0x06` for the 60-byte status block.
 
-- AI tracking modes: Off, Normal, Upper Body, Close-up, Headless, Lower
-  Body, and Group. Desk, Whiteboard and Hand are intentionally excluded
-  from the supported app scope.
+- AI tracking modes: No Tracking, Normal Tracking, Upper Body,
+  Close-up, Headless, Lower Body, Hand, and Group. These are the eight
+  mode/submode tuples verified by selector 0x06 GET_CUR read-back.
 - Tracking speed: Standard and Sport. Both modes have been physically
   confirmed working on the user's Tiny 2 Lite. Sport encoding is
   firmware-sensitive; the current implementation sends the documented
@@ -181,15 +181,15 @@ selector `0x06` for the 60-byte status block.
   and preserved.
 
 The selector `0x06` status block provides AI tracking state/mode and
-selected settings where documented, but it does not provide reliable
-per-gesture read-back for Target Selection, Dynamic Zoom, or Direction
-Flip. These controls show **Unknown** on startup unless a previously
-successful local setting is saved; the first click from Unknown sends
-Enable. Zoom/L-pose has a status-byte read-back. Unknown describes the
-app's inability to determine the starting state, not a camera-reported
-error. A successful ioctl only confirms host-side request completion;
-use observable device behaviour or independent read-back to validate
-state changes.
+selected settings where documented. Target Selection is the only gesture
+with confirmed camera-side state read-back: selector `0x06` byte `0x01`
+is 0 when disabled and 1 when enabled. Zoom/L-pose, Dynamic Zoom, and
+Dynamic Zoom Direction have no confirmed status read-back; they show the
+last successfully saved local state or **Unknown**. The first click from
+Unknown sends Enable. Unknown describes the app's inability to determine
+the starting state, not a camera-reported error. A successful ioctl only
+confirms host-side request completion; use observable device behaviour
+or independent read-back to validate state changes.
 
 ## Persistent configuration
 
