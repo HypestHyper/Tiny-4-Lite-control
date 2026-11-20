@@ -1336,7 +1336,7 @@ fn next_xu_sequence(counter: &AtomicU16) -> u16 {
 }
 
 fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Result<(), String> {
-    let sequence = next_xu_sequence(&XU_SEQUENCE);
+    let sequence = next_xu_sequence(xu_sequence_counter());
     let mut frame = obsbot_frame(sequence, function_group, command);
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
 }
@@ -1440,7 +1440,7 @@ fn preset_slot_index(slot: u8) -> Result<u32, String> {
 }
 
 fn send_camera_preset_command(device: &str, command: u16, payload: &[u8]) -> Result<(), String> {
-    let sequence = next_xu_sequence(&XU_SEQUENCE);
+    let sequence = next_xu_sequence(xu_sequence_counter());
     let mut frame = obsbot_frame_with_payload(sequence, command, payload)?;
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)?;
     Ok(())
