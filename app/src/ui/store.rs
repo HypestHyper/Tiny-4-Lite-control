@@ -249,7 +249,9 @@ impl Store {
     }
 
     /// Send one setting to the camera, then re-read so dependent settings update.
-    pub fn write(&self, setting: &'static Setting, value: Value, done: impl FnOnce(Result<(), String>) + 'static) {
+    /// `done` gets `Ok(Some(value))` when the camera confirmed what it now has, `Ok(None)` when the
+    /// command was sent but cannot be confirmed.
+    pub fn write(&self, setting: &'static Setting, value: Value, done: impl FnOnce(Result<Option<Value>, String>) + 'static) {
         let this = self.clone();
         self.call(Some(setting.id), move |device| setting.write(device, value), move |result| {
             if let Err(error) = &result { this.error(&format!("Could not change {}: {error}", setting.label.to_lowercase())); }

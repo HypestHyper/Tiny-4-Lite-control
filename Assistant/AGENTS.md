@@ -1,40 +1,38 @@
 # Agent operating instructions
 
-This directory is the authoritative project-research handoff for the OBSBOT Tiny 2 Lite Linux control-app effort. It is research and implementation guidance, **not an instruction to build the app**.
+This directory is the authoritative project handoff for the OBSBOT Tiny 2 Lite Linux control-app effort. The project currently has a functional hardware-control framework/test bench; UI design and visual polish are deferred.
 
 ## Read efficiently
 
-1. Read `INDEX.md` first.
-2. Read only the topic file(s) relevant to the task.
-3. Open `source/obsbot_tiny_2_lite_linux_research_handoff.md` when exact original wording, full context, or formatting matters. It is the complete unmodified source document.
-4. Follow cross-repository links in the relevant reference file when implementation detail is needed.
+1. Read [INDEX.md](INDEX.md).
+2. For app work, read [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md).
+3. For the remaining UI redesign, read the root [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md) before editing GTK presentation.
+4. Read only the relevant topic file(s) under `reference/`.
+5. Consult `source/obsbot_tiny_2_lite_linux_research_handoff.md` for original context.
+6. The USB tracing workflow is in [tracing/](tracing/INDEX.md).
 
 ## Evidence discipline
 
-- Target the **OBSBOT Tiny 2 Lite**, USB VID:PID `3564:fef9`. Do not conflate it with Tiny 2 `3564:fef8`.
-- Preserve the source's confidence labels: Lite-confirmed, partially verified, other-model reference, or experimental. Do not upgrade confidence without new evidence.
-- Never invent protocol bytes, CRC details, enum values, status mappings, device capabilities, or acknowledgements.
-- Treat the documents as supplied research, not as independently re-verified current repository state. Check upstream source and current hardware before relying on implementation details.
-- Distinguish standard V4L2 controls from vendor UVC Extension Unit controls. Do not substitute HID feature reports or the K609 protocol.
-- Separate camera firmware controls from host-side media pipeline features.
-- When evidence conflicts, report the discrepancy and cite the relevant source/repository. Do not silently reconcile it.
-- Check current repository licenses before copying code. Do not copy proprietary OBSBOT SDK binaries or headers.
+- Target OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`; do not conflate it with regular Tiny 2 (`3564:fef8`).
+- Preserve confidence labels. Do not upgrade confidence without new evidence.
+- Never invent protocol bytes, CRC details, enum values, status mappings, capabilities, or acknowledgements.
+- Distinguish standard V4L2 controls from vendor UVC Extension Unit controls. The generic USB tracing guide is HID-focused; do not apply HID assumptions to camera XU traffic.
+- Keep observed bytes, decoded meaning, implementation assumptions, and verified behaviour separate.
+- A successful ioctl is not proof that the camera applied a command. Validate with independent read-back or observable device behaviour.
+- Do not claim build, CI, AppImage, or hardware-test success unless actually verified.
+- Check licenses before copying code. Do not copy proprietary OBSBOT SDK binaries or headers.
 
 ## Hardware safety
 
 - Default to read-only inspection.
-- Do not send movement, sleep/wake, preset mutation, or other state-changing commands without explaining the physical/device effect and obtaining explicit user approval.
-- Sleep/wake physically moves the gimbal. Clear its movement area first.
-- Start movement tests with bounded 1°–2° changes; never begin with maximum pan/tilt.
-- Serialize device commands. Stop on disconnects or USB errors.
-- Avoid rapid stream start/stop cycles and do not interleave aggressive streaming changes with XU writes or pan commands.
-- Do not run repository integration tests until their hardware side effects are understood.
+- Explain physical/device effects and obtain explicit user approval before state-changing tests not already explicitly requested.
+- Clear the gimbal movement area before pan/tilt or sleep/wake tests.
+- Start with bounded 1°–2° movement; never begin at maximum pan/tilt.
+- Serialize commands. Stop on disconnects, USB errors, unexpected movement, or inconsistent state.
+- Avoid aggressive stream start/stop cycles and do not interleave them with XU writes or movement commands.
+- Preserve original captures unchanged. Work on copies and record filters/decoding steps.
+- Change one setting/action per capture whenever possible. Keep unknown bytes unknown.
 
-## Scope boundary
+## Scope
 
-The handoff describes a future test application and its eventual architecture. Do not build the app, create application source code, or perform hardware tests unless the user explicitly requests that separate work.
-
-
-## Device tracing workflow
-
-For collecting USB communication evidence, read [tracing/AGENTS.md](tracing/AGENTS.md) and [tracing/INDEX.md](tracing/INDEX.md). Important: the supplied generic guide is HID-focused; OBSBOT Tiny 2 Lite control uses V4L2/UVC XU paths. Reuse its evidence discipline, not its HID-specific assumptions. Preserve raw captures and use the per-session template.
+The current task is to develop and validate the hardware-control framework. Do not spend effort redesigning or polishing the UI unless explicitly requested. Do not add undocumented writes, firmware fallbacks, sleep/wake, or preset mutation without evidence and approval.

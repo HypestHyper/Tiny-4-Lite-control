@@ -158,14 +158,34 @@ pub struct Dep {
     pub reason: &'static str,
 }
 
-/// How trustworthy the displayed value is.
+/// Whether the camera has a way to report this setting at all.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Readback {
-    /// Read from the camera.
+    /// The camera reports it. If it does not answer, the row shows Unknown.
     Camera,
-    /// The camera cannot report it; the app shows the last value it sent.
+    /// The camera cannot report it; the app can only show the last value it sent.
     LastSent,
 }
+
+/// Where a value shown to the user came from. Never present a saved value as
+/// live camera state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// Read back from the camera.
+    Camera,
+    /// The last value this app sent and saved. The camera has not confirmed it.
+    Saved,
+    /// Nothing is known.
+    Unknown,
+}
+
+/// A value and where it came from; `None` means unknown.
+pub type Reading = Option<(Value, Origin)>;
+
+/// A value the camera reported.
+pub fn from_camera(value: Option<Value>) -> Reading { value.map(|v| (v, Origin::Camera)) }
+/// A value this app saved after sending it.
+pub fn from_saved(value: Option<Value>) -> Reading { value.map(|v| (v, Origin::Saved)) }
 
 // ── Snapshot ──────────────────────────────────────────────────────────────
 
@@ -176,6 +196,8 @@ pub struct Snapshot {
     pub controls: Vec<Control>,
     pub status: Option<[u8; 60]>,
     pub exposure_comp: Option<u8>,
+    /// Autofocus priority from CAM_GET_FACE_FOCUS; `None` if the camera did not answer.
+    pub focus_priority: Option<FaceFocusPriority>,
     pub config: AppConfig,
     pub error: Option<String>,
 }
@@ -189,6 +211,7 @@ impl Snapshot {
         }
         snapshot.status = xu_status(device).ok();
         snapshot.exposure_comp = get_exposure_compensation(device).ok();
+        snapshot.focus_priority = get_face_focus(device).ok();
         snapshot
     }
 
@@ -203,8 +226,10 @@ impl Snapshot {
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
-type Reader = fn(&Snapshot) -> Option<Value>;
-type Writer = fn(&str, Value) -> Result<(), String>;
+type Reader = fn(&Snapshot) -> Reading;
+/// `Ok(Some(value))` is what the camera reports after the change; `Ok(None)` means
+/// the command was sent but the camera cannot confirm it.
+type Writer = fn(&str, Value) -> Result<Option<Value>, String>;
 
 #[derive(Clone)]
 pub enum Source {
@@ -256,22 +281,33 @@ impl Setting {
 
     // Reading
 
-    pub fn read(&self, snapshot: &Snapshot) -> Option<Value> {
+    /// The value and where it came from.
+    pub fn reading(&self, snapshot: &Snapshot) -> Reading {
         match &self.source {
             Source::V4l2(name) => {
                 let control = snapshot.control(name)?;
-                Some(match self.kind {
+                from_camera(Some(match self.kind {
                     Kind::Toggle => Value::Bool(control.value != 0),
                     _ => Value::Int(control.value),
-                })
+                }))
             }
             Source::Custom { read, .. } => read(snapshot),
         }
     }
 
-    pub fn write(&self, device: &str, value: Value) -> Result<(), String> {
+    /// The value to show, from the camera or saved.
+    pub fn read(&self, snapshot: &Snapshot) -> Option<Value> {
+        self.reading(snapshot).map(|(value, _)| value)
+    }
+
+    pub fn origin(&self, snapshot: &Snapshot) -> Origin {
+        self.reading(snapshot).map_or(Origin::Unknown, |(_, origin)| origin)
+    }
+
+    /// Send a value. See `Writer` for what the result means.
+    pub fn write(&self, device: &str, value: Value) -> Result<Option<Value>, String> {
         match &self.source {
-            Source::V4l2(name) => set_control(device, name, value.as_i64()),
+            Source::V4l2(name) => set_control(device, name, value.as_i64()).map(|()| None),
             Source::Custom { write, .. } => write(device, value),
         }
     }
@@ -369,20 +405,27 @@ fn ticked(min: f64, max: f64, step: f64, fmt: Fmt, ticks: Vec<(f64, &'static str
     Kind::Slider(SliderSpec { min, max, step, default: None, fmt, ticks })
 }
 
-fn yes_no_config(flag: Option<bool>) -> Option<Value> { flag.map(Value::Bool) }
+fn flag(value: Option<bool>) -> Option<Value> { value.map(Value::Bool) }
+fn number(value: Option<u8>) -> Option<Value> { value.map(|v| Value::Int(i64::from(v))) }
 
-const TRACKING_MODES: [(&str, u8, u8); 7] = [
+/// The eight AI tracking modes, as (saved name, mode byte, sub-mode byte). Each was set and read
+/// back exactly from status offsets 0x18 and 0x1C (reference/15). Do not add modes without
+/// new hardware evidence.
+const TRACKING_MODES: [(&str, u8, u8); 8] = [
     ("off", 0x00, 0x00), ("normal", 0x02, 0x00), ("upper", 0x02, 0x01), ("close", 0x02, 0x02),
-    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("group", 0x01, 0x00),
+    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("hand", 0x03, 0x00), ("group", 0x01, 0x00),
 ];
 const GESTURE_TARGET: [u8; 6] = [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00];
 const GESTURE_ZOOM: [u8; 6] = [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00];
 const GESTURE_DYNAMIC: [u8; 6] = [0x0a, 0x04, 0x44, 0x33, 0x01, 0x00];
 const GESTURE_DIRECTION: [u8; 6] = [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00];
 
-fn gesture_saved(snapshot: &Snapshot, key: &str) -> Option<Value> {
-    snapshot.config.gesture_states.get(key).copied().map(Value::Bool)
+fn gesture_saved(snapshot: &Snapshot, key: &str) -> Reading {
+    from_saved(flag(snapshot.config.gesture_states.get(key).copied()))
 }
+
+/// Wrap a sender that has no read-back.
+fn sent(result: Result<(), String>) -> Result<Option<Value>, String> { result.map(|()| None) }
 
 fn build() -> Vec<Setting> {
     use Group::*;
@@ -397,34 +440,31 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:auto_exposure_mode", Exposure, "Metering priority",
             "Which part of the picture automatic exposure aims at.",
             Kind::Choice(vec![opt(0, "Global", "Balance the whole frame"), opt(1, "Face", "Favour a detected face")]),
-            |s| match s.config.auto_exposure_mode.as_deref() { Some("face") => Some(Value::Int(1)), Some("global") => Some(Value::Int(0)), _ => None },
-            |d, v| set_auto_exposure_mode(d, v.as_i64() == 1))
+            |s| from_camera(s.status.as_ref().and_then(auto_exposure_mode_from_status).map(|face| Value::Int(i64::from(face))))
+                // Only if the camera could not be read at all, fall back to what this app last sent.
+                .or_else(|| if s.status.is_none() {
+                    from_saved(s.config.auto_exposure_mode.as_deref().and_then(|m| match m { "face" => Some(Value::Int(1)), "global" => Some(Value::Int(0)), _ => None }))
+                } else { None }),
+            |d, v| set_auto_exposure_mode(d, v.as_i64() == 1).map(|actual| Some(Value::Int(i64::from(actual)))))
             .needs(ae, Cond::Is(0), "Set Exposure mode to Auto to choose a metering priority.")
-            .last_sent()
-            .info("Sends OBSBOT's own exposure-priority command. The camera does not report this setting back, so the highlighted choice is the last one this app sent."),
+            .info("Sends OBSBOT's Auto Exposure priority command and reads the result back from the camera's status block (byte 7) after every change. This is separate from autofocus priority."),
         Setting::custom("obsbot:exposure_compensation", Exposure, "Exposure compensation",
             "Make automatic exposure brighter or darker.",
             ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "0"), (18.0, "+3")]),
-            |s| s.exposure_comp.or(s.config.exposure_compensation_position).map(|p| Value::Int(i64::from(p))),
-            |d, v| set_exposure_compensation(d, v.as_i64().clamp(0, 18) as u8))
+            |s| from_camera(number(s.exposure_comp))
+                .or_else(|| if s.exposure_comp.is_none() { from_saved(number(s.config.exposure_compensation_position)) } else { None }),
+            |d, v| set_exposure_compensation(d, v.as_i64().clamp(0, 18) as u8).map(|actual| Some(Value::Int(i64::from(actual)))))
             .needs(ae, Cond::Is(0), "Set Exposure mode to Auto to use exposure compensation.")
-            .info("Moves the automatic exposure target in thirds of a stop, from −3 to +3 EV."),
+            .info("Moves the automatic exposure target in thirds of a stop, from −3 to +3 EV. This is the camera's standard Backlight Compensation control (0 to 18), which OBSBOT Center calls Exposure Compensation, so it appears once here. OBSBOT Center shows +2.0 for 15 and +2.3 for 16; the other labels follow the same scale but have not each been checked."),
         Setting::v4l2("exposure_time_absolute", "v4l2:exposure_time_absolute", Exposure, "Shutter speed",
             "How long each frame is exposed.", slider(1.0, 2500.0, 1.0, Fmt::Shutter))
             .needs(ae, Cond::Is(1), "Set Exposure mode to Manual to choose a shutter speed.")
             .info("Shorter times freeze motion and darken the picture. Very long times need a frame rate low enough to fit them."),
         Setting::v4l2("gain", "v4l2:gain", Exposure, "Sensor gain",
             "Brightens the picture, with more noise.", slider(1.0, 64.0, 1.0, Fmt::Plain)),
-        Setting::v4l2("backlight_compensation", "v4l2:backlight_compensation", Exposure, "Backlight compensation",
-            "Lifts a subject that sits in front of a bright window.", slider(0.0, 18.0, 1.0, Fmt::Plain)),
         Setting::v4l2("power_line_frequency", "v4l2:power_line_frequency", Exposure, "Anti-flicker",
             "Match your mains frequency to remove banding under artificial light.", Kind::DriverMenu)
             .info("Use 50 Hz in most of Europe, Asia and Africa, and 60 Hz in the Americas."),
-        Setting::custom("obsbot:hdr", Exposure, "HDR",
-            "Keeps detail in bright and dark areas of the same scene.", Kind::Toggle,
-            |s| s.status.as_ref().and_then(hdr_state_from_status).or(s.config.hdr_enabled).map(Value::Bool),
-            |d, v| set_hdr_enabled(d, v.as_bool()))
-            .info("The camera briefly reconfigures its sensor when this changes, so the picture can flicker."),
 
         // ── White balance ──
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
@@ -445,11 +485,14 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:focus_mode", Focus, "Autofocus priority",
             "What autofocus locks on to.",
             Kind::Choice(vec![opt(0, "Global", "Focus on whatever is in frame"), opt(1, "Face", "Favour a detected face")]),
-            |s| match s.config.focus_mode.as_deref() { Some("face") => Some(Value::Int(1)), Some("global") => Some(Value::Int(0)), _ => None },
-            |d, v| set_face_focus(d, v.as_i64() == 1))
+            // The camera is the only source. A saved value is never shown as the camera's state.
+            |s| from_camera(s.focus_priority.map(|p| Value::Int(i64::from(p == FaceFocusPriority::Face)))),
+            |d, v| {
+                let wanted = if v.as_i64() == 1 { FaceFocusPriority::Face } else { FaceFocusPriority::Global };
+                set_face_focus(d, wanted).map(|actual| Some(Value::Int(i64::from(actual == FaceFocusPriority::Face))))
+            })
             .needs(af, ON, "Turn on Autofocus to choose its priority.")
-            .last_sent()
-            .info("Sends OBSBOT's own focus-priority command. The camera does not report it back, so the highlighted choice is the last one this app sent."),
+            .info("Sends CAM_SET_FACE_FOCUS and reads the camera's state back with CAM_GET_FACE_FOCUS after every change. If the camera does not answer, this shows Unknown rather than a saved value. A matching read-back confirms the setting, not how the focus behaves. This is separate from Auto Exposure priority."),
         Setting::v4l2("focus_absolute", "v4l2:focus_absolute", Focus, "Manual focus",
             "Set the focus distance yourself.", slider(0.0, 100.0, 1.0, Fmt::Plain))
             .needs(af, OFF, "Turn off Autofocus to focus by hand."),
@@ -461,8 +504,8 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
             Kind::Choice(vec![opt(0, "86°", "Widest"), opt(5, "78°", "Normal"), opt(15, "65°", "Narrow")]),
-            |s| s.control("zoom_absolute").map(|c| c.value).filter(|v| matches!(v, 0 | 5 | 15)).map(Value::Int),
-            |d, v| set_control(d, "zoom_absolute", v.as_i64()))
+            |s| from_camera(s.control("zoom_absolute").map(|c| c.value).filter(|v| matches!(v, 0 | 5 | 15)).map(Value::Int)),
+            |d, v| sent(set_control(d, "zoom_absolute", v.as_i64())))
             .info("Moves the zoom control to one of three common positions."),
 
         // ── Picture ──
@@ -473,8 +516,8 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,
-            |s| yes_no_config(s.config.mirror_image_enabled),
-            |d, v| set_mirror_image(d, v.as_bool()))
+            |s| from_saved(flag(s.config.mirror_image_enabled)),
+            |d, v| sent(set_mirror_image(d, v.as_bool())))
             .last_sent()
             .info("Uses a command captured from OBSBOT Center. The camera does not report it back, so the switch shows the last value this app sent."),
 
@@ -482,88 +525,100 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:ai_tracking_mode", Tracking, "Tracking mode",
             "How the camera follows and frames a person.",
             Kind::Choice(vec![
-                opt(0, "Off", "The camera stays where you point it"),
+                opt(0, "No tracking", "The camera stays where you point it"),
                 opt(1, "Normal", "Follow one person"),
                 opt(2, "Upper body", "Frame head and torso"),
                 opt(3, "Close-up", "Frame tightly on the face"),
                 opt(4, "Headless", "Frame the body below the head"),
                 opt(5, "Lower body", "Frame from the waist down"),
-                opt(6, "Group", "Keep several people in frame"),
+                opt(6, "Hand", "Track a hand"),
+                opt(7, "Group", "Keep several people in frame"),
             ]),
-            |s| {
-                let (m, n) = (s.byte(0x18)?, s.byte(0x1c)?);
-                if let Some(i) = TRACKING_MODES.iter().position(|e| e.1 == m && e.2 == n) { return Some(Value::Int(i as i64)); }
-                let saved = s.config.ai_tracking_mode.as_deref()?;
-                TRACKING_MODES.iter().position(|e| e.0 == saved).map(|i| Value::Int(i as i64))
+            |s| match (s.byte(0x18), s.byte(0x1c)) {
+                // The camera answered: an unrecognised pair is Unknown, never a guess.
+                (Some(m), Some(n)) => from_camera(TRACKING_MODES.iter().position(|e| e.1 == m && e.2 == n).map(|i| Value::Int(i as i64))),
+                _ => from_saved(s.config.ai_tracking_mode.as_deref()
+                    .and_then(|saved| TRACKING_MODES.iter().position(|e| e.0 == saved))
+                    .map(|i| Value::Int(i as i64))),
             },
             |d, v| {
                 let entry = TRACKING_MODES.get(v.as_i64() as usize).ok_or("Unknown tracking mode.")?;
-                set_ai_mode(d, (entry.1, entry.2))
+                // set_ai_mode only succeeds when the camera's status matches the request exactly.
+                set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
-            .info("The framing names are OBSBOT's. Tracking moves the gimbal by itself, so clear the space around the camera first."),
+            .info("The framing names are OBSBOT's. Each mode was set and read back exactly from the camera's status block. Tracking moves the gimbal by itself, so clear the space around the camera first. Target selection is a gesture, not a tracking mode."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows movement.",
             Kind::Choice(vec![opt(0, "Standard", "Smooth and steady"), opt(1, "Sport", "Faster, for quick movement")]),
-            |s| s.byte(0x24).map(|b| Value::Int(i64::from(b != 0)))
-                .or_else(|| s.config.tracking_speed.as_deref().map(|v| Value::Int(i64::from(v == "sport")))),
-            |d, v| set_tracking_speed(d, v.as_i64() == 1)),
+            |s| from_camera(s.byte(0x24).map(|b| Value::Int(i64::from(b != 0))))
+                .or_else(|| if s.status.is_none() { from_saved(s.config.tracking_speed.as_deref().map(|v| Value::Int(i64::from(v == "sport")))) } else { None }),
+            |d, v| sent(set_tracking_speed(d, v.as_i64() == 1))),
 
         // ── Gestures ──
         Setting::custom("obsbot:gesture_target", Gestures, "Target selection",
             "Pick who to follow with a hand gesture.", Kind::Toggle,
-            |s| gesture_saved(s, "target_selection"),
-            |d, v| set_gesture(d, GESTURE_TARGET, v.as_bool())).last_sent(),
+            |s| from_camera(s.byte(0x01).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
+                .or_else(|| if s.byte(0x01).is_none() { gesture_saved(s, "target_selection") } else { None }),
+            |d, v| sent(set_gesture(d, GESTURE_TARGET, v.as_bool())))
+            .info("The only gesture the camera reports back (status byte 1: 0 is off, 1 is on). It is a gesture command, not a tracking mode."),
         Setting::custom("obsbot:gesture_zoom", Gestures, "Zoom gesture",
             "Zoom in and out with an L-shaped hand pose.", Kind::Toggle,
-            |s| s.byte(0x07).map(|b| Value::Bool(b == 0)).or_else(|| gesture_saved(s, "zoom_l_pose")),
-            |d, v| set_gesture(d, GESTURE_ZOOM, v.as_bool()))
-            .info("This is the one gesture the camera reports back."),
+            |s| gesture_saved(s, "zoom_l_pose"),
+            |d, v| sent(set_gesture(d, GESTURE_ZOOM, v.as_bool())))
+            .last_sent()
+            .info("The command works on the camera, but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
         Setting::custom("obsbot:gesture_zoom_ratio", Gestures, "Gesture zoom amount",
             "How far the zoom gesture zooms in.",
             slider(1.0, 4.0, 0.01, Fmt::Ratio),
-            |s| s.config.gesture_zoom_ratio.map(|r| Value::Float(f64::from(r))).or(Some(Value::Float(1.0))),
-            |d, v| set_gesture_zoom_ratio(d, v.as_f64() as f32))
+            |s| from_saved(s.config.gesture_zoom_ratio.map(|r| Value::Float(f64::from(r)))),
+            |d, v| sent(set_gesture_zoom_ratio(d, v.as_f64() as f32)))
             .last_sent().not_quick(),
         Setting::custom("obsbot:gesture_dynamic_zoom", Gestures, "Dynamic zoom",
             "Zoom by moving your hand towards or away from the camera.", Kind::Toggle,
             |s| gesture_saved(s, "dynamic_zoom"),
-            |d, v| set_gesture(d, GESTURE_DYNAMIC, v.as_bool())).last_sent(),
+            |d, v| sent(set_gesture(d, GESTURE_DYNAMIC, v.as_bool())))
+            .last_sent()
+            .info("The command works on the camera, but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
         Setting::custom("obsbot:gesture_dynamic_zoom_direction", Gestures, "Reverse dynamic zoom",
             "Swap which hand movement zooms in.", Kind::Toggle,
             |s| gesture_saved(s, "dynamic_zoom_direction"),
-            |d, v| set_gesture(d, GESTURE_DIRECTION, v.as_bool())).last_sent(),
+            |d, v| sent(set_gesture(d, GESTURE_DIRECTION, v.as_bool())))
+            .last_sent()
+            .info("The command works on the camera (it reverses Dynamic zoom), but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
 
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
             "Turn the camera's microphones on or off.", Kind::Toggle,
-            |s| s.config.audio_microphone_disabled.map(|disabled| Value::Bool(!disabled)),
-            |d, v| set_microphone_disabled(d, !v.as_bool()))
+            |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
+            |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
             .last_sent()
             .info("The camera may restart its audio when this changes, and apps using the microphone can drop out for a moment. The camera does not report this back."),
         Setting::custom("obsbot:mic_during_sleep", Microphone, "Listen while asleep",
             "Keep the microphone running when the camera is asleep.", Kind::Toggle,
-            |s| s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None })
-                .or(s.config.audio_microphone_during_sleep.map(Value::Bool)),
-            |d, v| set_microphone_during_sleep(d, v.as_bool())),
+            |s| from_camera(s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
+                .or_else(|| if s.byte(16).is_none() { from_saved(flag(s.config.audio_microphone_during_sleep)) } else { None }),
+            |d, v| sent(set_microphone_during_sleep(d, v.as_bool()))),
         Setting::custom("obsbot:auto_gain", Microphone, "Auto gain",
             "Keep your voice at a steady level.", Kind::Toggle,
-            |s| s.byte(25).filter(|b| *b <= 1).map(|b| Value::Bool(b != 0)).or(s.config.audio_auto_gain.map(Value::Bool)),
-            |d, v| set_auto_gain(d, v.as_bool())),
+            |s| from_camera(s.byte(25).filter(|b| *b <= 1).map(|b| Value::Bool(b != 0)))
+                .or_else(|| if s.byte(25).is_none() { from_saved(flag(s.config.audio_auto_gain)) } else { None }),
+            |d, v| sent(set_auto_gain(d, v.as_bool()))),
         Setting::custom("obsbot:noise_reduction", Microphone, "Noise reduction",
             "How strongly background noise is removed.",
             Kind::Choice(vec![opt(0, "Off", ""), opt(1, "Weak", ""), opt(2, "Medium", ""), opt(3, "Strong", "")]),
-            |s| s.byte(8).filter(|b| *b <= 3).map(|b| Value::Int(i64::from(b))).or(s.config.audio_noise_reduction.map(|l| Value::Int(i64::from(l)))),
-            |d, v| set_noise_reduction(d, v.as_i64().clamp(0, 3) as u8)),
+            |s| from_camera(s.byte(8).filter(|b| *b <= 3).map(|b| Value::Int(i64::from(b))))
+                .or_else(|| if s.byte(8).is_none() { from_saved(number(s.config.audio_noise_reduction)) } else { None }),
+            |d, v| sent(set_noise_reduction(d, v.as_i64().clamp(0, 3) as u8))),
         Setting::custom("obsbot:radio_distance", Microphone, "Pickup distance",
             "How far away the voice you want is.",
             Kind::Choice(vec![opt(0, "Close", "About arm's length"), opt(1, "Standard", ""), opt(2, "Far", "Across a room")]),
-            |s| s.config.audio_radio_distance.filter(|d| *d <= 2).map(|d| Value::Int(i64::from(d))),
-            |d, v| set_radio_distance(d, v.as_i64().clamp(0, 2) as u8))
+            |s| from_saved(number(s.config.audio_radio_distance.filter(|d| *d <= 2))),
+            |d, v| sent(set_radio_distance(d, v.as_i64().clamp(0, 2) as u8)))
             .last_sent(),
         Setting::custom("obsbot:pop_filter", Microphone, "Pop filter",
             "Soften plosive sounds such as “p” and “b”.", Kind::Toggle,
-            |s| yes_no_config(s.config.pop_filter_enabled),
-            |d, v| set_pop_filter(d, v.as_bool()))
+            |s| from_saved(flag(s.config.pop_filter_enabled)),
+            |d, v| sent(set_pop_filter(d, v.as_bool())))
             .last_sent().experimental()
             .info("Experimental: this replays two commands captured from OBSBOT Center without decoding them. The camera does not report the state back."),
 
@@ -571,8 +626,9 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:led_brightness", Lighting, "LED brightness",
             "Off, or one of three brightness levels.",
             ticked(0.0, 3.0, 1.0, Fmt::Level, vec![(0.0, "Off"), (1.0, "1"), (2.0, "2"), (3.0, "3")]),
-            |s| s.byte(0x21).map(|b| Value::Int(i64::from(b.min(3)))).or(s.config.led_brightness.map(|l| Value::Int(i64::from(l)))),
-            |d, v| set_led_brightness(d, v.as_i64().clamp(0, 3) as u8)),
+            |s| from_camera(s.byte(0x21).map(|b| Value::Int(i64::from(b.min(3)))))
+                .or_else(|| if s.status.is_none() { from_saved(number(s.config.led_brightness)) } else { None }),
+            |d, v| sent(set_led_brightness(d, v.as_i64().clamp(0, 3) as u8))),
 
         // ── Power ──
         Setting::custom("obsbot:sleep", Power, "Camera power",
@@ -585,8 +641,8 @@ fn build() -> Vec<Setting> {
                     action: "Sleep",
                 }) },
             ]),
-            |s| s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None }),
-            |d, v| set_sleep_mode(d, v.as_i64() == 1))
+            |s| from_camera(s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None })),
+            |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
             .info("Sleep and wake physically move the gimbal. The state can take a moment to show after the command."),
     ]
@@ -604,6 +660,8 @@ pub fn find(id: &str) -> Option<&'static Setting> {
 /// V4L2 controls the app drives some other way, or deliberately does not offer.
 const IGNORED_V4L2: &[&str] = &[
     "pan_absolute", "tilt_absolute", "pan_speed", "tilt_speed", "zoom_continuous",
+    // The same hardware control as Exposure compensation (UVC Backlight Compensation, 0 to 18).
+    "backlight_compensation",
 ];
 
 /// Settings for driver controls that have no entry above, so a new firmware
@@ -727,5 +785,120 @@ mod tests {
         status[0x1c] = 0x01;
         let snap = Snapshot { status: Some(status), ..Snapshot::default() };
         assert_eq!(find("obsbot:ai_tracking_mode").unwrap().read(&snap), Some(Value::Int(2)));
+    }
+
+    // ── Facts established by hardware read-back (see Assistant/reference 14, 15 and the autofocus notes) ──
+
+    fn with_config(configure: impl FnOnce(&mut AppConfig)) -> Snapshot {
+        let mut snapshot = Snapshot::default();
+        configure(&mut snapshot.config);
+        snapshot
+    }
+
+    #[test]
+    fn autofocus_priority_comes_only_from_the_camera() {
+        let setting = find("obsbot:focus_mode").unwrap();
+        // A saved value is never shown as the camera's state.
+        let saved_only = with_config(|c| c.focus_mode = Some("face".into()));
+        assert_eq!(setting.reading(&saved_only), None);
+        let mut answered = saved_only.clone();
+        answered.focus_priority = Some(FaceFocusPriority::Global);
+        assert_eq!(setting.reading(&answered), Some((Value::Int(0), Origin::Camera)));
+        answered.focus_priority = Some(FaceFocusPriority::Face);
+        assert_eq!(setting.reading(&answered), Some((Value::Int(1), Origin::Camera)));
+    }
+
+    #[test]
+    fn autofocus_priority_payloads_use_the_corrected_mapping() {
+        // Hardware read-back showed Face = bf fb 01 00 and Global = be 07 00 00;
+        // the first capture labels had these the other way round.
+        assert_eq!(FaceFocusPriority::Face.payload(), [0xbf, 0xfb, 0x01, 0x00]);
+        assert_eq!(FaceFocusPriority::Global.payload(), [0xbe, 0x07, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn metering_priority_reads_status_byte_7() {
+        let setting = find("obsbot:auto_exposure_mode").unwrap();
+        let mut status = [0u8; 60];
+        status[7] = 0x00;
+        let snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(setting.reading(&snap), Some((Value::Int(1), Origin::Camera))); // Face
+        status[7] = 0x01;
+        let snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(setting.reading(&snap), Some((Value::Int(0), Origin::Camera))); // Global
+        // An unrecognised byte is Unknown, even with a saved value on file.
+        status[7] = 0x05;
+        let mut snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        snap.config.auto_exposure_mode = Some("face".into());
+        assert_eq!(setting.reading(&snap), None);
+        // Only when the camera cannot be read at all does the saved value appear, labelled as saved.
+        let unreadable = with_config(|c| c.auto_exposure_mode = Some("face".into()));
+        assert_eq!(setting.reading(&unreadable), Some((Value::Int(1), Origin::Saved)));
+    }
+
+    #[test]
+    fn there_are_exactly_eight_tracking_modes_and_unknown_tuples_stay_unknown() {
+        let setting = find("obsbot:ai_tracking_mode").unwrap();
+        let labels: Vec<&str> = setting.options(&Snapshot::default()).iter().map(|o| o.label).collect();
+        assert_eq!(labels, ["No tracking", "Normal", "Upper body", "Close-up", "Headless", "Lower body", "Hand", "Group"]);
+        for (index, (mode, sub)) in [(0u8, 0u8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (3, 0), (1, 0)].into_iter().enumerate() {
+            let mut status = [0u8; 60];
+            status[0x18] = mode;
+            status[0x1c] = sub;
+            let snap = Snapshot { status: Some(status), ..Snapshot::default() };
+            assert_eq!(setting.reading(&snap), Some((Value::Int(index as i64), Origin::Camera)), "tuple {mode:02x}/{sub:02x}");
+        }
+        let mut status = [0u8; 60];
+        status[0x18] = 0x05;
+        let mut snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        snap.config.ai_tracking_mode = Some("upper".into());
+        assert_eq!(setting.reading(&snap), None, "an unrecognised pair must not fall back to a saved mode");
+    }
+
+    #[test]
+    fn target_selection_reads_byte_1_and_zoom_gesture_never_reads_byte_7() {
+        let target = find("obsbot:gesture_target").unwrap();
+        let zoom = find("obsbot:gesture_zoom").unwrap();
+        let mut status = [0u8; 60];
+        status[0x01] = 1;
+        status[0x07] = 0; // the old, disproven "zoom gesture is on" signal
+        let snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(target.reading(&snap), Some((Value::Bool(true), Origin::Camera)));
+        assert_eq!(zoom.reading(&snap), None, "byte 7 says nothing about the zoom gesture");
+        let mut saved = snap.clone();
+        saved.config.gesture_states.insert("zoom_l_pose".into(), true);
+        assert_eq!(zoom.reading(&saved), Some((Value::Bool(true), Origin::Saved)));
+        for id in ["obsbot:gesture_dynamic_zoom", "obsbot:gesture_dynamic_zoom_direction"] {
+            assert_eq!(find(id).unwrap().reading(&snap), None, "{id} has no read-back");
+        }
+    }
+
+    #[test]
+    fn exposure_compensation_is_one_setting_and_hdr_is_gone() {
+        assert!(find("obsbot:hdr").is_none(), "the HDR switch was removed");
+        assert!(find("v4l2:backlight_compensation").is_none());
+        // Backlight compensation is the same hardware control as Exposure compensation (UVC PU, selector 1).
+        let snap = snapshot(vec![control("backlight_compensation", 9, false), control("gamma", 1, false)]);
+        let names: Vec<_> = discovered(&snap).iter().map(|s| s.id).collect();
+        assert_eq!(names, vec!["v4l2:gamma"]);
+        let setting = find("obsbot:exposure_compensation").unwrap();
+        let mut snap = Snapshot::default();
+        snap.exposure_comp = Some(15);
+        assert_eq!(setting.reading(&snap), Some((Value::Int(15), Origin::Camera)));
+        assert_eq!(Fmt::Ev.format(15.0), "+2.0 EV");
+        assert_eq!(Fmt::Ev.format(16.0), "+2.3 EV");
+        assert_eq!(Fmt::Ev.format(9.0), "0.0 EV");
+    }
+
+    #[test]
+    fn settings_without_read_back_are_saved_or_unknown_never_camera() {
+        let snap = with_config(|c| { c.mirror_image_enabled = Some(true); c.pop_filter_enabled = Some(false); });
+        assert_eq!(find("obsbot:mirror_image").unwrap().reading(&snap), Some((Value::Bool(true), Origin::Saved)));
+        assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
+        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
+        for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:radio_distance",
+                   "obsbot:gesture_zoom", "obsbot:gesture_dynamic_zoom", "obsbot:gesture_dynamic_zoom_direction"] {
+            assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
+        }
     }
 }

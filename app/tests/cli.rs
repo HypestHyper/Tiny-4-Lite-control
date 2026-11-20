@@ -43,6 +43,10 @@ fn works_without_a_display_and_lists_every_group() {
     for group in ["Exposure", "White balance", "Focus", "Picture", "AI tracking", "Gestures", "Microphone", "Light", "Power"] {
         assert!(listing.contains(group), "missing group {group}:\n{listing}");
     }
+    // A whole window tab, or a single group, can be listed.
+    let tracking = text(&run.run(&["list", "tracking"]).stdout);
+    assert!(tracking.contains("AI tracking") && tracking.contains("Gestures") && !tracking.contains("Exposure"), "{tracking}");
+    assert!(text(&run.run(&["list", "focus"]).stdout).contains("autofocus-priority"));
 }
 
 #[test]
@@ -55,7 +59,7 @@ fn every_setting_can_be_read_and_set_from_the_terminal() {
     assert!(settings.len() >= 36, "only {} settings listed", settings.len());
     // Every vendor command the windows offer is reachable from the terminal.
     let ids: Vec<&str> = settings.iter().filter_map(|s| s["id"].as_str()).collect();
-    for id in ["obsbot:hdr", "obsbot:mirror_image", "obsbot:pop_filter", "obsbot:ai_tracking_mode", "obsbot:tracking_speed",
+    for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:ai_tracking_mode", "obsbot:tracking_speed",
                "obsbot:sleep", "obsbot:led_brightness", "obsbot:fov", "obsbot:focus_mode", "obsbot:auto_exposure_mode",
                "obsbot:exposure_compensation", "obsbot:mic_enabled", "obsbot:noise_reduction", "obsbot:radio_distance",
                "obsbot:auto_gain", "obsbot:mic_during_sleep", "obsbot:gesture_zoom", "obsbot:gesture_zoom_ratio",
@@ -208,4 +212,26 @@ fn help_and_completions_describe_the_settings() {
         assert!(script.contains("tiny4lite-control"), "{shell} script is empty");
     }
     assert_eq!(run.run(&["completions", "powershell"]).status.code(), Some(2));
+}
+
+#[test]
+fn every_setting_named_in_the_help_text_exists() {
+    let run = Run::new("help-names");
+    let help = text(&run.run(&["help"]).stdout);
+    // Pull each `tiny4lite-control get|set|toggle|reset|info NAME` example and the "for example" names.
+    let mut names: Vec<String> = Vec::new();
+    for line in help.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if let Some(at) = words.iter().position(|w| matches!(*w, "get" | "set" | "toggle" | "reset" | "info")) {
+            if words.first() == Some(&"tiny4lite-control") { if let Some(name) = words.get(at + 1) { names.push(name.to_string()); } }
+        }
+    }
+    let example = help.lines().find(|l| l.contains("for example exposure-mode")).expect("the naming sentence");
+    let inside = example.split("for example").nth(1).unwrap().split(')').next().unwrap();
+    names.extend(inside.split(',').map(|n| n.trim().to_string()));
+    assert!(names.len() >= 6, "found only {names:?}");
+    for name in names {
+        let out = run.run(&["get", &name]);
+        assert_eq!(out.status.code(), Some(0), "the help names `{name}` but it is not a setting: {}", text(&out.stderr));
+    }
 }

@@ -1,7 +1,7 @@
 //! Small building blocks in the app's style, and the generic setting row.
 
 use super::store::Store;
-use crate::backend::registry::{Kind, Opt, Readback, Setting, Snapshot, Value};
+use crate::backend::registry::{Kind, Opt, Origin, Readback, Setting, Snapshot, Value};
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -416,8 +416,31 @@ impl SettingRow {
         let announce = !matches!(row.setting.kind, Kind::Slider(_)) || !row.dragging.get();
         row.store.write(setting, value, move |result| {
             match result {
-                Ok(()) => {
-                    if announce { store.toast(&message); }
+                Ok(confirmed) => {
+                    // Say what the camera confirmed, not just that the command went out.
+                    match confirmed {
+                        Some(actual) if actual.as_i64() == value.as_i64() => {
+                            if announce { store.toast(&format!("{message} (confirmed by the camera)")); }
+                        }
+                        Some(actual) => {
+                            // The camera kept something else: show that, not what was asked for.
+                            if let Some(row) = weak.upgrade() {
+                                let snapshot = row.store.snapshot();
+                                let (wanted, got) = (SettingRow(row.clone()).display(&snapshot, value), SettingRow(row.clone()).display(&snapshot, actual));
+                                row.current.set(Some(actual));
+                                row.last_edit.set(Some(Instant::now()));
+                                SettingRow(row.clone()).show(Some(actual));
+                                store.error(&format!("{}: the camera reports {got}, not {wanted}.", setting.label));
+                            }
+                        }
+                        None => {
+                            if announce {
+                                // Only say so where no read-back exists at all.
+                                let note = if setting.readback == Readback::LastSent { " (sent; the camera can't confirm this)" } else { "" };
+                                store.toast(&format!("{message}{note}"));
+                            }
+                        }
+                    }
                     // Once the hold on this control ends, show what the camera really has
                     // (it may have rounded or limited the value).
                     if let Some(row) = weak.upgrade() {
@@ -436,6 +459,16 @@ impl SettingRow {
                 }
             }
         });
+    }
+
+    /// A value as the row shows it ("On", "Face", "1/30 s").
+    fn display(&self, snapshot: &Snapshot, value: Value) -> String {
+        let setting = self.0.setting;
+        match &setting.kind {
+            Kind::Toggle => if value.as_bool() { "on" } else { "off" }.to_string(),
+            Kind::Slider(_) => setting.format(snapshot, value.as_f64()),
+            _ => setting.options(snapshot).into_iter().find(|o| o.value == value.as_i64()).map(|o| o.label.to_string()).unwrap_or_default(),
+        }
     }
 
     fn describe(&self, snapshot: &Snapshot, value: Value) -> String {
@@ -496,11 +529,30 @@ impl SettingRow {
 
         let editing = row.dragging.get() || row.last_edit.get().is_some_and(|at| at.elapsed() < EDIT_HOLD);
         if !editing {
-            let value = setting.read(snapshot);
+            let (value, origin) = match setting.reading(snapshot) { Some((v, o)) => (Some(v), o), None => (None, Origin::Unknown) };
             row.current.set(value);
             self.show(value);
             self.update_hint(snapshot, value);
-            row.unknown.set_visible(value.is_none() && setting.readback == Readback::LastSent && !matches!(setting.kind, Kind::Choice(_) | Kind::DriverMenu));
+            self.show_origin(origin);
+        }
+    }
+
+    /// Label where the value came from. A camera-confirmed value needs no label.
+    fn show_origin(&self, origin: Origin) {
+        let row = &self.0;
+        row.unknown.set_visible(origin != Origin::Camera);
+        match origin {
+            Origin::Camera => {}
+            Origin::Saved => {
+                row.unknown.set_text("Saved");
+                row.unknown.add_css_class("neutral");
+                row.unknown.set_tooltip_text(Some("The last value this app sent. The camera has not confirmed it, and it may differ if you changed it elsewhere."));
+            }
+            Origin::Unknown => {
+                row.unknown.set_text("Unknown");
+                row.unknown.remove_css_class("neutral");
+                row.unknown.set_tooltip_text(Some("The camera did not report this, and this app has no saved value. The control shows a starting position, not the camera's real state."));
+            }
         }
     }
 
@@ -576,7 +628,9 @@ impl SettingRow {
             out.push(format!("Available when: {}", needs.join(" ")));
         }
         if setting.readback == Readback::LastSent {
-            out.push("The camera does not report this back, so the app shows the last value it sent. It may differ if you change it in another program.".into());
+            out.push("The camera does not report this back. The app shows the last value it sent, labelled Saved, or Unknown if it has none. It may differ if you change it in another program.".into());
+        } else if matches!(setting.source, crate::backend::registry::Source::Custom { .. }) {
+            out.push("Shown from the camera's own report. If the camera can't be read, the row says Unknown (or Saved, for a value this app sent earlier).".into());
         }
         if setting.experimental { out.push("Experimental: not fully verified on this camera.".into()); }
         if out.is_empty() { return out; }

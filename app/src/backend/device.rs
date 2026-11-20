@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 /// Restore the remembered host capture mode only when this camera still
@@ -286,7 +286,21 @@ extern "C" {
 
 pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12 && data[0] == 0xaa && data[1] == 0x01 {
+        if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x16 && data[1] == 0x02 {
+            LAST_UI_TEST_AI_MODE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
+        } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x03 && data[1] == 0x01 {
+            LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.store(data[2], Ordering::Relaxed);
+        } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 20
+            && data[..2] == [0xaa, 0x25]
+            && data[8..12] == [0x0a, 0x02, 0x02, 0x36]
+        {
+            LAST_UI_TEST_FOCUS_VALUE.store(
+                u32::from_le_bytes(data[16..20].try_into().unwrap()),
+                Ordering::Relaxed,
+            );
+        } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 12
+            && data[0] == 0xaa && data[1] == 0x01
+        {
             LAST_UI_TEST_QUERY_SEQUENCE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
             LAST_UI_TEST_QUERY_COMMAND.store(u16::from_le_bytes([data[10], data[11]]), Ordering::Relaxed);
         } else if request == UVC_GET_CUR {
@@ -312,7 +326,18 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                     }
                     _ => Vec::new(),
                 };
-                if !payload.is_empty() {
+                if command == 0x35c2 {
+                    data[0..2].copy_from_slice(&[0xaa, 0x29]);
+                    data[2..4].copy_from_slice(&sequence.to_le_bytes());
+                    data[4..6].copy_from_slice(&12u16.to_le_bytes());
+                    data[8..12].copy_from_slice(&[0x02, 0x0a, 0xc2, 0x35]);
+                    data[12..14].copy_from_slice(&4u16.to_le_bytes());
+                    data[14..18].copy_from_slice(
+                        &LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes(),
+                    );
+                    let crc = crc16_usb(&data[..12]);
+                    data[6..8].copy_from_slice(&crc.to_le_bytes());
+                } else if !payload.is_empty() {
                     data[0] = 0xaa; data[1] = 0x29;
                     data[2..4].copy_from_slice(&sequence.to_le_bytes());
                     data[4..6].copy_from_slice(&12u16.to_le_bytes());
@@ -321,6 +346,10 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                     data[16..16 + payload.len()].copy_from_slice(&payload);
                 }
             } else if selector == 0x06 && data.len() >= 0x25 {
+                let mode = LAST_UI_TEST_AI_MODE.load(Ordering::Relaxed);
+                data[0x18] = mode as u8;
+                data[0x1c] = (mode >> 8) as u8;
+                data[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] = LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.load(Ordering::Relaxed);
                 data[0x10] = 1;
                 data[0x21] = 1;
             } else if selector == 0x0d && !data.is_empty() {
@@ -350,8 +379,16 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
 
 pub(crate) fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if request == UVC_GET_CUR && data.len() >= 2 {
-            data[..2].copy_from_slice(&10u16.to_le_bytes());
+        if selector == 0x01 && data.len() == 2 {
+            if request == UVC_SET_CUR {
+                let value = u16::from_le_bytes([data[0], data[1]]);
+                if value > 18 {
+                    return Err(format!("Synthetic BLC value {value} is outside 0–18."));
+                }
+                LAST_UI_TEST_EXPOSURE_COMPENSATION.store(value as u8, Ordering::Relaxed);
+            } else if request == UVC_GET_CUR {
+                data.copy_from_slice(&(LAST_UI_TEST_EXPOSURE_COMPENSATION.load(Ordering::Relaxed) as u16).to_le_bytes());
+            }
         }
         return Ok(());
     }
@@ -548,12 +585,12 @@ pub(crate) fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], Str
     if position > 18 {
         return Err("Exposure compensation position must be between 0 and 18.".into());
     }
-    Ok(((position as u16) + 1).to_le_bytes())
+    Ok((position as u16).to_le_bytes())
 }
 
 pub(crate) fn exposure_compensation_position(payload: [u8; 2]) -> Option<u8> {
     let raw = u16::from_le_bytes(payload);
-    (1..=19).contains(&raw).then_some((raw - 1) as u8)
+    (0..=18).contains(&raw).then_some(raw as u8)
 }
 
 pub(crate) fn get_exposure_compensation(device: &str) -> Result<u8, String> {
@@ -563,11 +600,15 @@ pub(crate) fn get_exposure_compensation(device: &str) -> Result<u8, String> {
         .ok_or_else(|| format!("Camera returned unsupported exposure compensation value {}.", u16::from_le_bytes(data)))
 }
 
-pub(crate) fn set_exposure_compensation(device: &str, position: u8) -> Result<(), String> {
+pub(crate) fn set_exposure_compensation(device: &str, position: u8) -> Result<u8, String> {
     let mut data = exposure_compensation_payload(position)?;
     pu_query(device, 0x01, UVC_SET_CUR, &mut data)?;
-    update_config(|config| config.exposure_compensation_position = Some(position));
-    Ok(())
+
+    // A completed SET_CUR only confirms transport. Confirm the camera's
+    // actual value with GET_CUR before updating the UI or saved preference.
+    let actual = get_exposure_compensation(device)?;
+    update_config(|config| config.exposure_compensation_position = Some(actual));
+    Ok(actual)
 }
 
 pub(crate) fn exposure_compensation_label(position: u8) -> String {
@@ -762,6 +803,10 @@ pub(crate) fn obsbot_frame(sequence: u16, function_group: [u8; 6], command: [u8;
 pub(crate) static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 pub(crate) static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
+pub(crate) static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
+pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub(crate) static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
+pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
 
 pub(crate) fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
@@ -984,39 +1029,143 @@ pub(crate) fn set_hdr_enabled(device: &str, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
-// Tiny 2 Lite Auto Exposure priority, captured on selector 0x06 (60-byte SET_CUR).
-// This is separate from CAM_SET_FACE_FOCUS / autofocus priority.
-pub(crate) fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 3] {
-    [0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]
-}
+// Tiny 2 Lite Face / Global Auto Exposure priority.
+// XU unit 2, selector 0x06, 60-byte SET_CUR and GET_CUR. Controlled
+// 2026-11-20 captures established the write value at byte 2 and the
+// authoritative read-back value at byte 7. This is NOT autofocus priority.
+pub(crate) const XU_AUTO_EXPOSURE_PRIORITY_OFFSET: usize = 7;
 
-pub(crate) fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<(), String> {
-    let payload = auto_exposure_mode_payload(face_priority);
+pub(crate) fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 60] {
     let mut data = [0u8; 60];
-    data[..payload.len()].copy_from_slice(&payload);
+    data[..3].copy_from_slice(&[0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]);
+    data
+}
+
+pub(crate) fn auto_exposure_mode_from_status(status: &[u8; 60]) -> Option<bool> {
+    match status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] {
+        0x00 => Some(true),  // Face
+        0x01 => Some(false), // Global
+        _ => None,
+    }
+}
+
+pub(crate) fn get_auto_exposure_mode(device: &str) -> Result<bool, String> {
+    let status = xu_status(device)?;
+    auto_exposure_mode_from_status(&status).ok_or_else(|| format!(
+        "Camera returned unsupported Auto Exposure priority value 0x{:02x} at status byte 0x{:02x}.",
+        status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET], XU_AUTO_EXPOSURE_PRIORITY_OFFSET
+    ))
+}
+
+pub(crate) fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<bool, String> {
+    let mut data = auto_exposure_mode_payload(face_priority);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+
+    // Do not treat a successful ioctl or the requested value as proof of
+    // device state. Read the complete status block and trust byte 7.
+    let actual_face_priority = get_auto_exposure_mode(device)
+        .map_err(|error| format!("SET_CUR was submitted, but Auto Exposure priority read-back failed: {error}"))?;
     update_config(|config| config.auto_exposure_mode = Some(
-        if face_priority { "face" } else { "global" }.into()
+        if actual_face_priority { "face" } else { "global" }.into()
     ));
-    Ok(())
+    Ok(actual_face_priority)
 }
 
-// Tiny 2 Lite focus-priority command (wire command 0x3602, Camera receiver 0x02).
-// The Nov 18 capture correlates Global -> Face with BE 07 00 00 and
-// Face -> Global with BF FB 01 00. The camera does not provide reliable
-// read-back, so this records the last successfully submitted command.
-pub(crate) fn face_focus_payload(face_priority: bool) -> [u8; 4] {
-    if face_priority { [0xbe, 0x07, 0x00, 0x00] }
-    else { [0xbf, 0xfb, 0x01, 0x00] }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FaceFocusPriority {
+    Face,
+    Global,
 }
 
-pub(crate) fn set_face_focus(device: &str, face_priority: bool) -> Result<(), String> {
+impl FaceFocusPriority {
+    pub(crate) fn payload(self) -> [u8; 4] {
+        match self {
+            Self::Face => [0xbf, 0xfb, 0x01, 0x00],
+            Self::Global => [0xbe, 0x07, 0x00, 0x00],
+        }
+    }
+
+    pub(crate) fn from_payload(payload: [u8; 4]) -> Result<Self, String> {
+        match payload {
+            [0xbf, 0xfb, 0x01, 0x00] => Ok(Self::Face),
+            [0xbe, 0x07, 0x00, 0x00] => Ok(Self::Global),
+            value => Err(format!("Camera returned unknown autofocus-priority value {:02x?}.", value)),
+        }
+    }
+
+    pub(crate) fn config_value(self) -> &'static str {
+        match self { Self::Face => "face", Self::Global => "global" }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self { Self::Face => "Face", Self::Global => "Global" }
+    }
+}
+
+pub(crate) fn face_focus_get_frame(sequence: u16) -> [u8; 60] {
+    let mut frame = [0u8; 60];
+    frame[0] = 0xaa;
+    frame[1] = 0x01; // Header-only vendor GET request.
+    frame[2..4].copy_from_slice(&sequence.to_le_bytes());
+    frame[4..6].copy_from_slice(&12u16.to_le_bytes());
+    frame[8..12].copy_from_slice(&[0x0a, 0x02, 0xc2, 0x35]);
+    // CRC16/USB covers the complete 12-byte header with bytes 6-7 zeroed.
+    let crc = crc16_usb(&frame[..12]);
+    frame[6..8].copy_from_slice(&crc.to_le_bytes());
+    frame
+}
+
+pub(crate) fn decode_face_focus_reply(data: &[u8], sequence: u16) -> Result<Option<FaceFocusPriority>, String> {
+    if data.len() < 18 || data[..2] != [0xaa, 0x29]
+        || data[2..4] != sequence.to_le_bytes()
+        || data[10..12] != [0xc2, 0x35]
+    {
+        return Ok(None);
+    }
+    if data[4..6] != [0x0c, 0x00] || data[8..10] != [0x02, 0x0a] {
+        return Err("CAM_GET_FACE_FOCUS reply has an unexpected header.".into());
+    }
+    if u16::from_le_bytes([data[12], data[13]]) != 4 {
+        return Err("CAM_GET_FACE_FOCUS reply did not contain a four-byte priority value.".into());
+    }
+    let mut header = data[..12].to_vec();
+    let received_crc = u16::from_le_bytes([header[6], header[7]]);
+    header[6] = 0;
+    header[7] = 0;
+    if crc16_usb(&header) != received_crc {
+        return Err("CAM_GET_FACE_FOCUS reply header CRC is invalid.".into());
+    }
+    let payload = [data[14], data[15], data[16], data[17]];
+    FaceFocusPriority::from_payload(payload).map(Some)
+}
+
+pub(crate) fn get_face_focus(device: &str) -> Result<FaceFocusPriority, String> {
+    let sequence = next_xu_sequence(xu_sequence_counter());
+    let mut request = face_focus_get_frame(sequence);
+    xu_query(device, 0x02, UVC_SET_CUR, &mut request)?;
+
+    for _ in 0..8 {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let mut response = [0u8; 60];
+        xu_query(device, 0x02, UVC_GET_CUR, &mut response)?;
+        if let Some(priority) = decode_face_focus_reply(&response, sequence)? {
+            return Ok(priority);
+        }
+    }
+    Err("Timed out waiting for a matching CAM_GET_FACE_FOCUS reply.".into())
+}
+
+pub(crate) fn set_face_focus(device: &str, requested: FaceFocusPriority) -> Result<FaceFocusPriority, String> {
     let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
     let mut command = [0u8; 6];
-    command[2..6].copy_from_slice(&face_focus_payload(face_priority));
+    command[2..6].copy_from_slice(&requested.payload());
     xu_send_frame(device, group, command)?;
-    update_config(|config| config.focus_mode = Some(if face_priority { "face" } else { "global" }.into()));
-    Ok(())
+
+    // A successful SET_CUR is only host-transport evidence. Confirm the
+    // camera's state with the independent CAM_GET_FACE_FOCUS transaction.
+    let actual = get_face_focus(device)?;
+    update_config(|config| config.focus_mode = Some(actual.config_value().into()));
+    Ok(actual)
 }
 
 pub(crate) fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
@@ -1027,7 +1176,15 @@ pub(crate) fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     data[2] = mode.0;
     data[3] = mode.1;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
-    let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x01, 0x00) => "group", _ => "unknown" };
+    let readback = xu_status(device)?;
+    let actual = (readback[0x18], readback[0x1c]);
+    if actual != mode {
+        return Err(format!(
+            "AI mode read-back mismatch: requested {:02x}/{:02x}, camera reports {:02x}/{:02x}.",
+            mode.0, mode.1, actual.0, actual.1
+        ));
+    }
+    let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x03, 0x00) => "hand", (0x01, 0x00) => "group", _ => "unknown" };
     update_config(|config| config.ai_tracking_mode = Some(name.into()));
     Ok(())
 }
@@ -1107,6 +1264,7 @@ pub(crate) fn ai_mode_label(status: &[u8; 60]) -> &'static str {
         (0x02, 0x02) => "Close-up",
         (0x02, 0x03) => "Headless",
         (0x02, 0x04) => "Lower body",
+        (0x03, 0x00) => "Hand",
         (0x01, 0x00) => "Group",
         _ => "Unknown mode",
     }
@@ -1275,36 +1433,85 @@ mod xu_protocol_tests {
 
     #[test]
     fn exposure_compensation_maps_all_nineteen_positions() {
-        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0100").as_slice());
-        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0a00").as_slice());
-        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1300").as_slice());
+        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0000").as_slice());
+        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0900").as_slice());
+        assert_eq!(exposure_compensation_payload(15).unwrap(), hex("0f00").as_slice());
+        assert_eq!(exposure_compensation_payload(16).unwrap(), hex("1000").as_slice());
+        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1200").as_slice());
+        assert_eq!(exposure_compensation_position([0x0f, 0x00]), Some(15));
+        assert_eq!(exposure_compensation_position([0x10, 0x00]), Some(16));
         for position in 0..=18 {
             let payload = exposure_compensation_payload(position).unwrap();
             assert_eq!(exposure_compensation_position(payload), Some(position));
         }
         assert!(exposure_compensation_payload(19).is_err());
+        assert_eq!(exposure_compensation_position([0x13, 0x00]), None);
         assert_eq!(exposure_compensation_label(0), "-3.0");
         assert_eq!(exposure_compensation_label(9), "0.0");
+        assert_eq!(exposure_compensation_label(15), "+2.0");
+        assert_eq!(exposure_compensation_label(16), "+2.3");
         assert_eq!(exposure_compensation_label(18), "+3.0");
     }
 
     #[test]
-    fn face_focus_frames_match_tiny_2_lite_capture_values() {
+    fn face_focus_setter_values_match_camera_readback_mapping() {
         let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
-        assert_eq!(face_focus_payload(true), hex("be070000").as_slice());
-        assert_eq!(face_focus_payload(false), hex("bffb0100").as_slice());
+        assert_eq!(FaceFocusPriority::Face.payload(), hex("bffb0100").as_slice());
+        assert_eq!(FaceFocusPriority::Global.payload(), hex("be070000").as_slice());
 
         let mut face_command = [0u8; 6];
-        face_command[2..6].copy_from_slice(&face_focus_payload(true));
+        face_command[2..6].copy_from_slice(&FaceFocusPriority::Face.payload());
         let face = obsbot_frame(0x0040, group, face_command);
         assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&face[16..20], hex("be070000").as_slice());
+        assert_eq!(&face[16..20], hex("bffb0100").as_slice());
 
         let mut global_command = [0u8; 6];
-        global_command[2..6].copy_from_slice(&face_focus_payload(false));
+        global_command[2..6].copy_from_slice(&FaceFocusPriority::Global.payload());
         let global = obsbot_frame(0x0041, group, global_command);
         assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&global[16..20], hex("bffb0100").as_slice());
+        assert_eq!(&global[16..20], hex("be070000").as_slice());
+    }
+
+    #[test]
+    fn face_focus_get_request_uses_header_only_get_opcode_and_full_header_crc() {
+        let frame = face_focus_get_frame(0x0016);
+        assert_eq!(&frame[..12], hex("aa0116000c00d6680a02c235").as_slice());
+        let mut header = frame[..12].to_vec();
+        header[6..8].fill(0);
+        assert_eq!(u16::from_le_bytes([frame[6], frame[7]]), crc16_usb(&header));
+    }
+
+    #[test]
+    fn face_focus_get_reply_decodes_both_camera_states() {
+        for (payload, expected) in [
+            (hex("bffb0100"), FaceFocusPriority::Face),
+            (hex("be070000"), FaceFocusPriority::Global),
+        ] {
+            let mut reply = [0u8; 60];
+            reply[..6].copy_from_slice(&hex("aa2916000c00"));
+            reply[8..14].copy_from_slice(&hex("020ac2350400"));
+            reply[14..18].copy_from_slice(&payload);
+            let crc = crc16_usb(&reply[..12]);
+            reply[6..8].copy_from_slice(&crc.to_le_bytes());
+            assert_eq!(decode_face_focus_reply(&reply, 0x0016).unwrap(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn face_focus_get_reply_rejects_stale_bad_crc_and_unknown_values() {
+        let mut reply = [0u8; 60];
+        reply[..6].copy_from_slice(&hex("aa2916000c00"));
+        reply[8..14].copy_from_slice(&hex("020ac2350400"));
+        reply[14..18].copy_from_slice(&hex("bffb0100"));
+        let crc = crc16_usb(&reply[..12]);
+        reply[6..8].copy_from_slice(&crc.to_le_bytes());
+
+        assert_eq!(decode_face_focus_reply(&reply, 0x0017).unwrap(), None);
+        reply[6] ^= 0x01;
+        assert!(decode_face_focus_reply(&reply, 0x0016).is_err());
+        reply[6] ^= 0x01;
+        reply[14..18].copy_from_slice(&hex("01020304"));
+        assert!(decode_face_focus_reply(&reply, 0x0016).is_err());
     }
 
     #[test]
@@ -1332,18 +1539,27 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn auto_exposure_priority_payload_matches_linux_capture() {
-        assert_eq!(auto_exposure_mode_payload(true), [0x03, 0x01, 0x00]);
-        assert_eq!(auto_exposure_mode_payload(false), [0x03, 0x01, 0x01]);
-
-        let mut face = [0u8; 60];
-        face[..3].copy_from_slice(&auto_exposure_mode_payload(true));
-        let mut global = [0u8; 60];
-        global[..3].copy_from_slice(&auto_exposure_mode_payload(false));
-        assert_eq!(&face[..4], &[0x03, 0x01, 0x00, 0x00]);
-        assert_eq!(&global[..4], &[0x03, 0x01, 0x01, 0x00]);
+    fn auto_exposure_priority_payloads_match_2026_11_20_capture() {
+        let face = auto_exposure_mode_payload(true);
+        let global = auto_exposure_mode_payload(false);
+        assert_eq!(face.len(), 60);
+        assert_eq!(global.len(), 60);
+        assert_eq!(&face[..3], &[0x03, 0x01, 0x00]);
+        assert_eq!(&global[..3], &[0x03, 0x01, 0x01]);
         assert!(face[3..].iter().all(|byte| *byte == 0));
         assert!(global[3..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn auto_exposure_priority_readback_uses_response_byte_seven() {
+        let mut status = [0u8; 60];
+        status[2] = 0x01; // SET_CUR value is not the GET_CUR read-back field.
+        status[7] = 0x00;
+        assert_eq!(auto_exposure_mode_from_status(&status), Some(true));
+        status[7] = 0x01;
+        assert_eq!(auto_exposure_mode_from_status(&status), Some(false));
+        status[7] = 0x02;
+        assert_eq!(auto_exposure_mode_from_status(&status), None);
     }
 
     #[test]

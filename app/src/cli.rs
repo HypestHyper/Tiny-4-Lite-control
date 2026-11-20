@@ -5,7 +5,7 @@
 //! a setting added there gets `get`, `set`, `toggle`, `reset`, `info`, shell
 //! completion and JSON output with no extra code here.
 
-use crate::backend::registry::{self, Fmt, Group, Kind, Setting, Snapshot, Value};
+use crate::backend::registry::{self, Fmt, Group, Kind, Origin, Setting, Snapshot, Value};
 use crate::backend::{self, current_config, flush_config, install_config, update_config_checked};
 use crate::{config, presets, video};
 use serde_json::{json, Value as Json};
@@ -161,6 +161,16 @@ fn group_slug(group: Group) -> String {
     group.title().to_lowercase().replace(' ', "-").replace("zoom-and-field-of-view", "zoom")
 }
 
+/// The window tab a group sits on, as a command-line word (`camera`, `tracking`, `audio`, `device`).
+fn tab_slug(group: Group) -> &'static str {
+    match group.tab() {
+        registry::Tab::Camera => "camera",
+        registry::Tab::Tracking => "tracking",
+        registry::Tab::Audio => "audio",
+        registry::Tab::Device => "device",
+    }
+}
+
 fn normalise(text: &str) -> String {
     text.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
 }
@@ -289,6 +299,7 @@ fn setting_json(setting: &Setting, snapshot: &Snapshot) -> Json {
         "available": blockers.is_empty(),
         "blocked_by": blockers,
         "reported_by_camera": setting.readback == registry::Readback::Camera,
+        "source": match setting.origin(snapshot) { Origin::Camera => "camera", Origin::Saved => "saved", Origin::Unknown => "unknown" },
         "experimental": setting.experimental,
     });
     match &setting.kind {
@@ -308,12 +319,13 @@ fn setting_json(setting: &Setting, snapshot: &Snapshot) -> Json {
 fn list(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
     let filter = options.positional.first().map(|g| normalise(g));
     let settings: Vec<&Setting> = all_settings(snapshot).into_iter()
-        .filter(|s| filter.as_ref().is_none_or(|f| normalise(&group_slug(s.group)) == *f))
+        .filter(|s| filter.as_ref().is_none_or(|f| normalise(&group_slug(s.group)) == *f || tab_slug(s.group) == f.as_str()))
         .collect();
     if let Some(wanted) = &filter {
         if settings.is_empty() {
-            let groups: Vec<String> = Group::ALL.iter().map(|g| group_slug(*g)).collect();
-            return usage_error(&format!("There is no group `{wanted}`. Groups: {}.", groups.join(", ")));
+            let mut groups: Vec<String> = ["camera", "tracking", "audio", "device"].iter().map(|s| s.to_string()).collect();
+            groups.extend(Group::ALL.iter().map(|g| group_slug(*g)));
+            return usage_error(&format!("There is no group `{wanted}`. Use a tab or a group: {}.", groups.join(", ")));
         }
     }
     if options.json {
@@ -330,8 +342,9 @@ fn list(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
         }
         let blockers = setting.blockers(snapshot);
         let value = show(setting, snapshot, setting.read(snapshot));
+        let source = match setting.origin(snapshot) { Origin::Camera => "", Origin::Saved => " (saved)", Origin::Unknown => "" };
         let note = if let Some(reason) = blockers.first() { format!("  (unavailable: {reason})") } else { String::new() };
-        println!("  {:<width$}  {}{}", alias(setting), value, note, width = width);
+        println!("  {:<width$}  {}{}{}", alias(setting), value, source, note, width = width);
     }
     OK
 }
@@ -345,6 +358,11 @@ fn get(options: &Options, snapshot: &Snapshot) -> i32 {
             } else {
                 // Just the value, so scripts can use it directly.
                 println!("{}", show(setting, snapshot, setting.read(snapshot)));
+                match setting.origin(snapshot) {
+                    Origin::Camera => {}
+                    Origin::Saved => eprintln!("(saved value: the camera does not confirm this one)"),
+                    Origin::Unknown => eprintln!("(unknown: the camera did not report this)"),
+                }
             }
             OK
         }
@@ -379,7 +397,12 @@ fn info(options: &Options, snapshot: &Snapshot) -> i32 {
     }
     for dep in &setting.deps { println!("Needs:   {}", dep.reason); }
     for blocker in setting.blockers(snapshot) { println!("Now:     unavailable. {blocker}"); }
-    if setting.readback == registry::Readback::LastSent { println!("Note:    the camera does not report this back; the value shown is the last one sent from this app."); }
+    println!("Source:  {}", match setting.origin(snapshot) {
+        Origin::Camera => "read from the camera",
+        Origin::Saved => "saved: the last value this app sent; the camera has not confirmed it",
+        Origin::Unknown => "unknown: the camera did not report it",
+    });
+    if setting.readback == registry::Readback::LastSent { println!("Note:    the camera does not report this setting back, so only the last value sent from this app can be shown."); }
     if setting.experimental { println!("Note:    experimental; not fully verified on this camera."); }
     OK
 }
@@ -399,11 +422,24 @@ fn apply(options: &Options, device: &str, snapshot: &Snapshot, setting: &'static
         }
     }
     match setting.write(device, value) {
-        Ok(()) => {
+        Ok(confirmed) => {
             let shown = show(setting, snapshot, Some(value));
-            if options.json { println!("{}", json!({ "id": setting.id, "name": alias(setting), "value": shown, "ok": true })); }
-            else { println!("{}: {}", setting.label, shown); }
-            OK
+            // What the camera confirmed beats what was asked for.
+            let (state, code) = match confirmed {
+                Some(actual) if actual.as_i64() == value.as_i64() => ("confirmed by the camera".to_string(), OK),
+                Some(actual) => (format!("the camera reports {} instead", show(setting, snapshot, Some(actual))), FAILED),
+                None if setting.readback == registry::Readback::LastSent => ("sent; the camera can't confirm this".to_string(), OK),
+                None => ("sent".to_string(), OK),
+            };
+            if options.json {
+                println!("{}", json!({ "id": setting.id, "name": alias(setting), "requested": shown,
+                    "confirmed": confirmed.map(|a| show(setting, snapshot, Some(a))), "ok": code == OK }));
+            } else if code == OK {
+                println!("{}: {shown} ({state})", setting.label);
+            } else {
+                eprintln!("{}: you asked for {shown}, but {state}.", setting.label);
+            }
+            code
         }
         Err(error) => fail(&format!("Could not change {}: {error}", setting.label.to_lowercase())),
     }
@@ -660,7 +696,7 @@ tiny4lite-control: control the OBSBOT Tiny 2 Lite from a window or a terminal
 With no command, a window opens (--full, --slim or --preview choose which).
 
 Settings (every setting the windows show):
-  list [GROUP]               Show all settings and their values ({groups})
+  list [TAB|GROUP]           Show all settings and their values (tabs: camera, tracking, audio, device; groups: {groups})
   get NAME                   Print one value
   set NAME VALUE             Change a setting
   toggle NAME                Flip an on/off setting
@@ -684,7 +720,7 @@ Options:
   --yes, -y      Confirm actions that move the gimbal or change what the camera stores
   --force        Send a setting even though its dependency says it is unavailable
 
-NAME is the short name from `list` (for example exposure-mode, shutter-speed, hdr), the full id
+NAME is the short name from `list` (for example exposure-mode, shutter-speed, autofocus), the full id
 (v4l2:auto_exposure) or the label. Values: on/off for switches, an option name for choices, and for
 sliders a number in the unit shown (3200 for kelvin, +1.5 for EV, 1/60 for shutter speed, 2.5 for zoom ratio).
 
@@ -712,7 +748,10 @@ fn complete(args: &[String]) -> i32 {
     let settings: Vec<&'static Setting> = if snapshot.controls.is_empty() { registry::all().iter().collect() } else { all_settings(&snapshot) };
     match args.first().map(String::as_str) {
         Some("settings") => { for s in settings { println!("{}", alias(s)); } }
-        Some("groups") => { for g in Group::ALL { println!("{}", group_slug(g)); } }
+        Some("groups") => {
+            for tab in ["camera", "tracking", "audio", "device"] { println!("{tab}"); }
+            for g in Group::ALL { println!("{}", group_slug(g)); }
+        }
         Some("values") => if let Some(setting) = args.get(1).and_then(|n| resolve_any(&settings, n)) {
             match &setting.kind {
                 Kind::Toggle => { println!("on\noff"); }
@@ -855,7 +894,9 @@ mod tests {
         assert_eq!(parse_value(mode, &snapshot, "upper-body").unwrap(), Value::Int(2));
         assert_eq!(parse_value(mode, &snapshot, "Upper body").unwrap(), Value::Int(2));
         assert_eq!(parse_value(mode, &snapshot, "close_up").unwrap(), Value::Int(3));
-        assert!(parse_value(mode, &snapshot, "sideways").unwrap_err().contains("Off, Normal, Upper body"));
+        assert!(parse_value(mode, &snapshot, "sideways").unwrap_err().contains("No tracking, Normal, Upper body"));
+        assert_eq!(parse_value(mode, &snapshot, "hand").unwrap(), Value::Int(6));
+        assert_eq!(parse_value(mode, &snapshot, "group").unwrap(), Value::Int(7));
         let fov = registry::find("obsbot:fov").unwrap();
         assert_eq!(parse_value(fov, &snapshot, "78").unwrap(), Value::Int(5));
     }
@@ -863,10 +904,9 @@ mod tests {
     #[test]
     fn names_resolve_by_short_name_id_or_label() {
         let snapshot = Snapshot::default();
-        let by_alias = resolve(&snapshot, "hdr");
-        // Standard controls are only offered once the camera reports them.
-        assert!(by_alias.is_ok());
-        assert_eq!(resolve(&snapshot, "obsbot:hdr").unwrap().id, "obsbot:hdr");
+        // Vendor commands are always offered; standard controls only once the camera reports them.
+        assert_eq!(resolve(&snapshot, "mirror-image").unwrap().id, "obsbot:mirror_image");
+        assert_eq!(resolve(&snapshot, "obsbot:mirror_image").unwrap().id, "obsbot:mirror_image");
         assert_eq!(resolve(&snapshot, "Pop filter").unwrap().id, "obsbot:pop_filter");
         assert!(resolve(&snapshot, "no-such-thing").err().unwrap().contains("no setting called"));
     }

@@ -1,34 +1,36 @@
-# Bundle manifest
+# Assistant bundle manifest
 
-- Original source: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
-- Original source lines: 822
-- Original source characters: 35216
-- Original source SHA-256: `cf07049df8c36093f07138354d88c08a794d2f0c213de07851cd8f51a168c87a`
-- Reference files: 5 topic partitions copied from contiguous ranges of the original document.
-- Preservation: the complete original is included unchanged; topic files retain the original section content and order. Navigation/agent guidance is additional metadata, not a replacement for source content.
+## Research bundle
 
-## Layout
+- Original OBSBOT Tiny 2 Lite research: `source/obsbot_tiny_2_lite_linux_research_handoff.md`
+- Fifteen topic notes under `reference/`, including the 2026-11-17 PTZ position read-back and firmware/FOV investigations.
+- Original research source retained and updated where later controlled hardware tests supersede its earlier candidate inventories; dated evidence notes preserve test scope and confidence.
 
-```text
-Assistant/
-├── AGENTS.md
-├── INDEX.md
-├── MANIFEST.md
-├── reference/
-│   ├── 01-device-and-repositories.md
-│   ├── 02-feature-inventory.md
-│   ├── 03-media-and-limitations.md
-│   ├── 04-architecture-and-hardware-testing.md
-│   └── 05-licensing-handoff-and-open-questions.md
-└── source/
-    └── obsbot_tiny_2_lite_linux_research_handoff.md
-```
+## Tiny 2 Lite V4L2 hardware reference
 
+- [2026-11-20 V4L2 inventory and dependency matrix](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md): device identity, nodes, USB/media topology, video/audio descriptors, complete reported V4L2 controls and values, invalid driver values, and experimentally confirmed mode dependencies.
 
-## Additional source: USB reverse-engineering workflow
+- [2026-11-20 AI mode and gesture read-back](reference/15-2026-11-20-ai-mode-and-gesture-readback.md): verified mode tuples, selector inventory, Target Selection state byte, gesture read-back limits, and test evidence.
 
-- Source: `tracing/source/reverse-engineering-usb-devices.md`
-- Original uploaded filename: `reverse-engineering-usb-devices (1).md`
-- Source length: 236 lines, 9,509 characters, 9,519 UTF-8 bytes (verified against the uploaded file, including its final newline).
-- Preservation: source is stored in full; six topic partitions retain the original section text and order. Navigation, camera-specific applicability warnings, and a reusable capture-session template are additional material.
-- Scope warning: the source guide focuses on USB HID feature reports. OBSBOT Tiny 2 Lite research concerns V4L2 and UVC Extension Unit controls; do not conflate the protocols.
+## Current app handoff
+
+- [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md): current framework implementation, protocol details, gaps, and next investigation.
+- App source of truth: `../app/src/` on branch `claude/upbeat-rubin-gnae3f` (`backend/device.rs` for protocol code, `backend/registry.rs` for the settings, `ui/` for the windows, `cli.rs` for the command line). On `test-app-v0.1` the same protocol code is in `app/src/main.rs`.
+- App runtime/build notes: `../app/README.md`; control and protocol notes from the test bench: `../app/docs/controls-and-protocol.md`.
+- Current app is a Rust/GTK4 hardware-control test bench. Functional AI mode and gesture state handling is updated; visual redesign is specified in the root [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md).
+
+## USB tracing workflow
+
+The generic USB tracing guide and its partitioned references:
+
+- [Tracing index](tracing/INDEX.md)
+- [Tracing source](tracing/source/reverse-engineering-usb-devices.md)
+- [Capture template](tracing/templates/capture-session.md)
+
+Also on this branch: [standard UVC Backlight Compensation](reference/06-standard-uvc-backlight-compensation.md), the hardware-verified request format behind Exposure compensation.
+
+**Applicability warning:** the generic guide is HID-oriented. Tiny 2 Lite control is V4L2/UVC XU. Reuse the evidence workflow, not HID-specific report assumptions.
+
+## Current evidence state
+
+Windows OBSBOT Center USB captures were collected and parsed on 2026-11-17. Focus/Zoom UVC controls, selector 0x02 command records, and a candidate PTZ position read-back response are documented in `reference/06-2026-11-17-capture-findings.md` , `reference/07-2026-11-17-ptz-position-readback.md`, and `reference/08-firmware-identification-and-fov.md`. Live position polling during AI tracking remains an uncompleted test. Do not describe that read-back capability as verified until a host-initiated GET_CUR test confirms changing values during physical tracking movement.

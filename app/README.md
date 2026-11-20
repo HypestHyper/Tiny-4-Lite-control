@@ -134,13 +134,36 @@ what the camera reports does. Confirmed dependencies today: manual white balance
 balance off; shutter speed needs Manual exposure; exposure compensation and metering priority need Auto
 exposure; manual focus needs Autofocus off; autofocus priority needs Autofocus on.
 
+### What the labels mean
+
+Every value is shown with where it came from, in the windows and on the command line:
+
+* **No label: read from the camera.** Refreshing reads it again. For some settings the app also reads the
+  camera straight after every change and shows what the camera reports, which may differ from what you asked
+  for. Exposure compensation, metering priority, autofocus priority and tracking mode work this way.
+* **Saved:** the last value this app sent. The camera cannot report it, so it may differ if you changed it
+  elsewhere. The command line writes `(saved)` after the value.
+* **Unknown:** the camera did not report it and there is no saved value. The control shows a starting
+  position, not the camera's real state.
+
+A matching read-back confirms the camera holds the value. It does not prove how the picture or the focus
+behaves. Autofocus priority never falls back to a saved value; the settings that can (for example
+metering priority) only do so if the camera's status block cannot be read at all, and they are then labelled Saved.
+
+Two controls that look alike are different: **Metering priority** (Auto Exposure Face/Global) and **Autofocus
+priority** (Face/Global focus) use different commands. **Exposure compensation** is the camera's standard
+Backlight Compensation control; there is no separate backlight slider because it is the same control.
+**Tracking mode** has eight choices; Target selection is a gesture, not a tracking mode.
+
 ### Adding or changing a setting
 
 1. **A standard V4L2 control:** add one `Setting::v4l2(...)` entry in `registry.rs`. Range, step, default
    and menu come from the driver at run time. Controls with no entry still appear under *More controls*.
 2. **A vendor command:** write the payload and sender in `device.rs` as before (keep captured bytes in
    documented constants), then add a `Setting::custom(...)` entry with a reader and a writer.
-3. Say whether the camera reports it back (`.last_sent()` if it does not), add `.info(...)` for the info
+3. Return where each value came from in the reader (`from_camera(...)`, `from_saved(...)`; nothing means
+   Unknown) and, if the camera can confirm a write, return the value it reports from the writer. Mark
+   `.last_sent()` if the camera cannot report it, add `.info(...)` for the info
    dialog, `.needs(...)` for dependencies, `.experimental()` if it is unverified, `.not_quick()` to keep it
    out of the slim window's list.
 
@@ -197,9 +220,22 @@ Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manua
 `_PAGE=camera|tracking|audio|presets|device|customise`, `_THEME`, `_SCALE`, `_WIDTH`, `_HEIGHT`,
 `_SEARCH`, and `_LOG=<file>` to record every V4L2 `--set` the UI issued.
 
+## More documentation
+
+* [docs/controls-and-protocol.md](docs/controls-and-protocol.md): control, protocol and configuration notes from the test bench, with the evidence behind them.
+* [../Assistant/APP-IMPLEMENTATION-STATUS.md](../Assistant/APP-IMPLEMENTATION-STATUS.md): implementation status; section 0 describes this rebuild.
+* [../Assistant/reference/](../Assistant/reference/): dated hardware evidence.
+* [../CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md): the state-handling contract the UI follows, and how it was met.
+
 ## What is not verified yet
 
-* Everything above against a real Tiny 2 Lite.
+* Everything above against a real Tiny 2 Lite. In particular the read-back paths (autofocus priority, metering
+  priority, exposure compensation, tracking mode, Target selection) have only been exercised against a synthetic camera.
+* Whether Face and Global autofocus produce a visibly different focus result; a matching read-back confirms the
+  setting, not the behaviour.
+* Zoom, Dynamic zoom and Reverse dynamic zoom: the commands work on the camera but there is no state to read, so they stay Saved or Unknown.
+* Running the command line while the window's joystick or position readout is active: both use the same
+  command mailbox, so avoid doing both at once.
 * How the stop-on-release behaves if the USB device disconnects mid-drag.
 * The Hyprland rules (the class names were read back from a headless sway, not from Hyprland itself).
 * Light/dark switching from a live desktop portal (the portal code path is untested here).

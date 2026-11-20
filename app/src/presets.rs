@@ -12,6 +12,9 @@ fn ai_mode_id(status: &[u8; 60]) -> Option<i64> {
         (0x02, 0x03) => Some(4),
         (0x02, 0x04) => Some(5),
         (0x01, 0x00) => Some(6),
+        // Added after the first presets were saved, so it takes the next number and
+        // older presets keep their meaning.
+        (0x03, 0x00) => Some(7),
         _ => None,
     }
 }
@@ -25,6 +28,7 @@ fn ai_mode_payload(id: i64) -> Option<(u8, u8)> {
         4 => Some((0x02, 0x03)),
         5 => Some((0x02, 0x04)),
         6 => Some((0x01, 0x00)),
+        7 => Some((0x03, 0x00)),
         _ => None,
     }
 }
@@ -82,21 +86,29 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
             0x02 | 0x21 => { settings.insert("obsbot:tracking_speed".into(), 1); }
             _ => {}
         }
-        // Status byte 0x07 is inverted: zero means the L-pose gesture is enabled.
-        settings.insert("obsbot:gesture:zoom_l_pose".into(), (status[0x07] == 0) as i64);
+        // Auto Exposure priority: status byte 7 (0 = Face, 1 = Global) is authoritative.
+        if let Some(face) = auto_exposure_mode_from_status(&status) {
+            settings.insert("obsbot:auto_exposure_mode".into(), face as i64);
+        }
+        // Target Selection is the only gesture the camera reports (status byte 1).
+        // Selector 0x06 byte 0x07 is NOT the zoom gesture: that assumption was disproven.
+        if let Some(enabled) = match status[0x01] { 0 => Some(0), 1 => Some(1), _ => None } {
+            settings.insert("obsbot:gesture:target_selection".into(), enabled);
+        }
+    }
+
+    // Autofocus priority comes from the camera only. If it does not answer, leave it out.
+    if let Ok(priority) = get_face_focus(device) {
+        settings.insert("obsbot:focus_mode".into(), (priority == FaceFocusPriority::Face) as i64);
     }
 
     let saved = current_config();
-    if let Some(mode) = saved.focus_mode.as_deref() {
-        settings.insert("obsbot:focus_mode".into(), (mode == "face") as i64);
-    }
     if let Some(ratio) = saved.gesture_zoom_ratio {
         settings.insert("obsbot:gesture_zoom_ratio_milli".into(), (ratio * 1000.0).round() as i64);
     }
+    // The other three gestures have no read-back: record what this app last sent.
     for (name, enabled) in saved.gesture_states {
-        if name != "zoom_l_pose" {
-            settings.insert(format!("obsbot:gesture:{name}"), enabled as i64);
-        }
+        settings.entry(format!("obsbot:gesture:{name}")).or_insert(enabled as i64);
     }
 
     Ok(config::CameraPreset { name: name.trim().to_string(), settings })
@@ -145,9 +157,15 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             }
         } else if key == "obsbot:focus_mode" {
             match *value {
-                0 => set_face_focus(device, false),
-                1 => set_face_focus(device, true),
+                0 => set_face_focus(device, FaceFocusPriority::Global).map(|_| ()),
+                1 => set_face_focus(device, FaceFocusPriority::Face).map(|_| ()),
                 _ => Err("Unknown autofocus priority in preset.".into()),
+            }
+        } else if key == "obsbot:auto_exposure_mode" {
+            match *value {
+                0 => set_auto_exposure_mode(device, false).map(|_| ()),
+                1 => set_auto_exposure_mode(device, true).map(|_| ()),
+                _ => Err("Unknown Auto Exposure priority in preset.".into()),
             }
         } else if key == "obsbot:gesture_zoom_ratio_milli" {
             set_gesture_zoom_ratio(device, *value as f32 / 1000.0)
@@ -223,10 +241,13 @@ mod tests {
 
     #[test]
     fn ai_mode_preset_ids_round_trip() {
-        for id in 0..=6 {
+        for id in 0..=7 {
             assert_eq!(ai_mode_id_from_payload(ai_mode_payload(id).unwrap()), Some(id));
         }
-        assert!(ai_mode_payload(7).is_none());
+        assert!(ai_mode_payload(8).is_none());
+        // Presets saved before Hand existed keep their meaning: 6 is still Group.
+        assert_eq!(ai_mode_payload(6), Some((0x01, 0x00)));
+        assert_eq!(ai_mode_payload(7), Some((0x03, 0x00)));
     }
 
     fn ai_mode_id_from_payload(payload: (u8, u8)) -> Option<i64> {
@@ -234,7 +255,7 @@ mod tests {
             (0x00, 0x00) => Some(0), (0x02, 0x00) => Some(1),
             (0x02, 0x01) => Some(2), (0x02, 0x02) => Some(3),
             (0x02, 0x03) => Some(4), (0x02, 0x04) => Some(5),
-            (0x01, 0x00) => Some(6), _ => None,
+            (0x01, 0x00) => Some(6), (0x03, 0x00) => Some(7), _ => None,
         }
     }
 
