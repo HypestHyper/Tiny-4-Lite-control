@@ -521,8 +521,16 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
 
 fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
-        if request == UVC_GET_CUR && data.len() >= 2 {
-            data[..2].copy_from_slice(&10u16.to_le_bytes());
+        if selector == 0x01 && data.len() == 2 {
+            if request == UVC_SET_CUR {
+                let value = u16::from_le_bytes([data[0], data[1]]);
+                if value > 18 {
+                    return Err(format!("Synthetic BLC value {value} is outside 0–18."));
+                }
+                LAST_UI_TEST_EXPOSURE_COMPENSATION.store(value as u8, Ordering::Relaxed);
+            } else if request == UVC_GET_CUR {
+                data.copy_from_slice(&(LAST_UI_TEST_EXPOSURE_COMPENSATION.load(Ordering::Relaxed) as u16).to_le_bytes());
+            }
         }
         return Ok(());
     }
@@ -719,12 +727,12 @@ fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], String> {
     if position > 18 {
         return Err("Exposure compensation position must be between 0 and 18.".into());
     }
-    Ok(((position as u16) + 1).to_le_bytes())
+    Ok((position as u16).to_le_bytes())
 }
 
 fn exposure_compensation_position(payload: [u8; 2]) -> Option<u8> {
     let raw = u16::from_le_bytes(payload);
-    (1..=19).contains(&raw).then_some((raw - 1) as u8)
+    (0..=18).contains(&raw).then_some(raw as u8)
 }
 
 fn get_exposure_compensation(device: &str) -> Result<u8, String> {
@@ -734,11 +742,15 @@ fn get_exposure_compensation(device: &str) -> Result<u8, String> {
         .ok_or_else(|| format!("Camera returned unsupported exposure compensation value {}.", u16::from_le_bytes(data)))
 }
 
-fn set_exposure_compensation(device: &str, position: u8) -> Result<(), String> {
+fn set_exposure_compensation(device: &str, position: u8) -> Result<u8, String> {
     let mut data = exposure_compensation_payload(position)?;
     pu_query(device, 0x01, UVC_SET_CUR, &mut data)?;
-    update_config(|config| config.exposure_compensation_position = Some(position));
-    Ok(())
+
+    // A completed SET_CUR only confirms transport. Confirm the camera's
+    // actual value with GET_CUR before updating the UI or saved preference.
+    let actual = get_exposure_compensation(device)?;
+    update_config(|config| config.exposure_compensation_position = Some(actual));
+    Ok(actual)
 }
 
 fn exposure_compensation_label(position: u8) -> String {
@@ -783,10 +795,23 @@ fn add_exposure_compensation_control(container: &gtk::Box, device: &str, status:
         if guard.get() { return; }
         let requested = slider.value().round().clamp(0.0, 18.0) as u8;
         match set_exposure_compensation(&dev, requested) {
-            Ok(()) => {
-                last_position.set(requested);
-                value.set_text(&exposure_compensation_label(requested));
-                status_label.set_text(&format!("Exposure compensation set to {}.", exposure_compensation_label(requested)));
+            Ok(actual) => {
+                last_position.set(actual);
+                if actual != requested {
+                    guard.set(true);
+                    slider.set_value(actual as f64);
+                    guard.set(false);
+                }
+                value.set_text(&exposure_compensation_label(actual));
+                if actual == requested {
+                    status_label.set_text(&format!("Exposure compensation confirmed at {} by camera read-back.", exposure_compensation_label(actual)));
+                } else {
+                    status_label.set_text(&format!(
+                        "Camera read-back differs: requested {}, camera reports {}.",
+                        exposure_compensation_label(requested),
+                        exposure_compensation_label(actual),
+                    ));
+                }
             }
             Err(error) => {
                 guard.set(true);
@@ -1324,6 +1349,7 @@ static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
 
 fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
@@ -2996,16 +3022,23 @@ mod xu_protocol_tests {
 
     #[test]
     fn exposure_compensation_maps_all_nineteen_positions() {
-        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0100").as_slice());
-        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0a00").as_slice());
-        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1300").as_slice());
+        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0000").as_slice());
+        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0900").as_slice());
+        assert_eq!(exposure_compensation_payload(15).unwrap(), hex("0f00").as_slice());
+        assert_eq!(exposure_compensation_payload(16).unwrap(), hex("1000").as_slice());
+        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1200").as_slice());
+        assert_eq!(exposure_compensation_position([0x0f, 0x00]), Some(15));
+        assert_eq!(exposure_compensation_position([0x10, 0x00]), Some(16));
         for position in 0..=18 {
             let payload = exposure_compensation_payload(position).unwrap();
             assert_eq!(exposure_compensation_position(payload), Some(position));
         }
         assert!(exposure_compensation_payload(19).is_err());
+        assert_eq!(exposure_compensation_position([0x13, 0x00]), None);
         assert_eq!(exposure_compensation_label(0), "-3.0");
         assert_eq!(exposure_compensation_label(9), "0.0");
+        assert_eq!(exposure_compensation_label(15), "+2.0");
+        assert_eq!(exposure_compensation_label(16), "+2.3");
         assert_eq!(exposure_compensation_label(18), "+3.0");
     }
 
