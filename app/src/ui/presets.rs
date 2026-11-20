@@ -149,3 +149,185 @@ pub(crate) fn append(
     frame.set_child(Some(&layout));
     container.append(&frame);
 }
+
+
+fn refresh_camera_native(combo: &gtk::ComboBoxText, device: &str, status: &gtk::Label) -> Vec<crate::CameraPresetEntry> {
+    combo.remove_all();
+    match crate::read_camera_presets(device) {
+        Ok(entries) => {
+            for entry in &entries {
+                combo.append(Some(&entry.slot.to_string()), &format!(
+                    "Slot {} · {} · Pan {:+.1}° / Tilt {:+.1}° / Zoom {:.2}×",
+                    entry.slot + 1, entry.name, entry.pan_degrees, entry.tilt_degrees, entry.zoom
+                ));
+            }
+            if !entries.is_empty() { combo.set_active(Some(0)); }
+            entries
+        }
+        Err(error) => {
+            status.set_text(&format!("Could not read camera-native presets: {error}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Camera-resident preset management. Unlike the local configuration
+/// presets above, these slots are stored by the camera and survive app removal.
+pub(crate) fn append_camera_native(
+    container: &gtk::Box,
+    device: &str,
+    status: &gtk::Label,
+) {
+    let frame = gtk::Frame::new(Some("Camera-native presets"));
+    crate::ui::layout::mark_compact_item(frame.upcast_ref(), "camera:native-presets");
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let description = gtk::Label::new(Some(
+        "Stored in the Tiny 2 Lite itself. Saving captures the current V4L2 pan, tilt and zoom. Recall physically moves the gimbal."
+    ));
+    description.set_wrap(true);
+    description.set_xalign(0.0);
+    description.add_css_class("dim-label");
+    layout.append(&description);
+
+    let name_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    name_row.add_css_class("adaptive-row");
+    let name = gtk::Entry::new();
+    name.set_placeholder_text(Some("Camera preset name"));
+    name.set_text("Initial state");
+    name.set_hexpand(true);
+    let save = gtk::Button::with_label("Save current");
+    save.add_css_class("suggested-action");
+    name_row.append(&name);
+    name_row.append(&save);
+    layout.append(&name_row);
+
+    let select_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    select_row.add_css_class("adaptive-row");
+    let combo = gtk::ComboBoxText::new();
+    combo.set_hexpand(true);
+    let refresh_button = gtk::Button::with_label("Refresh");
+    select_row.append(&combo);
+    select_row.append(&refresh_button);
+    layout.append(&select_row);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.add_css_class("adaptive-row");
+    let recall = gtk::Button::with_label("Recall");
+    let rename = gtk::Button::with_label("Rename");
+    let delete = gtk::Button::with_label("Delete");
+    actions.append(&recall);
+    actions.append(&rename);
+    actions.append(&delete);
+    layout.append(&actions);
+
+    let initial_entries = refresh_camera_native(&combo, device, status);
+    if let Some(first) = initial_entries.first() { name.set_text(&first.name); }
+
+    let device_refresh = device.to_string();
+    let combo_refresh = combo.clone();
+    let status_refresh = status.clone();
+    refresh_button.connect_clicked(move |_| {
+        let entries = refresh_camera_native(&combo_refresh, &device_refresh, &status_refresh);
+        status_refresh.set_text(&format!("Read {} camera-native preset(s).", entries.len()));
+    });
+
+    let device_save = device.to_string();
+    let combo_save = combo.clone();
+    let name_save = name.clone();
+    let status_save = status.clone();
+    save.connect_clicked(move |_| {
+        let preset_name = name_save.text().trim().to_string();
+        if preset_name.is_empty() || !preset_name.is_ascii() || preset_name.len() > 40 {
+            status_save.set_text("Use a preset name containing 1–40 ASCII bytes.");
+            return;
+        }
+        let entries = match crate::read_camera_presets(&device_save) {
+            Ok(entries) => entries,
+            Err(error) => {
+                status_save.set_text(&format!("Could not inspect camera preset slots: {error}"));
+                return;
+            }
+        };
+        let selected = combo_save.active_id().and_then(|id| id.parse::<u8>().ok());
+        let (slot, update) = if let Some(slot) = selected.filter(|slot| entries.iter().any(|entry| entry.slot == *slot)) {
+            (slot, true)
+        } else if let Some(slot) = (0u8..3).find(|slot| !entries.iter().any(|entry| entry.slot == *slot)) {
+            (slot, false)
+        } else {
+            status_save.set_text("All three camera preset slots are occupied. Select one to update it.");
+            return;
+        };
+        match crate::save_camera_preset(&device_save, slot, &preset_name, update) {
+            Ok(()) => {
+                let refreshed = refresh_camera_native(&combo_save, &device_save, &status_save);
+                combo_save.set_active_id(Some(&slot.to_string()));
+                status_save.set_text(&format!("Camera preset '{}' {} in slot {}.", preset_name, if update { "updated" } else { "created" }, slot + 1));
+                let _ = refreshed;
+            }
+            Err(error) => status_save.set_text(&format!("Could not save camera preset: {error}")),
+        }
+    });
+
+    let device_recall = device.to_string();
+    let combo_recall = combo.clone();
+    let status_recall = status.clone();
+    recall.connect_clicked(move |_| {
+        let Some(slot) = combo_recall.active_id().and_then(|id| id.parse::<u8>().ok()) else {
+            status_recall.set_text("Select a camera-native preset first.");
+            return;
+        };
+        match crate::recall_camera_preset(&device_recall, slot) {
+            Ok(()) => status_recall.set_text(&format!("Recall command submitted for camera preset slot {}. The gimbal should move.", slot + 1)),
+            Err(error) => status_recall.set_text(&format!("Could not recall camera preset: {error}")),
+        }
+    });
+
+    let device_rename = device.to_string();
+    let combo_rename = combo.clone();
+    let name_rename = name.clone();
+    let status_rename = status.clone();
+    rename.connect_clicked(move |_| {
+        let Some(slot) = combo_rename.active_id().and_then(|id| id.parse::<u8>().ok()) else {
+            status_rename.set_text("Select a camera-native preset to rename.");
+            return;
+        };
+        let preset_name = name_rename.text().trim().to_string();
+        match crate::rename_camera_preset(&device_rename, slot, &preset_name) {
+            Ok(()) => {
+                refresh_camera_native(&combo_rename, &device_rename, &status_rename);
+                combo_rename.set_active_id(Some(&slot.to_string()));
+                status_rename.set_text(&format!("Camera preset slot {} renamed to '{}'.", slot + 1, preset_name));
+            }
+            Err(error) => status_rename.set_text(&format!("Could not rename camera preset: {error}")),
+        }
+    });
+
+    let device_delete = device.to_string();
+    let combo_delete = combo.clone();
+    let status_delete = status.clone();
+    delete.connect_clicked(move |_| {
+        let Some(slot) = combo_delete.active_id().and_then(|id| id.parse::<u8>().ok()) else {
+            status_delete.set_text("Select a camera-native preset to delete.");
+            return;
+        };
+        match crate::delete_camera_preset(&device_delete, slot) {
+            Ok(()) => {
+                let entries = refresh_camera_native(&combo_delete, &device_delete, &status_delete);
+                if entries.iter().any(|entry| entry.slot == slot) {
+                    status_delete.set_text("The camera acknowledged deletion, but the slot is still present. It was not removed.");
+                } else {
+                    status_delete.set_text(&format!("Camera preset slot {} deleted and verified absent.", slot + 1));
+                }
+            }
+            Err(error) => status_delete.set_text(&format!("Could not delete camera preset: {error}")),
+        }
+    });
+
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
