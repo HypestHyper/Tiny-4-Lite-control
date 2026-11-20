@@ -150,7 +150,7 @@ selector `0x06` for the 60-byte status block.
   Treat this as a prototype: fixed replay may be rejected after the camera
   or OBSBOT Center advances its internal sequence. Physical ON/OFF validation
   is still required.
-- Mirror image: experimental On/Off switch under Microphone processing.
+- Mirror image: experimental On/Off switch under Image orientation.
   It sends the exact captured 60-byte XU unit 2 / selector 0x06 payload:
   `14 01 01` for ON and `14 01 00` for OFF, followed by zeroes.
   The three controlled OBSBOT Center writes differed only at payload byte 2.
@@ -166,7 +166,9 @@ selector `0x06` for the 60-byte status block.
   Status byte `0x21` reports the selected setting. Tag `0x18` is not
   treated as LED power: observed On makes the indicator blink, while
   Off leaves it continuously lit.
-- Preset mutation is not implemented.
+- Local application presets can capture and apply settings. Camera-native
+   preset-slot create/delete/recall/read/rename/list/update operations are
+   not implemented.
 
 The selector `0x06` status block provides AI tracking state/mode and
 selected settings where documented, but it does not provide reliable
