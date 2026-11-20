@@ -726,7 +726,7 @@ fn pop_filter_payload(enabled: bool) -> [u8; 60] {
          0x06,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,0xc8,0xd7,0xb9,0x0f,0x22]
     };
     data[..32].copy_from_slice(&captured);
-    data[32] = 0x01;
+    // The captured prototype has a zero-filled tail from offset 32 onward.
     data
 }
 
@@ -2468,6 +2468,20 @@ mod xu_protocol_tests {
         data[0..4].copy_from_slice(&(45_i32 * 3600).to_le_bytes());
         data[4..8].copy_from_slice(&(-30_i32 * 3600).to_le_bytes());
         assert_eq!(decode_pan_tilt_absolute(&data), (45.0, -30.0));
+    }
+
+    #[test]
+    fn pop_filter_payload_matches_captured_prototype() {
+        let on = pop_filter_payload(true);
+        let off = pop_filter_payload(false);
+        assert_eq!(&on[..3], &[0xaa, 0x25, 0x10]);
+        assert_eq!(&off[..3], &[0xaa, 0x25, 0x0f]);
+        assert_eq!(&on[14..18], &[0xef, 0x4f, 0x06, 0x01]);
+        assert_eq!(&off[14..18], &[0xbe, 0x8f, 0x06, 0x00]);
+        assert_eq!(&on[25..32], &[0xc8, 0xd7, 0xb9, 0x0f, 0x22, 0x00, 0x00]);
+        assert_eq!(&off[25..32], &[0xc8, 0xd7, 0xb9, 0x0f, 0x22, 0x00, 0x00]);
+        assert!(on[32..].iter().all(|byte| *byte == 0));
+        assert!(off[32..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
