@@ -153,6 +153,8 @@ struct Inner {
     dialogs: RefCell<Vec<Rc<Dialogs>>>,
     refresh_timer: RefCell<Option<glib::SourceId>>,
     last_refresh: Cell<Option<Instant>>,
+    gimbal: Cell<Option<(f64, f64)>>,
+    gimbal_listeners: RefCell<Vec<Box<dyn Fn(Option<(f64, f64)>) -> bool>>>,
 }
 
 #[derive(Clone)]
@@ -169,6 +171,8 @@ impl Store {
             dialogs: RefCell::new(Vec::new()),
             refresh_timer: RefCell::new(None),
             last_refresh: Cell::new(None),
+            gimbal: Cell::new(None),
+            gimbal_listeners: RefCell::new(Vec::new()),
         }))
     }
 
@@ -258,6 +262,24 @@ impl Store {
             done(result);
             this.refresh_soon();
         });
+    }
+
+    /// The camera's live pan and tilt in degrees, if it has answered recently.
+    pub fn gimbal(&self) -> Option<(f64, f64)> { self.0.gimbal.get() }
+
+    /// Publish a new live position (or `None` when the camera could not be read).
+    pub fn set_gimbal(&self, position: Option<(f64, f64)>) {
+        self.0.gimbal.set(position);
+        let mut listeners = std::mem::take(&mut *self.0.gimbal_listeners.borrow_mut());
+        listeners.retain(|listener| listener(position));
+        let mut added = std::mem::take(&mut *self.0.gimbal_listeners.borrow_mut());
+        listeners.append(&mut added);
+        *self.0.gimbal_listeners.borrow_mut() = listeners;
+    }
+
+    /// Be told about every new live position. Return `false` to stop.
+    pub fn subscribe_gimbal(&self, listener: impl Fn(Option<(f64, f64)>) -> bool + 'static) {
+        self.0.gimbal_listeners.borrow_mut().push(Box::new(listener));
     }
 
     pub fn add_toaster(&self, toaster: Rc<Toaster>) { self.0.toasters.borrow_mut().push(toaster); }

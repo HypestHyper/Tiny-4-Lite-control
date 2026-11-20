@@ -63,6 +63,59 @@ pub(crate) struct Control {
 }
 
 
+/// A pretend gimbal for the synthetic camera: it follows absolute moves, and turns at a steady rate
+/// while a speed is set, so the position readout and the 3D model can be tested without hardware.
+mod sim {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    pub const PAN_LIMIT: f64 = 130.0;
+    pub const TILT_LIMIT: f64 = 90.0;
+    /// Degrees per second for each unit of speed.
+    const RATE: f64 = 0.4;
+
+    pub struct Gimbal { pub pan: f64, pub tilt: f64, pan_speed: f64, tilt_speed: f64, at: Instant }
+
+    fn gimbal() -> &'static Mutex<Gimbal> {
+        static G: OnceLock<Mutex<Gimbal>> = OnceLock::new();
+        G.get_or_init(|| Mutex::new(Gimbal { pan: 0.0, tilt: 0.0, pan_speed: 0.0, tilt_speed: 0.0, at: Instant::now() }))
+    }
+
+    impl Gimbal {
+        fn advance(&mut self) {
+            let seconds = self.at.elapsed().as_secs_f64();
+            self.at = Instant::now();
+            self.pan = (self.pan + self.pan_speed * RATE * seconds).clamp(-PAN_LIMIT, PAN_LIMIT);
+            self.tilt = (self.tilt + self.tilt_speed * RATE * seconds).clamp(-TILT_LIMIT, TILT_LIMIT);
+        }
+    }
+
+    /// Where the pretend gimbal is now, as (pan, tilt) in degrees.
+    pub fn position() -> (f64, f64) {
+        let mut g = gimbal().lock().unwrap_or_else(|e| e.into_inner());
+        g.advance();
+        (g.pan, g.tilt)
+    }
+
+    /// Apply a `--set-ctrl=name=value,...` option the way the real camera would.
+    pub fn apply_set_ctrl(option: &str) {
+        let Some(list) = option.strip_prefix("--set-ctrl=") else { return };
+        let mut g = gimbal().lock().unwrap_or_else(|e| e.into_inner());
+        g.advance();
+        for pair in list.split(',') {
+            let Some((name, value)) = pair.split_once('=') else { continue };
+            let Ok(value) = value.parse::<f64>() else { continue };
+            match name {
+                "pan_absolute" => g.pan = (value / 3600.0).clamp(-PAN_LIMIT, PAN_LIMIT),
+                "tilt_absolute" => g.tilt = (value / 3600.0).clamp(-TILT_LIMIT, TILT_LIMIT),
+                "pan_speed" => g.pan_speed = value,
+                "tilt_speed" => g.tilt_speed = value,
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(crate) fn ui_test_mode() -> bool {
     std::env::var("TINY4LITE_UI_TEST").is_ok_and(|value| value == "1")
 }
@@ -119,7 +172,9 @@ tilt_speed (int) : min=-120 max=120 step=1 default=20 value=0
         value if value.starts_with("--get-ctrl=") => {
             let name = value.trim_start_matches("--get-ctrl=");
             let current = match name {
-                "pan_absolute" | "tilt_absolute" | "pan_speed" | "tilt_speed" => 0,
+                "pan_absolute" => (sim::position().0 * 3600.0).round() as i64,
+                "tilt_absolute" => (sim::position().1 * 3600.0).round() as i64,
+                "pan_speed" | "tilt_speed" => 0,
                 "zoom_absolute" => 15,
                 "brightness" | "contrast" | "saturation" | "hue" | "sharpness" => 50,
                 "gain" => 1,
@@ -144,6 +199,7 @@ pub(crate) fn run_v4l2(device: &str, option: &str) -> Result<String, String> {
                 }
             }
         }
+        sim::apply_set_ctrl(option);
         return Ok(mock_v4l2_output(option));
     }
     let output = Command::new("v4l2-ctl").arg("-d").arg(device).arg(option).output()
@@ -309,7 +365,15 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                 let command = LAST_UI_TEST_QUERY_COMMAND.load(Ordering::Relaxed);
                 let sequence = LAST_UI_TEST_QUERY_SEQUENCE.load(Ordering::Relaxed);
                 let payload: Vec<u8> = match command {
-                    0x0043 => vec![0; 12],
+                    0x0043 => {
+                        // Reply layout: pitch then yaw as signed hundredths of a degree at 8 and 10.
+                        // The app reads tilt as the negative of pitch.
+                        let (pan, tilt) = sim::position();
+                        let mut reply = vec![0u8; 12];
+                        reply[8..10].copy_from_slice(&((-tilt * 100.0).round() as i16).to_le_bytes());
+                        reply[10..12].copy_from_slice(&((pan * 100.0).round() as i16).to_le_bytes());
+                        reply
+                    }
                     0x6804 => 1.0f32.to_le_bytes().to_vec(),
                     0x3884 => {
                         let mut v = 3u32.to_le_bytes().to_vec();
@@ -1709,5 +1773,41 @@ mod xu_protocol_tests {
         payload[2] = 0x02;
         payload[3] = 0x01;
         assert_eq!(payload, [0x16, 0x02, 0x02, 0x01]);
+    }
+}
+
+#[cfg(test)]
+mod sim_gimbal_tests {
+    use super::sim;
+
+    // The simulated gimbal is process-wide, so one test walks through all the cases in order.
+    #[test]
+    fn the_pretend_gimbal_follows_absolute_moves_and_speeds_within_the_camera_limits() {
+        // Absolute moves are in driver units: 3600 per degree.
+        sim::apply_set_ctrl("--set-ctrl=pan_absolute=7200");
+        sim::apply_set_ctrl("--set-ctrl=tilt_absolute=-3600");
+        let (pan, tilt) = sim::position();
+        assert!((pan - 2.0).abs() < 1e-6 && (tilt + 1.0).abs() < 1e-6, "{pan} {tilt}");
+
+        // Moves beyond the range stop at the limit.
+        sim::apply_set_ctrl("--set-ctrl=pan_absolute=99999999,tilt_absolute=-99999999");
+        let (pan, tilt) = sim::position();
+        assert_eq!((pan, tilt), (sim::PAN_LIMIT, -sim::TILT_LIMIT));
+
+        // A speed turns it steadily until a stop arrives, then it holds still.
+        sim::apply_set_ctrl("--set-ctrl=pan_absolute=0,tilt_absolute=0");
+        sim::apply_set_ctrl("--set-ctrl=pan_speed=80,tilt_speed=-40");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let (moving_pan, moving_tilt) = sim::position();
+        assert!(moving_pan > 1.0 && moving_tilt < -0.5, "{moving_pan} {moving_tilt}");
+        sim::apply_set_ctrl("--set-ctrl=pan_speed=0,tilt_speed=0");
+        let held = sim::position();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let later = sim::position();
+        assert!((held.0 - later.0).abs() < 1e-9 && (held.1 - later.1).abs() < 1e-9, "it kept moving after the stop");
+
+        // Other options are ignored.
+        sim::apply_set_ctrl("--get-ctrl=pan_absolute");
+        assert_eq!(sim::position(), later);
     }
 }

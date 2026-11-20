@@ -439,6 +439,10 @@ window.t4.csd { border-radius: §18§; }
 .overlay-chip { background: alpha(#000000, 0.5); color: @t_on_stage; border-radius: 999px; padding: §4§ §12§; font-size: ¶12.5¶; font-weight: 600; font-feature-settings: "tnum"; }
 .overlay-chip label { color: @t_on_stage; }
 
+/* Gimbal model */
+.model-frame { background: @t_surface_high; border-radius: §20§; }
+.model { background: transparent; }
+
 /* Joystick */
 .pad { background: transparent; }
 .readout { font-size: ¶20¶; font-weight: 700; font-feature-settings: "tnum"; min-width: §72§; }

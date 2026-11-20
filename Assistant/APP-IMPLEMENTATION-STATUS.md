@@ -28,6 +28,7 @@ State handling follows [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md): each value is 
 - AI tracking mode: exactly the eight verified tuples (No tracking, Normal, Upper body, Close-up, Headless, Lower body, Hand, Group), read from status offsets 0x18 and 0x1C and verified after every change. An unrecognised pair is Unknown, never a guess.
 - Target Selection: status byte 0x01. Zoom (L-pose), Dynamic Zoom and Dynamic Zoom Direction: saved or Unknown; status byte 0x07 is not used.
 - The HDR switch was removed from the interface, as on `test-app-v0.1`.
+- Live gimbal model: a wireframe camera in the gimbal card follows the live pan and tilt from the same `0x0043` query as the readout. It only draws what the camera reports. Its sign convention (positive pan right, positive tilt up) follows the joystick and is not yet checked against the physical camera.
 - Presets: applying a preset that includes an absolute pan/tilt turns the gimbal, so the window and the command line ask first. Saved presets keep their meaning: AI mode number 6 is still Group and Hand is 7.
 
 Verification so far: unit tests and integration tests against the synthetic camera, and headless screenshots. **Nothing here has been run against a real camera.** In particular the integrated behaviour of every read-back path, and the gimbal stop on release, still need a physical test.

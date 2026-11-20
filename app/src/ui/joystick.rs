@@ -10,6 +10,7 @@
 //!  * always sends a stop on release, cancel, focus loss, hide and close;
 //!  * is operable from the keyboard with the arrow keys.
 
+use super::gimbal_model::GimbalModel;
 use super::store::Store;
 use super::{theme, widgets};
 use crate::backend::{self, current_config, run_v4l2, update_config};
@@ -42,6 +43,9 @@ struct State {
     keys: RefCell<HashSet<gtk::gdk::Key>>,
     send_timer: RefCell<Option<glib::SourceId>>,
     poll_timer: RefCell<Option<glib::SourceId>>,
+    polling: Cell<bool>,
+    last_position: Cell<Option<(f64, f64)>>,
+    poll_error: RefCell<Option<String>>,
     animating: Cell<bool>,
     save_timer: RefCell<Option<glib::SourceId>>,
 }
@@ -90,7 +94,8 @@ impl Joystick {
             store: store.clone(), pad: pad.clone(), pan_value, tilt_value, hint,
             stick: Cell::new((0.0, 0.0)), velocity: Cell::new((0.0, 0.0)), engaged: Cell::new(false),
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
-            send_timer: RefCell::default(), poll_timer: RefCell::default(), animating: Cell::new(false),
+            send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
+            last_position: Cell::new(None), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
         let joystick = Joystick(state);
@@ -113,17 +118,30 @@ impl Joystick {
             "Speed limits the fastest the stick can go. The readout shows where the camera is pointing, in degrees.".into(),
         ]));
         column.append(&head);
-        column.append(&state.pad);
 
+        // A wireframe of the camera that follows the live pan and tilt, with the numbers on top.
+        let model = GimbalModel::new(&state.store);
         let readouts = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-        readouts.set_halign(gtk::Align::Center);
-        for (name, value) in [("Pan", &state.pan_value), ("Tilt", &state.tilt_value)] {
+        readouts.set_halign(gtk::Align::Fill);
+        readouts.set_valign(gtk::Align::End);
+        readouts.set_margin_start(14);
+        readouts.set_margin_end(14);
+        readouts.set_margin_bottom(8);
+        readouts.set_can_target(false);
+        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Tilt", &state.tilt_value, gtk::Align::End)] {
             let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            cell.set_hexpand(true);
+            cell.set_halign(align);
             cell.append(&widgets::text(name, &["small", "dim"]));
             cell.append(value);
             readouts.append(&cell);
         }
-        column.append(&readouts);
+        let stage = gtk::Overlay::new();
+        stage.add_css_class("model-frame");
+        stage.set_child(Some(model.widget()));
+        stage.add_overlay(&readouts);
+        column.append(&stage);
+        column.append(&state.pad);
 
         column.append(&self.step_row());
 
@@ -271,6 +289,28 @@ impl Joystick {
                 let joystick = this.clone();
                 window.connect_is_active_notify(move |window| { if !window.is_active() { joystick.release(); } });
             }
+        });
+
+        // The readouts show whatever the shared position feed says.
+        let (pan_label, tilt_label) = (state.pan_value.downgrade(), state.tilt_value.downgrade());
+        let weak = Rc::downgrade(&self.0);
+        state.store.subscribe_gimbal(move |position| {
+            let (Some(pan), Some(tilt)) = (pan_label.upgrade(), tilt_label.upgrade()) else { return false };
+            match position {
+                Some((p, t)) => {
+                    // Avoid "-0.0°" for tiny negative values.
+                    let clean = |v: f64| if v.abs() < 0.05 { 0.0 } else { v };
+                    pan.set_text(&format!("{:+.1}°", clean(p)));
+                    tilt.set_text(&format!("{:+.1}°", clean(t)));
+                    pan.set_tooltip_text(None);
+                    tilt.set_tooltip_text(None);
+                }
+                None => {
+                    let reason = weak.upgrade().and_then(|s| s.poll_error.borrow().clone());
+                    for label in [&pan, &tilt] { label.set_text("—"); label.set_tooltip_text(reason.as_deref()); }
+                }
+            }
+            true
         });
 
         // Availability follows the camera's reported speed controls.
@@ -445,44 +485,66 @@ impl Joystick {
 
     // ── Position readout ──
 
+    /// Ask for the position now and keep asking: quickly while the camera is moving, slowly when it
+    /// is still, and not at all when the pad is hidden or the window is in the background.
     fn start_polling(&self) {
+        if self.0.polling.replace(true) { return; }
+        self.poll_now();
+    }
+
+    fn stop_polling(&self) {
+        self.0.polling.set(false);
+        if let Some(id) = self.0.poll_timer.borrow_mut().take() { id.remove(); }
+    }
+
+    fn schedule_poll(&self, milliseconds: u64) {
         let state = &self.0;
-        if state.poll_timer.borrow().is_some() { return; }
-        self.poll_position_once();
+        if let Some(id) = state.poll_timer.borrow_mut().take() { id.remove(); }
         let weak = Rc::downgrade(state);
-        let id = glib::timeout_add_local(Duration::from_millis(500), move || {
-            let Some(state) = weak.upgrade() else { return glib::ControlFlow::Break };
-            let active = state.pad.root().and_then(|r| r.downcast::<gtk::Window>().ok()).is_some_and(|w| w.is_active());
-            if active && state.pad.is_mapped() { Joystick(state).poll_position_once(); }
-            glib::ControlFlow::Continue
+        let id = glib::timeout_add_local_once(Duration::from_millis(milliseconds), move || {
+            let Some(state) = weak.upgrade() else { return };
+            state.poll_timer.borrow_mut().take();
+            Joystick(state).poll_now();
         });
         *state.poll_timer.borrow_mut() = Some(id);
     }
 
-    fn stop_polling(&self) {
-        if let Some(id) = self.0.poll_timer.borrow_mut().take() { id.remove(); }
-    }
-
-    fn poll_position_once(&self) {
-        let (pan, tilt) = (self.0.pan_value.clone(), self.0.tilt_value.clone());
-        self.0.store.call(Some(POSITION_KEY), |device| crate::backend::get_gimbal_position(device), move |result| {
-            match result {
-                Ok((p, t)) => {
-                    // Avoid "-0.0°" for tiny negative values.
-                    let clean = |v: f64| if v.abs() < 0.05 { 0.0 } else { v };
-                    pan.set_text(&format!("{:+.1}°", clean(p)));
-                    tilt.set_text(&format!("{:+.1}°", clean(t)));
-                    pan.set_tooltip_text(None);
-                    tilt.set_tooltip_text(None);
+    /// Read the position once; the answer decides when to ask again.
+    fn poll_now(&self) {
+        let state = &self.0;
+        if !state.polling.get() { return; }
+        let active = state.pad.root().and_then(|r| r.downcast::<gtk::Window>().ok()).is_some_and(|w| w.is_active());
+        if !(active && state.pad.is_mapped()) {
+            self.schedule_poll(1000);
+            return;
+        }
+        if let Some(id) = state.poll_timer.borrow_mut().take() { id.remove(); }
+        let this = self.clone();
+        state.store.call(Some(POSITION_KEY), |device| crate::backend::get_gimbal_position(device), move |result| {
+            let state = &this.0;
+            let (position, moving) = match result {
+                Ok(position) => {
+                    let moved = state.last_position.get().is_none_or(|(p, t)| (p - position.0).abs() > 0.2 || (t - position.1).abs() > 0.2);
+                    state.last_position.set(Some(position));
+                    *state.poll_error.borrow_mut() = None;
+                    (Some(position), moved)
                 }
                 Err(error) => {
-                    pan.set_text("—");
-                    tilt.set_text("—");
-                    pan.set_tooltip_text(Some(&error));
-                    tilt.set_tooltip_text(Some(&error));
+                    state.last_position.set(None);
+                    *state.poll_error.borrow_mut() = Some(error);
+                    (None, false)
                 }
-            }
+            };
+            state.store.set_gimbal(position);
+            // Quick while it moves (or while the stick is held); relaxed when it is still.
+            let wait = if moving || state.engaged.get() { 150 } else { 700 };
+            this.schedule_poll(wait);
         });
+    }
+
+    /// Read again right away (after a step or a release).
+    fn poll_position_once(&self) {
+        if self.0.polling.get() { self.poll_now(); }
     }
 
     // ── Drawing ──

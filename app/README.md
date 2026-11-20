@@ -20,6 +20,15 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
+**Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
+real pan and tilt, with the numbers on top. It is viewed from behind and a little above, so you see where the
+lens points; a blue cone shows the view. It is a drawing of the angles the camera reports (the same position
+query as the readout), never a command. It glides between readings rather than jumping, asks for the position
+about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
+window is in the background or the card is hidden. With no reading it dims and shows no view cone. Positive pan
+turns right and positive tilt looks up, matching the joystick; whether those signs match your camera's own
+convention has not been checked on hardware. The slim window shows it with the joystick.
+
 The gimbal card also has **Pan −1° / +1°** and **Tilt −1° / +1°** buttons: small, bounded turns for precise
 moves and careful first tests (a step is at most 5°, and stays inside the range the driver reports). They use
 the standard absolute pan and tilt controls. Which way "+" turns has not been checked on a camera; the
@@ -245,5 +254,6 @@ Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manua
 * Running the command line while the window's joystick or position readout is active: both use the same
   command mailbox, so avoid doing both at once.
 * How the stop-on-release behaves if the USB device disconnects mid-drag.
+* The model's left/right and up/down against the real camera (it follows the signs the camera reports).
 * The Hyprland rules (the class names were read back from a headless sway, not from Hyprland itself).
 * Light/dark switching from a live desktop portal (the portal code path is untested here).
