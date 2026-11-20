@@ -328,48 +328,28 @@ Selector `0x06` `GET_CUR` returns a 60-byte status block.
 Documented offsets (confidence varies):
 
   -----------------------------------------------------------------------
-  Offset                  Meaning                 Confidence / notes
-  ----------------------- ----------------------- -----------------------
-  `0x02`                  Sleep state             Tiny4Linux: 0 awake, 1
-                                                  sleep
+This is a legacy research map of selector 0x06 offsets, not a
+statement that every field is implemented or authoritative. The current
+app reads the raw 60-byte block and only decodes fields with supporting
+Lite-specific evidence.
 
-  `0x06`                  HDR                     Existing capture /
-                                                  status-byte evidence;
-                                                  setter path to be
-                                                  checked against trace
+| Offset | Meaning | Current confidence / app treatment |
+|---|---|---|
+| `0x02` | Sleep state | Tiny4Linux mapping only; not used as authoritative sleep read-back. |
+| `0x06` | HDR | Lite capture supports 0 = Off / 1 = On; app reads this byte. |
+| `0x07` | Face AE / gesture-related | Mixed/uncertain field; the L-pose gesture uses an inverted state interpretation. Do not infer Face AE state from it. |
+| `0x09` | Device status | Partly inherited from regular Tiny 2; unverified on Lite. |
+| `0x0A` | Auto-sleep seconds | Unverified; automatic sleep timeout is not implemented. |
+| `0x11` | FOV | Legacy diagnostic byte only. Manual zoom/FOV uses standard V4L2 `zoom_absolute`; no separate FOV control. |
+| `0x13` | Mirror | Partial/uncertain status mapping; app uses the captured selector 0x06 command and does not claim read-back. |
+| `0x18` / `0x1C` | AI mode tuple | Current app decodes the captured Tiny 2 Lite tuple; retain unknown tuples as Unknown. |
+| `0x1F` | FPS | XU status mapping unverified. App capture mode uses standard V4L2 format/frame-interval negotiation instead. |
+| `0x21` | LED brightness | Confirmed raw 0 = Off, 1–3 = brightness levels 1–3. |
+| `0x24` | Tracking speed | Tiny 2 Lite mapping confirmed; firmware-specific encoding compatibility remains open. |
 
-  `0x07`                  Face AE /               Uncertain
-                          gesture-related state   
-
-  `0x09`                  Device status           Field map partly based
-                                                  on regular Tiny 2
-
-  `0x0A`                  Auto-sleep seconds      Needs further
-                                                  validation
-
-  `0x11`                  FOV                     Lite-confirmed: Wide=1,
-                                                  Normal=2; Narrow
-                                                  remains 2
-
-  `0x13`                  Mirror                  Partial status
-                                                  mapping; use standard
-                                                  V4L2 mirror control
-
-  `0x18` / `0x1C`         AI mode / framing       Mapping requires source
-                                                  verification
-
-  `0x1F`                  FPS                     Needs validation
-
-  `0x21`                  LED brightness          Captured raw values
-                                                  0–3 map to user levels
-                                                  1–4; power is separate
-
-  `0x24`                  Tracking speed          Lite-confirmed
-  -----------------------------------------------------------------------
-
-Do not label unknown bytes as facts. Build a diagnostic page that
-displays raw status bytes in hex and decoded fields with a confidence
-indicator.
+Do not label unknown bytes as facts. The Diagnostics page displays
+the raw status block and only decodes fields for which the app has
+supporting evidence.
 
 ### 4.12 Microphone processing
 
