@@ -2,7 +2,7 @@
 
 **Device:** OBSBOT Tiny 2 Lite, USB VID:PID `3564:fef9`  
 **Control path:** UVC Extension Unit 2, selector `0x02`  
-**Status:** State mapping strongly supported by three controlled captures; complete command construction is unresolved. Do not implement or send reconstructed writes yet.
+**Status:** State mapping is strongly supported by three controlled captures and an experimental fixed-payload prototype exists in the app. The payload builder has an unresolved byte-offset discrepancy against the written capture summary; do not treat it as a validated replay or general command encoder.
 
 ## 1. Executive summary
 
@@ -230,14 +230,21 @@ The app stores only the last submitted UI state. It does not claim read-back or 
 
 ## 8. Next experiment required
 
-The current priority is a one-time hardware test of the prototype: switch Pop filter ON, confirm the visible/functional camera effect, then switch it OFF and confirm. If either fails, capture the failed app interaction and inspect whether the camera requires a fresh sequence value. Do not resume broad exploratory captures unless this focused test shows the fixed replay is rejected.
+The next useful experiment is not another broad ten-toggle survey. First
+resolve the one-byte source/document discrepancy using the existing raw
+fresh-session capture:
 
-After capture:
+1. Re-extract the complete 60-byte ON and OFF SET_CUR data payloads from
+   the fresh-session PCAPNG.
+2. Compare all 60 offsets against the arrays in
+   `app/src/main.rs::pop_filter_payload()`.
+3. Confirm whether the trailing `0x01` belongs at offset 31 or 32, and
+   whether the remaining tail is zero.
+4. Correct the implementation and add a byte-for-byte unit test against
+   the confirmed 60-byte vectors.
+5. Only then run one app-driven ON and OFF test, checking the visible
+   effect and preserving the capture.
 
-1. Save the report and raw PCAPNG.
-2. Use the report to identify the SET_CUR frame number inside each action window.
-3. Run the `tshark -x` command above for all ten write frames.
-4. Compare all 60-byte payloads by offset, keeping counter, state-correlated fields, and trailing data separate.
-5. Do not implement until a complete valid payload-generation rule is established or a safely bounded command format is proven, then validate with observable camera behaviour.
-
-The ten-toggle test is a planned next step, not evidence already collected. If it still does not explain bytes 6–7 or the trailing region, the next investigation should focus on the official application's command-generation/session state rather than simply collecting an arbitrary number of additional toggles.
+If either app action fails after the payload is reconciled, capture the
+failed interaction and investigate sequence/session state. Do not
+reconstruct unknown bytes or run an arbitrary number of extra toggles.
