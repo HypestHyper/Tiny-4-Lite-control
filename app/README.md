@@ -79,11 +79,15 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   the actual read-back value, not the requested value. This is distinct
   from autofocus priority. Protocol read-back is capture-verified;
   integrated app behavior still needs physical camera validation.
-  Exposure compensation (−3.0 to +3.0) is implemented through UVC
-  Processing Unit 3, selector 1 (Backlight Compensation). The 19
-  OBSBOT Center positions map to unsigned little-endian values 1–19:
-  −3.0 = 1 (01 00), 0.0 = 10 (0a 00), and +3.0 = 19 (13 00).
-  It is shown only while V4L2 Auto Exposure is Auto. The current value
+  Exposure compensation (−3.0 to +3.0) uses standard UVC Processing
+  Unit 3, selector 1 (Backlight Compensation). Direct hardware tests
+  cross-checked OBSBOT Center +2.0 with BLC 15 (`0f 00`) and +2.3
+  with BLC 16 (`10 00`). The slider sends its zero-based position
+  0–18 directly as an unsigned little-endian 16-bit value; the previous
+  position+1 mapping was off by one. The UI reads the camera value on
+  startup and follows every SET_CUR with GET_CUR. It displays and
+  persists the returned value, not merely the requested value. The
+  control is available only while Auto Exposure is Auto.  It is shown only while V4L2 Auto Exposure is Auto. The current value
   is initialized with UVC GET_CUR when supported, and successful changes
   are persisted locally.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
