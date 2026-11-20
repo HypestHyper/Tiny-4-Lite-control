@@ -63,8 +63,9 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   four-byte value, not a Boolean. It sends a header-only GET request,
   polls GET_CUR up to eight times at 30 ms intervals, and accepts only
   a response matching the command and sequence with a valid 12-byte
-  header CRC and four-byte payload. It ignores empty or nonmatching mailbox polls; the observed one-byte
-  empty-mailbox response cannot be mistaken for the framed reply. The UI initializes from camera read-back, offers an explicit
+  header CRC and four-byte payload. It ignores empty or nonmatching mailbox
+  polls; the observed one-byte empty-mailbox response cannot be mistaken for
+  the framed reply. The UI initializes from camera read-back, offers an explicit
   **Read camera state** action, verifies each change after SET_CUR, and
   displays Unknown on query failure or an unrecognized value. A successful
   setter transfer alone is never shown as confirmed state. This is
@@ -320,7 +321,7 @@ revision as build-verified.
   The remaining validation is the visible/perceptual autofocus result
   under both modes; protocol state read-back is not proof of image-quality
   improvement.
-  Reliable read-back for most gesture states, automatic firmware
+- Reliable read-back for most gesture states, automatic firmware
   detection, Linux physical validation of framed live gimbal pose query `0x0043`,
   HDR visible-effect validation, physical Mirror image validation,
   pop-filter prototype validation, and camera-native preset-slot
