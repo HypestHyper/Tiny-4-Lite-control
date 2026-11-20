@@ -125,37 +125,28 @@ selector `0x06` for the 60-byte status block.
   V4L2 slider covers 0–100.
 - HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
 - Microphone controls use XU unit 2 / selector 0x06. Auto gain and
-  noise reduction use the 60-byte GET_CUR configuration block.
-  Disable microphone is byte offset 2 in its separate command payload
-  (0=disabled, 1=enabled); the controlled OBSBOT Center sequence was
-  On → Off → On, with SET_CUR prefixes `1c 01 00`, `1c 01 01`,
-  `1c 01 00`. The camera restarted after each toggle. Auto gain is
-  byte offset 25 (0=Off, 1=On); noise reduction is byte offset 8
-  (0=Off, 1=Weak, 2=Medium, 3=Strong). The controls initialize from
-  camera GET_CUR and fall back to the last successfully submitted local
-  value only if read-back is unavailable. Each setter first reads the
-  current 60-byte block, changes only its own byte, and writes the full
-  block back so unrelated settings are preserved. Disable microphone
-  uses its separately captured 60-byte command payload, prefix
-  `1c 01 <state>` (0=disabled, 1=enabled), with remaining bytes zero.
-  Its state is remembered locally because matching GET_CUR read-back
-  has not been established. App-side hardware validation is pending;
-  the restart mechanism and any additional restart-related commands
-  remain uninvestigated.
+  noise reduction initialize from the 60-byte GET_CUR configuration
+  block. Their setters modify only their respective bytes and preserve
+  the other fields. Disable microphone uses a separate captured 60-byte
+  command payload with prefix `1c 01 <state>` (0=disabled, 1=enabled);
+  its state is remembered locally because matching GET_CUR read-back
+  has not been established. OBSBOT Center restarted the camera after
+  each microphone-disable toggle; the restart mechanism is unknown.
+  App-side hardware validation is pending.
 - Pop filter: experimental On/Off switch under Microphone processing.
-  It replays two exact captured 60-byte SET_CUR payloads through XU unit 2 /
-  selector 0x02 (OFF uses captured byte-2 value 0x0f; ON uses 0x10).
-  Unknown sequence/check fields are not regenerated. The last successfully
-  submitted state is saved locally; reliable camera read-back is not known.
-  Treat this as a prototype: fixed replay may be rejected after the camera
-  or OBSBOT Center advances its internal sequence. Physical ON/OFF validation
-  is still required.
+  It replays fixed session-specific data through XU unit 2 / selector
+  0x02 (OFF uses byte-2 value 0x0f; ON uses 0x10). Sequence/check fields
+  are not regenerated, and reliable camera read-back is unavailable.
+  The source currently writes 0x01 at payload offset 32, while the
+  investigation's written capture summary says offsets 32–59 are zero.
+  Reconcile the complete raw 60-byte vectors before changing this payload.
+  Physical ON/OFF validation is still required.
 - Mirror image: experimental On/Off switch under Image orientation.
-  It sends the exact captured 60-byte XU unit 2 / selector 0x06 payload:
+  It sends the captured 60-byte XU unit 2 / selector 0x06 payload:
   `14 01 01` for ON and `14 01 00` for OFF, followed by zeroes.
   The three controlled OBSBOT Center writes differed only at payload byte 2.
-  The last successfully submitted state is saved locally; camera read-back is
-  not established. Physical ON/OFF validation is still required.
+  The last successfully submitted state is saved locally; camera read-back
+  is not established. Physical ON/OFF validation is still required.
 - Radio distance: Close, Standard, and Far. XU unit 2 / selector 0x06
   sends a separate fixed 60-byte command with prefix
   `1b 01 <value>` (Close=0, Standard=1, Far=2), zero-filled
