@@ -713,8 +713,17 @@ fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), Stri
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
 }
 
+fn microphone_during_sleep_payload(enabled: bool) -> [u8; 60] {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x13, 0x01, u8::from(enabled)]);
+    data
+}
+
 fn set_microphone_during_sleep(device: &str, enabled: bool) -> Result<(), String> {
-    set_xu_status_byte(device, XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET, u8::from(enabled))?;
+    // Selector 0x06 status byte 0x10 is the read-back. The write is a
+    // distinct tagged command: 13 01 <0|1>, not a status-block rewrite.
+    let mut data = microphone_during_sleep_payload(enabled);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_microphone_during_sleep = Some(enabled));
     Ok(())
 }
@@ -915,13 +924,13 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     if let Some(enabled) = initial_sleep_mic {
         sleep_mic.set_active(enabled);
         sleep_mic.set_tooltip_text(Some(if camera_sleep_mic.is_some() {
-            "On/Off confirmed by the camera's selector 0x06 GET_CUR status block."
+            "Read from selector 0x06 status byte 0x10; writes use selector 0x06 command 13 01 <state>."
         } else {
             "Camera read-back unavailable; showing the last successfully submitted local setting."
         }));
     } else {
         sleep_mic.set_sensitive(false);
-        sleep_mic.set_tooltip_text(Some("Initial state unavailable: selector 0x06 byte 16 could not be read."));
+        sleep_mic.set_tooltip_text(Some("Initial state unavailable: selector 0x06 status byte 0x10 could not be read."));
     }
     let sleep_mic_device = device.to_string();
     let sleep_mic_status = status.clone();
@@ -1116,7 +1125,7 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
 
     let note = gtk::Label::new(Some(
-        "Microphone during sleep is a separate selector 0x06 status-block setting (byte 16). Disable microphone is a separate fixed command. Auto gain and noise reduction patch their own status bytes. Pop filter remains experimental pending physical validation."
+        "Microphone during sleep reads selector 0x06 status byte 16 and writes the separately captured 13 01 <state> command. Disable microphone uses 1c 01 <state>. Auto gain and noise reduction patch their own status bytes. Pop filter remains experimental pending physical validation."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
@@ -2846,6 +2855,15 @@ mod xu_protocol_tests {
         assert_eq!(microphone_during_sleep_state(&status), Some(true));
         status[XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET] = 2;
         assert_eq!(microphone_during_sleep_state(&status), None);
+    }
+
+    #[test]
+    fn microphone_during_sleep_write_uses_captured_command_not_status_block() {
+        for (enabled, expected) in [(false, [0x13, 0x01, 0x00]), (true, [0x13, 0x01, 0x01])] {
+            let payload = microphone_during_sleep_payload(enabled);
+            assert_eq!(&payload[..3], &expected);
+            assert!(payload[3..].iter().all(|byte| *byte == 0));
+        }
     }
 
     #[test]
