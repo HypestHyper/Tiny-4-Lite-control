@@ -130,7 +130,8 @@ The Video capture controls enumerate discrete format/resolution/frame-rate combi
   joystick control and bounded absolute steps. The joystick sends
   neutral speed on release.
 
-- **Physical position read-back:** Windows DirectShow `IAMCameraControl::Get()` confirmed live Pan/Tilt changes with hand-moved gimbal position. The current Linux app implementation follows the later selector `0x02` GET_CUR candidate: 60-byte XU response, accepted observed record signatures, float32 pan/tilt at offsets 20/24, clamped to Pan [-130°, +130°] and Tilt [-90°, +90°]. The Controls page reads immediately, then polls every 250 ms. This candidate remains unverified as a host-initiated live read: the 2026-11-19 selector `0x02` capture contained SET_CUR movement records but no GET_CUR requests. The earlier standard Camera Terminal entity 1 / selector `0x0D` GET_CUR path remains documented in reference 12 but is not the active `get_gimbal_position` implementation. Do not claim Linux hardware validation until the user confirms live values move with the physical head. The separate captured “Set initial state” action is not implemented: in its save-action window, frame 119027 was a host-to-camera SET_CUR with an `AA 01` payload and frame 141561 was a host-to-camera SET_CUR with an `AA 25` payload, but neither has been tied to the action. The repeated `AA 29` records are camera-to-host GET_CUR responses, not the save command; their fields remain unmapped.
+- **Live gimbal position:** The Controls page now queries the gimbal controller with framed command `0x0043` to receiver 3, decodes signed hundredths-of-a-degree pitch/yaw at reply offsets 8/10, and polls every 250 ms. This is the live-pose query used by the newer Tiny 2 Lite control implementation; unlike V4L2 pan/tilt, it follows camera motion. Zoom is queried separately with `0x6804`. The `0x6484` frames in the 2026-11-19 capture are joystick rate commands, not position telemetry. Physical Linux read-back still needs the user's confirmation.
+- **Power-on initial state:** The Controls page now reads the stored startup pose with query `0x3884` and exposes **Set current position as initial state**. It queries live pose (`0x0043`) and zoom (`0x6804`), reads the existing 40-byte startup action block (`0x3e84`), then sends the captured own-pose frame (`0x3ec4`, source index 3) followed by `0x3e44` with the existing action block preserved. It verifies the resulting pose through `0x3884`. These are the two command families present in the user's saved action capture; they are not guessed local presets.
 
 ### Vendor UVC Extension Unit path
 
@@ -160,12 +161,13 @@ Implemented XU operations:
     payload with prefix `1c 01 <state>` and zero-filled remaining bytes,
     not the GET_CUR status block. No matching read-back is established;
     the UI displays the last successfully submitted local state only.
-  - Microphone during sleep: byte offset 16 in the shared 60-byte
-    GET_CUR configuration block, Off = 0, On = 1. The 2026-11-18
-    controlled capture confirmed both transitions and matching read-back.
-    The UI reads this value on page construction and uses GET_CUR / patch
-    byte 16 / SET_CUR for changes, preserving all other bytes. It is a
-    separate setting from Disable microphone.
+  - Microphone during sleep: status read-back is byte offset 0x10 in
+    selector 0x06 GET_CUR (Off=0, On=1). The write is the separate tagged
+    selector 0x06 SET_CUR command `13 01 <state>`, confirmed in the
+    Tiny 2 Lite protocol implementation. The UI reads the status byte and
+    sends this exact command on toggle; it does not rewrite the shared
+    status block. This is separate from Disable microphone (`1c 01
+    <state>`).
   - Auto gain: byte offset 25 in the GET_CUR configuration block,
     Off = 0, On = 1. The capture sequence
     was Off → On → Off → On, with matching read-backs.
@@ -190,13 +192,13 @@ Implemented XU operations:
 - Send tracking-speed commands.
 - Send enable/disable commands for target-selection gesture, Zoom/L-pose gesture, dynamic zoom, and dynamic-zoom direction. Dynamic Zoom Direction has an inverted wire-state mapping: UI enabled sends `e6 3f 00 00`; UI disabled sends `27 ff 01 00`. The 2026-11-18 capture checkpoints show Direction Flip OFF at baseline, ON at 17.37s, OFF at 35.15s, then Dynamic Zoom OFF at 54.78s. The user has physically confirmed that Target Selection, Zoom/L-pose, Dynamic Zoom and Direction Flip all work on the Tiny 2 Lite. Direction Flip is the direction modifier for the Dynamic Zoom gesture and is intended to be used together with Dynamic Zoom; it does not change the separate Zoom/L-pose gesture or autofocus Global/Face priority. The corresponding SET_CUR packets are frames 13247, 72265, 170871, and 179033. The first three use direction group `0a 04 c4 33` and alternate payloads `27 ff 01 00`, `e6 3f 00 00`, `27 ff 01 00`. The fourth uses Dynamic Zoom group `0a 04 44 33` and is the separate Dynamic Zoom disable command, not a Direction Flip transition. The sequence values progress `0x000f`, `0x0010`, `0x0011`, `0x0012` across these commands. All framed XU writes now use one rolling 16-bit sequence counter rather than fixed per-feature values. The observed initial value `0x000f` is capture context; the required sequence seed on a fresh camera/app session is not established. The implementation currently initializes its process-local counter to zero and increments it for each framed XU write.
 
-Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Automatic idle sleep timeout is not implemented. The app has local preset capture/apply support in `app/src/presets.rs`; camera-native preset-slot create/delete/recall/read/rename/list/update operations are not implemented.
+Sleep/wake is implemented through the captured CAM_SET_DEV_STATUS frame and has been physically tested by the user. Automatic idle sleep timeout is not implemented. Local app presets remain available. Camera-native Tiny 2 Lite preset-slot list/read/create/update/rename/recall/delete are now exposed in a separate **Camera-native presets** UI section, using selectors 0x0C/0x0D and framed commands 0x3944, 0x3E04, 0x3A84, 0x39C4, 0x3984 plus the required 0x3D84 clear-settings frame after delete.
 
 ### Read-only diagnostics and device identity
 
 - The Diagnostics tab reads the 60-byte selector `0x06` status block and selector `0x02` command-channel response using GET_CUR only.
 - It shows the selector `0x08` model/stream name and USB descriptor identity, including `bcdDevice` clearly labelled as a USB device-release value, not confirmed firmware.
-- Status fields are decoded only where evidence exists. The legacy FOV byte (`0x11`) is retained only as raw diagnostic data; it is not used to control zoom. Candidate position floats from selector `0x02` remain labelled unverified.
+- Status fields are decoded only where evidence exists. The legacy FOV byte (`0x11`) is retained only as raw diagnostic data; it is not used to control zoom. Live pose uses framed query `0x0043`; selector `0x02` is the framed command/reply transport, not a raw float status block.
 - Camera settings expose V4L2 zoom presets (86° / 78° / 65°), an HDR switch, and LED settings. The old vendor FOV command and status-byte interpretation are superseded by the V4L2 zoom mapping. The separate legacy status-byte read-back mapping remains unverified. LED has four settings total: Off plus brightness levels 1, 2, and 3. The selector 0x06/tag 0x1A command uses raw values 0, 1, 2, and 3 for those four settings respectively; status byte 0x21 reports the setting. The previous implementation incorrectly subtracted one from the requested level, making level 1 send raw 0 (Off), and also used tag 0x18 as a separate power switch. User testing showed tag 0x18 On causes blinking and Off leaves the LED continuously lit, so it is not established as a power switch and is intentionally not used by the current UI.
 - Sleep and wake controls send the captured Tiny 2 Lite power command. The command action and power-status read-back are separate; the user physically confirmed both sleep and wake behaviour.
 
