@@ -214,11 +214,21 @@ has undefined effect in the V4L2 API.
 
 **Global / Face autofocus priority (separate vendor command):**
 
-- Current app mapping: Global = `bf fb 01 00`; Face = `be 07 00 00`.
-- The earlier capture checkpoints were imperfectly correlated and the original mapping was reversed in a later correction. The user has tested both app options and reports that neither produces the expected focus behavior. Treat this feature as not working / unverified until a fresh action-correlated capture and visible behavior test establish the correct mapping.
-- Transport: framed V3 command on XU unit 2, selector `0x02`.
-- This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a different selector `0x06` tag `0x03` setting and status byte `0x07`.
-- The app exposes Global / Face controls while autofocus is on and sends the capture-derived Tiny 2 Lite payloads above. The user has tested both options and reports that neither currently produces the expected focus behavior. Treat this path as **not working / unverified**. The payload-to-label assignment is inferred from imperfectly correlated checkpoints, and no reliable camera-side read-back is implemented. The UI's local selection or successful host-side submission is not proof that focus behavior changed.
+**Status: setter and camera-side read-back hardware-verified on 2026-11-20.** The earlier 2026-11-18 capture contained the correct two setter values, but its Face/Global labels were reversed during analysis. Controlled OBSBOT Center selection followed by Linux GET read-back established the correct mapping:
+
+| Mode | `CAM_SET_FACE_FOCUS` payload | `CAM_GET_FACE_FOCUS` reply |
+|---|---|---|
+| Face | `bf fb 01 00` | `bf fb 01 00` |
+| Global | `be 07 00 00` | `be 07 00 00` |
+
+- Setter: `CAM_SET_FACE_FOCUS`, wire command `0x3602`, receiver `0x02`.
+- Getter: `CAM_GET_FACE_FOCUS`, wire command `0x35C2`, receiver `0x02`.
+- Both use framed V3 messages on XU unit 2, selector `0x02`, with 60-byte UVC transfers (`wValue=0x0200`, `wIndex=0x0200`).
+- The GET reply contains a four-byte little-endian priority value. It is not a Boolean. Match the response command ID and sequence number; subsequent empty mailbox polls may return a one-byte zero response.
+- Initialize and refresh the UI from camera-side GET read-back. Unknown values or query failures must remain Unknown rather than being guessed from local state.
+- This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a separate selector `0x06`, tag `0x03` setting and status byte `0x07`.
+
+The 2026-11-20 test verified the setter-value mapping against the camera's independently queried state after each mode was selected in OBSBOT Center. It establishes protocol state read-back, not a visual/perceptual test of the autofocus result. See [reference 06](06-2026-11-17-capture-findings.md) for packet details and the test procedure.
 
 
 Expose the standard controls reported by V4L2, including auto/manual

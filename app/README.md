@@ -54,19 +54,22 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   default.
 - Autofocus uses the standard UVC Focus Auto control. When autofocus is
   off, the manual Focus Absolute slider is shown. While autofocus is on,
-  Global / Face options send the framed XU `CAM_SET_FACE_FOCUS`
-  command (`0x3602`, receiver `0x02`). The 2026-11-18 controlled Linux
-  capture correlates Global with `bf fb 01 00` and Face with
-  `be 07 00 00`; the earlier app mapping had these reversed. The grouped
-  selector now dispatches from the newly clicked active segment rather
-  than both buttons' toggle-state signals. The final Face-to-Global
-  transition in that capture emitted no focus SET_CUR, so this dispatch
-  correction still needs a fresh hardware test. Treat Global/Face as
-  not yet hardware-verified: successful USB transfer completion does not
-  prove camera behavior, and camera-side read-back is unavailable.
-  Selection is tracked locally as the last successfully submitted
-  command, not actual camera state. This is distinct from face-priority
-  auto-exposure.
+  the Global / Face priority selector sends framed XU
+  `CAM_SET_FACE_FOCUS` (`0x3602`, receiver `0x02`) and reads the
+  camera state with `CAM_GET_FACE_FOCUS` (`0x35C2`, receiver `0x02`).
+  Both commands use XU unit 2 / selector `0x02`. Hardware read-back on
+  2026-11-20 corrected the original capture labels: Face is
+  `bf fb 01 00`; Global is `be 07 00 00`. The getter returns this
+  four-byte value, not a Boolean. It sends a header-only GET request,
+  polls GET_CUR up to eight times at 30 ms intervals, and accepts only
+  a response matching the command and sequence with a valid 12-byte
+  header CRC and four-byte payload. It ignores empty or nonmatching mailbox
+  polls; the observed one-byte empty-mailbox response cannot be mistaken for
+  the framed reply. The UI initializes from camera read-back, offers an explicit
+  **Read camera state** action, verifies each change after SET_CUR, and
+  displays Unknown on query failure or an unrecognized value. A successful
+  setter transfer alone is never shown as confirmed state. This is
+  autofocus priority, separate from Auto Exposure Face / Global.
 - Auto Exposure priority has its own grouped Global / Face control, shown
   only when V4L2 `auto_exposure` is Auto (menu value 0). The 2026-11-18
   Linux capture identified selector `0x06` SET_CUR payloads:
@@ -211,8 +214,11 @@ Loading the file does not send camera commands. In particular,
 `apply_on_connect` defaults to `false`; saved camera values are retained
 for the future in-process service, but are not replayed to the camera at
 startup. Camera read-back remains authoritative for settings that the
-device exposes. Locally remembered gesture/focus states are only the last
-successfully submitted commands where no reliable read-back exists.
+device exposes. Autofocus priority is queried from the camera when the
+Controls page is populated, after each setter, and on explicit refresh;
+the persisted `focus_mode` is not trusted to initialize the UI. Gesture
+states without reliable camera read-back remain locally remembered as the
+last successfully submitted commands.
 
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
@@ -312,12 +318,13 @@ revision as build-verified.
   sleep/wake service. Persistent TOML configuration is implemented;
   the in-process camera service and optional restore-on-connect behavior
   are still future work.
-- Global / Face autofocus priority remains not yet hardware-verified.
-  The current app mapping is Global `bf fb 01 00`, Face `be 07 00 00`.
-  The 2026-11-18 capture had a missing final transition, and the user
-  reports neither option currently produces the expected behavior. A
-  fresh action-correlated capture and visible behavior test are required.
-  Reliable read-back for most gesture states, automatic firmware
+- Global / Face autofocus-priority setter and camera-side GET read-back
+  are hardware-verified on 2026-11-20 and implemented in the backend and
+  Controls test UI. Face = `bf fb 01 00`; Global = `be 07 00 00`.
+  The remaining validation is the visible/perceptual autofocus result
+  under both modes; protocol state read-back is not proof of image-quality
+  improvement.
+- Reliable read-back for most gesture states, automatic firmware
   detection, Linux physical validation of framed live gimbal pose query `0x0043`,
   HDR visible-effect validation, physical Mirror image validation,
   pop-filter prototype validation, and camera-native preset-slot
