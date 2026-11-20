@@ -134,6 +134,16 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
 
     let mut applied = 0usize;
     let mut errors = Vec::new();
+    // Tracking would pull the camera away from a saved position, so a preset that turns tracking
+    // off does it first; one that turns tracking on does it last, after the gimbal has moved.
+    let tracking = preset.settings.get("obsbot:ai_tracking_mode").copied();
+    let tracking_first = tracking == Some(0);
+    if tracking_first {
+        match ai_mode_payload(0).ok_or_else(|| "Unknown AI tracking mode in preset.".to_string()).and_then(|mode| set_ai_mode(device, mode)) {
+            Ok(()) => applied += 1,
+            Err(error) => errors.push(format!("obsbot:ai_tracking_mode: {error}")),
+        }
+    }
     for (name, value) in controls {
         match set_control(device, &name, value) {
             Ok(()) => applied += 1,
@@ -142,7 +152,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     }
 
     for (key, value) in &preset.settings {
-        let result = if key == "obsbot:led_brightness" {
+        let result = if key == "obsbot:ai_tracking_mode" && tracking_first {
+            continue;
+        } else if key == "obsbot:led_brightness" {
             u8::try_from(*value).ok().filter(|v| *v <= 3)
                 .ok_or_else(|| "LED brightness must be between 0 and 3.".to_string())
                 .and_then(|level| set_led_brightness(device, level))
