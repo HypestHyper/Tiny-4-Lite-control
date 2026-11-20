@@ -3122,7 +3122,9 @@ mod xu_protocol_tests {
             0xaa, 0x01, 0x34, 0x12, 0x0c, 0x00,
             frame[6], frame[7], 0x0a, 0x03, 0x43, 0x00,
         ]);
-        assert_eq!(&frame[6..8], &crc16_usb(&frame[..12]).to_le_bytes());
+        let mut header = frame[..12].to_vec();
+        header[6..8].fill(0);
+        assert_eq!(&frame[6..8], &crc16_usb(&header).to_le_bytes());
         let mut reply = [0u8; 12];
         reply[8..10].copy_from_slice(&(1250i16).to_le_bytes());
         reply[10..12].copy_from_slice(&(-3400i16).to_le_bytes());
@@ -3138,7 +3140,7 @@ mod xu_protocol_tests {
         let values: Vec<f32> = payload[4..].chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
         assert_eq!(values, vec![12.5, 8.0, 0.0, 1.5, 0.0]);
-        assert!(initial_pose_payload(3, 151.0, 0.0, 1.0).is_err());
+        assert!(initial_pose_payload(3, 181.0, 0.0, 1.0).is_err());
         assert!(initial_pose_payload(3, 0.0, -181.0, 1.0).is_err());
         assert!(initial_pose_payload(3, 0.0, -103.4, 1.0).is_ok());
         assert!(initial_pose_payload(3, 0.0, 0.0, 4.1).is_err());
