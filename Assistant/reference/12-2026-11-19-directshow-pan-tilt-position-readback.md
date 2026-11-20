@@ -117,44 +117,59 @@ That capture records what OBSBOT Center chose to request. It does not establish 
 
 The selector 0x02 float32 values at payload offsets 20 and 24 remain movement-associated outgoing command data, not position feedback. Selector 0x06 remains status/configuration data, not pose.
 
-## 6. Linux app implementation
+## 6. Current Linux app implementation
 
-**Current source update (2026-11-20):** the active `get_gimbal_position()` path was changed to the candidate XU unit 2 / selector `0x02` GET_CUR response, using the two observed six-byte record signatures and float32 fields at offsets 20 and 24. The Controls page initializes the readout immediately and polls every 250 ms. This is a candidate read path, not a confirmed replacement for the standard Camera Terminal request described above: the 2026-11-19 motion capture contains selector `0x02` SET_CUR traffic but no GET_CUR requests. Linux hardware validation is still required. The standard Camera Terminal helper remains in source but is not the active read path.
+The current app no longer treats the selector-0x02 movement command payload as telemetry. The active read path uses the framed gimbal-controller query:
 
-The separate **Set initial state** operation is not implemented. In the 2026-11-19 save-action window (epoch 1795052741.355522–1795052764.996286), frame 119027 was a host-to-camera SET_CUR with an `AA 01` payload and frame 141561 was another host-to-camera SET_CUR with an `AA 25` payload; neither has been tied to the button action. The repeated `AA 29` records are camera-to-host GET_CUR responses, not the save command. Their fields remain unmapped. Do not synthesize a setter or substitute a local preset for this camera operation.
+- Query command: `0x0043`, receiver `0x03`, through XU unit 2 / selector `0x02`.
+- The reply contains signed little-endian 16-bit pitch at payload offsets 8–9 and yaw at 10–11, in hundredths of a degree.
+- App display convention: pan = yaw / 100; tilt = -(pitch / 100).
+- Current zoom factor is read separately through command `0x6804`, receiver `0x04`.
 
-The active read-only candidate path in `app/src/main.rs` is:
+The Controls page initializes the **Gimbal position** readout immediately and polls at 4 Hz (every 250 ms). It displays signed degree values and reports the exact query error when unavailable. This query is read-only and does not move the camera. The live pose path is also used when saving camera-native presets and setting the startup pose, avoiding stale V4L2 movement targets.
 
-- XU unit 2, selector 0x02, GET_CUR, 60-byte response.
-- Accept the two observed six-byte response signatures:
-  `04 0a 44 3a 18 00` and `02 0a 42 29 05 00`.
-- Decode float32 little-endian pan and tilt at payload offsets 20 and 24.
-- Clamp displayed values to Pan [-130°, +130°] and Tilt [-90°, +90°].
+**Capture clarification:** the repeated `0x6484` frames in the user's 2026-11-19 capture are gimbal rate/joystick commands carrying three float32 speeds (roll, pitch, yaw). They are not a live-position reply. The float32 values previously decoded at offsets 20/24 were movement-command payloads and must not be presented as telemetry.
 
-The earlier standard Camera Terminal implementation remains as an inactive helper in source: entity 1, selector 0x0D, GET_CUR, 8-byte response containing signed little-endian pan and tilt. Its 3600-raw-units-per-degree conversion was derived from the app's movement controls but was not validated as live telemetry on Linux.
+The standard Camera Terminal entity 1 / selector `0x0D` path described in Sections 3–4 remains a separate documented interface. It is not the active Linux app position source.
 
-The Controls page adds a **Gimbal position** readout. It initializes immediately, then polls at 4 Hz (every 250 ms), displays signed degree values, and shows **Unavailable** with the exact read error as a tooltip if the query fails. The timer ends when the readout widgets are destroyed. It performs no writes and does not move the camera. The readout is shown independently of whether standard V4L2 pan/tilt movement controls are enabled.
+## 7. Captured Set Initial State operation
 
-## 7. Validation status and next hardware check
+The saved USB capture `obsbot-capture-1795052714-353354509.pcapng` does contain the camera-native initial-state write sequence. The earlier interpretation that the action was unmapped was wrong.
 
-**Confirmed:**
-- Windows DirectShow returns live physical Pan and Tilt values while the gimbal is manually moved.
-- Advertised Windows ranges and selected software clamp values.
-- Camera Terminal descriptor advertises PanTilt Absolute.
-- Linux app request tuple and decoder are implemented as read-only code.
+The capture contains:
 
-**Not yet confirmed on Linux:**
-- Whether host-initiated XU unit 2 / selector 0x02 GET_CUR returns the two expected response signatures on the user's Linux camera.
-- Whether float32 values at offsets 20/24 track actual physical Pan/Tilt movement rather than a cached or unrelated state.
-- Whether values update smoothly at the 4 Hz UI polling interval.
+- A host-to-camera framed SET_CUR command `0x3EC4`, payload length 24. The first four bytes are source index 3 (an independent pose); the remaining fields are pan, pitch, roll, zoom and trailing float.
+- A host-to-camera framed SET_CUR command `0x3E44`, payload length 40. This is the startup picture/action settings block.
 
-To validate, return USB ownership to the Linux host, ensure the camera has a V4L2 node, launch the app, and gently move the gimbal by hand. Displayed values should change with physical movement and settle when stationary. If the ioctl fails or returns an unknown signature, preserve the exact error; do not silently fall back to cached V4L2 movement targets.
+The camera's stored startup pose is read with query `0x3884`. Its 24-byte reply starts with the source index (0–2 means a preset slot; 3 means an independent pose), followed by the pose values. The 40-byte action block is read with query `0x3E84`.
+
+The app now exposes **Power-on initial state** with:
+- A read-only display of the camera's stored startup pose from `0x3884`.
+- **Set current position as initial state**, which reads live pose via `0x0043`, zoom via `0x6804`, and the existing 40-byte settings block via `0x3E84`.
+- The captured `0x3EC4` own-pose frame (source index 3), followed by `0x3E44` carrying the existing settings block unchanged.
+- A `0x3884` read-back to verify that the startup pose was stored.
+
+Preserving the existing `0x3E84` block avoids silently clearing the camera's startup AI/picture settings while changing only the initial pose.
+
+## 8. Validation status and next hardware check
+
+**Implemented in source:**
+- Framed query builder and sequence-matched reply polling.
+- Live pose decode for `0x0043` and live zoom decode for `0x6804`.
+- 250 ms UI refresh.
+- Startup pose read-back through `0x3884`.
+- Startup pose write through `0x3EC4` + `0x3E44`, preserving the current 40-byte settings block.
+- Camera-native preset list/read/create/update/rename/recall/delete.
+
+**Still requires physical validation on the user's Linux camera:**
+- Confirm the `0x0043` values follow physical hand movement in the new build.
+- Confirm **Set current position as initial state** survives a camera power cycle.
+- Confirm camera-native preset create, rename, recall and delete on the user's current firmware. The command family is documented as Tiny 2 Lite hardware-tested, but the app's integration still needs a live pass.
 
 ## 8. Safety and scope
 
-- The active position readout performs only XU GET_CUR reads; it does not send movement commands.
-- The earlier Camera Terminal GET_CUR helper is also read-only.
-- No SET_CUR movement requests are added by the position readout.
-- The app does not restore position or move the camera on startup.
+- The live-position readout sends only a framed GET query (`0x0043`) and does not issue movement commands.
+- Setting the startup pose is a separate explicit user action that writes `0x3EC4` and `0x3E44`.
+- The app does not move the camera or change its startup pose automatically on launch.
 - Software display bounds remain Pan ±130° and Tilt ±90°.
 - Roll remains outside this feature until its live behaviour and encoding are separately validated.
