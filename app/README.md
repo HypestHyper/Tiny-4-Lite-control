@@ -113,11 +113,11 @@ selector `0x06` for the 60-byte status block.
   L-shaped gesture, then use Direction Flip to reverse its direction.
   Direction Flip does not affect the separate Zoom/L-pose gesture or
   autofocus Global/Face priority.
-- Framed XU writes use a rolling process-local 16-bit sequence counter.
-  The 2026-11-18 capture shows consecutive sequence values across
-  multiple command groups. The required initial seed after reconnect or
-  process restart is not established; the current implementation
-  initializes it to zero.
+- Framed XU writes and queries use one rolling process-local 16-bit
+  sequence counter. It is seeded from the current millisecond clock on
+  first use to reduce collisions with earlier camera sessions and other
+  short-lived control processes. Every query reply is matched to its
+  request sequence before decoding.
 - Sleep and wake are explicit user actions. Both have been physically
   tested. The separate power-status read-back has also been tested.
 - FOV presets are implemented through V4L2 `zoom_absolute`, not a
