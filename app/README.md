@@ -21,15 +21,20 @@ preview and settings. Dragging the divider in the full window resizes the previe
 follows the window width.
 
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
-real pan and tilt, with the numbers on top. It is viewed from behind and a little above, so you see where the
-lens points; a blue cone shows the view. It is a drawing of the angles the camera reports (the same position
+real pan and tilt, with the numbers on top. It is drawn straight on from the front and a little above, like a product photo: the lens and the front of the base
+face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward
+your left, because it is the camera's right. A blue cone shows the view. It is a drawing of the angles the camera reports (the same position
 query as the readout), never a command. It glides between readings rather than jumping, asks for the position
 about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
 window is in the background or the card is hidden. With no reading it dims and shows no view cone.
 
-The drawing is sized from OBSBOT's published dimensions (48.37 × 46.46 × 64.2 mm, a two-axis gimbal with a built-in
-stand), and the cone from the published 79.4° diagonal field of view; tests check both. The shapes themselves
-(rounded head, lens rings, U-shaped yoke, hub and base) are a close approximation, not a scan. Every
+The drawing is traced from OBSBOT's product photos (front, back, both sides and an angled view) and calibrated to the
+published overall size (48.37 × 46.46 × 64.2 mm); the view cone uses the published 79.4° diagonal field of view.
+Tests check both. As in the real camera, the tilt motor (a cylinder) and the arm are on the camera's left, the
+head sits off to the right of the pan axis, and the turntable is a flat round disc. It draws the rounded base with
+its mic holes, USB-C slot and clip groove, the head with its front plate, ridged lens recess and status light, and the
+perforated panel on the back. It leaves out the OBSBOT logo and the small fillets where the arm meets the disc and
+the motor, and it assumes the head, arm and base are centred front to back (they are in the side photos). Every
 dimension is a named constant in the `shape` module of `src/ui/gimbal_model.rs`, so correcting a detail is a
 one-number change. Positive pan
 turns right and positive tilt looks up, matching the joystick; whether those signs match your camera's own

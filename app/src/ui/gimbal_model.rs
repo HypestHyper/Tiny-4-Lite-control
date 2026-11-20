@@ -1,13 +1,14 @@
 //! A wireframe camera on a two-axis gimbal that follows the camera's live pan and tilt.
 //!
-//! The picture is viewed from behind and a little above, so you see where the lens points.
-//! Positive pan turns right and positive tilt looks up, the same signs as the joystick; the
-//! readouts beside it show the real numbers. It is only a drawing of the angles the camera
+//! The camera is drawn straight on from the front, a little above, like a product photo: the lens
+//! and the front of the base face you. Click it to see it from behind instead. Positive pan turns
+//! the camera to ITS right (your left, from the front) and positive tilt looks up; the readouts
+//! beside it show the real numbers. It is only a drawing of the angles the camera
 //! reports: it never sends anything to the camera.
 
 use super::store::Store;
 use super::theme;
-use crate::backend::current_config;
+use crate::backend::{current_config, update_config};
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -38,13 +39,21 @@ fn pan_by(v: V3, degrees: f64) -> V3 {
     (v.0 * c - v.2 * s, v.1, v.0 * s + v.2 * c)
 }
 
-/// The fixed view: from behind and to the left, looking slightly down.
-const VIEW_YAW: f64 = 32.0;
-const VIEW_PITCH: f64 = 20.0;
+/// The view looks straight on, a little from above. From the front the camera's right is on your left.
+const VIEW_PITCH: f64 = 8.0;
+
+/// Turn the world about the vertical so the front (or the back) faces the viewer.
+fn view_yaw(behind: bool) -> f64 { if behind { 0.0 } else { 180.0 } }
+
+/// The direction from the scene towards the viewer, in world coordinates.
+fn toward_viewer(behind: bool) -> V3 {
+    let (s, c) = VIEW_PITCH.to_radians().sin_cos();
+    pan_by((0.0, s, c), view_yaw(behind))
+}
 
 /// World point to screen offset (right, down) in units of the model, with a little perspective.
-pub fn project(p: V3) -> (f64, f64) {
-    let (x, y, z) = pan_by(p, -VIEW_YAW);
+pub fn project(p: V3, behind: bool) -> (f64, f64) {
+    let (x, y, z) = pan_by(p, -view_yaw(behind));
     // Tilt the whole scene towards the viewer by the view pitch.
     let (s, c) = VIEW_PITCH.to_radians().sin_cos();
     let (y, z) = (y * c - z * s, y * s + z * c);
@@ -55,37 +64,76 @@ pub fn project(p: V3) -> (f64, f64) {
 struct Line { a: V3, b: V3, kind: Kind }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind { Base, Moving, Lens, Aim, Limit }
+enum Kind {
+    Base, Moving, Detail, Lens, Aim, Limit,
+    // Details on one side only. They are left out when that side faces away from the viewer.
+    HeadFront, HeadBack, BaseFront, BaseBack, LensFront,
+}
 
-/// The camera's size and shape, in millimetres. Only the overall size is published by OBSBOT
-/// (48.37 × 46.46 × 64.2 mm, a 2-axis gimbal with a built-in stand, 79.4° diagonal field of view);
-/// the rest is a close approximation drawn from that. Change a number here to refine the model.
+/// The camera's size and shape in millimetres, traced from OBSBOT's product photos (front, back,
+/// both sides and an angled view), calibrated to the published overall size of 48.37 × 46.46 × 64.2 mm
+/// and the 79.4° diagonal field of view. Coordinates: x is the camera's right, y is up from the
+/// desk, and the lens looks along -z. The pan axis is the vertical line through the middle of the base.
+/// The head and tilt motor sit off to one side: the motor cylinder and the arm are on the camera's
+/// LEFT (the right-hand side when you look into the lens). Change a number to refine the model.
 mod shape {
-    /// Overall footprint of the base, and the total height at rest.
-    pub const BASE_HALF_W: f64 = 24.2;
-    pub const BASE_HALF_D: f64 = 23.2;
-    pub const BASE_HEIGHT: f64 = 14.0;
-    pub const BASE_CORNER: f64 = 7.0;
-    /// The turning hub between the base and the yoke.
-    pub const HUB_RADIUS: f64 = 11.0;
-    pub const HUB_TOP: f64 = 22.0;
-    /// The U-shaped yoke: its outer half-width, arm thickness, depth and height of the arm tops.
-    pub const YOKE_HALF_W: f64 = 24.2;
-    pub const YOKE_ARM: f64 = 4.5;
-    pub const YOKE_HALF_D: f64 = 8.0;
-    pub const YOKE_FLOOR: f64 = 4.0;
-    /// Height of the tilt axis, and the arm tops above it.
-    pub const TILT_AXIS: f64 = 44.2;
-    pub const ARM_TOP: f64 = 52.0;
-    /// The head: half width, half height, half depth and corner radius.
-    pub const HEAD_HALF_W: f64 = 18.5;
-    pub const HEAD_HALF_H: f64 = 20.0;
-    pub const HEAD_HALF_D: f64 = 17.0;
-    pub const HEAD_CORNER: f64 = 9.0;
-    /// Lens glass and the rings inside it: (radius, how far behind the front face).
-    pub const LENS_RINGS: [(f64, f64); 4] = [(14.5, 0.0), (11.0, 1.2), (7.0, 2.6), (3.2, 3.6)];
+    // Base: a rounded block, a little wider at the bottom than the top.
+    pub const BASE_HALF_W_BOTTOM: f64 = 24.19;
+    pub const BASE_HALF_D_BOTTOM: f64 = 23.23;
+    pub const BASE_HALF_W_TOP: f64 = 23.65;
+    pub const BASE_HALF_D_TOP: f64 = 22.7;
+    pub const BASE_CORNER: f64 = 6.0;
+    /// Height of the base, with the top edge rounded over the last few millimetres.
+    pub const BASE_HEIGHT: f64 = 25.2;
+    pub const BASE_TOP_ROUND: f64 = 3.0;
+    /// The clip groove runs round the base this far above the desk.
+    pub const CLIP_GROOVE: f64 = 3.6;
+    /// Two microphone holes on the front, and the USB-C slot at the back: (x, height above the desk).
+    pub const MIC_X: f64 = 11.2;
+    pub const MIC_HEIGHT: f64 = 10.0;
+    pub const MIC_RADIUS: f64 = 0.6;
+    pub const USB_HEIGHT: f64 = 10.6;
+    pub const USB_HALF_W: f64 = 4.8;
+    pub const USB_HALF_H: f64 = 1.9;
+    // Turntable: a flat round disc on top of the base.
+    pub const DISC_RADIUS: f64 = 20.2;
+    pub const DISC_THICKNESS: f64 = 4.0;
+    // Arm: a plate under the motor, its outer face flush with the disc edge.
+    pub const ARM_OUTER_X: f64 = -20.2;
+    pub const ARM_WIDTH: f64 = 7.9;
+    pub const ARM_HALF_D: f64 = 9.3;
+    // Tilt motor: a cylinder along x on the camera's left. The head tilts about its axis.
+    pub const TILT_AXIS: f64 = 50.2;
+    pub const MOTOR_RADIUS: f64 = 12.4;
+    pub const MOTOR_OUTER_X: f64 = -22.4;
+    pub const MOTOR_INNER_X: f64 = -12.1;
+    // Head: a rounded-square shell. It reaches from x = -12.1 to +21.1; the front plate is 3 mm
+    // narrower on the motor side.
+    pub const HEAD_X0: f64 = -12.1;
+    pub const HEAD_X1: f64 = 21.1;
+    pub const HEAD_HALF_H: f64 = 14.0;
+    pub const HEAD_HALF_D: f64 = 14.4;
+    pub const HEAD_CORNER: f64 = 6.5;
+    pub const PLATE_X0: f64 = -9.1;
+    pub const PLATE_INSET: f64 = 1.2;
+    /// Lens: centre x, and (radius, depth behind the front face) for the glass edge, recess, barrel and glass.
+    pub const LENS_X: f64 = 6.0;
+    pub const LENS_RINGS: [(f64, f64); 4] = [(10.9, 0.0), (6.4, 0.8), (3.3, 2.0), (2.0, 2.6)];
+    /// The fine ridges between the recess and the glass edge: radii, and how many.
+    pub const RIDGE_INNER: f64 = 6.9;
+    pub const RIDGE_OUTER: f64 = 10.2;
+    pub const RIDGE_COUNT: usize = 56;
+    /// The small status light on the front plate, from the lens centre.
+    pub const LED_DX: f64 = 9.2;
+    pub const LED_DY: f64 = 8.8;
+    pub const LED_RADIUS: f64 = 0.6;
+    /// Perforated panel on the back of the head: centre x, rings of dots (half size, dot radius).
+    pub const DOT_PANEL_X: f64 = 5.9;
+    pub const DOT_RINGS: [(f64, f64); 3] = [(12.0, 0.65), (10.3, 0.55), (8.6, 0.42)];
+    pub const DOT_SPACING: f64 = 1.75;
+    pub const DOT_CORNER: f64 = 5.2;
     /// Radius of the floor ring that shows the pan range.
-    pub const FLOOR_RING: f64 = 36.0;
+    pub const FLOOR_RING: f64 = 38.0;
     /// Field of view drawn as the cone: 79.4° diagonal (official spec) at 16:9.
     pub const FOV_DIAGONAL_DEGREES: f64 = 79.4;
     pub const CONE_REACH: f64 = 40.0;
@@ -97,13 +145,34 @@ mod shape {
 /// edges run between the last point of one corner and the first of the next.
 fn rounded_rect(half_w: f64, half_h: f64, radius: f64, steps: usize) -> Vec<(f64, f64)> {
     let mut points = Vec::new();
-    // Corner centres, going round from top-right.
     for (k, (cx, cy)) in [(half_w - radius, half_h - radius), (-(half_w - radius), half_h - radius),
                           (-(half_w - radius), -(half_h - radius)), (half_w - radius, -(half_h - radius))].into_iter().enumerate() {
         let start = k as f64 * std::f64::consts::FRAC_PI_2;
         for i in 0..=steps {
             let a = start + i as f64 / steps as f64 * std::f64::consts::FRAC_PI_2;
             points.push((cx + radius * a.cos(), cy + radius * a.sin()));
+        }
+    }
+    points
+}
+
+/// Points spaced evenly along a closed outline.
+fn spaced_along(outline: &[(f64, f64)], spacing: f64) -> Vec<(f64, f64)> {
+    let n = outline.len();
+    let lengths: Vec<f64> = (0..n).map(|i| { let (a, b) = (outline[i], outline[(i + 1) % n]); (b.0 - a.0).hypot(b.1 - a.1) }).collect();
+    let total: f64 = lengths.iter().sum();
+    let count = (total / spacing).round().max(3.0) as usize;
+    let mut points = Vec::with_capacity(count);
+    for k in 0..count {
+        let mut distance = k as f64 / count as f64 * total;
+        for i in 0..n {
+            if distance <= lengths[i] || i == n - 1 {
+                let t = if lengths[i] > 0.0 { distance / lengths[i] } else { 0.0 };
+                let (a, b) = (outline[i], outline[(i + 1) % n]);
+                points.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+                break;
+            }
+            distance -= lengths[i];
         }
     }
     points
@@ -116,12 +185,17 @@ fn close_loop(points: &[V3], kind: Kind, out: &mut Vec<Line>) {
     }
 }
 
-fn ring_xy(radius: f64, z: f64, steps: usize) -> Vec<V3> {
-    (0..steps).map(|i| { let a = i as f64 / steps as f64 * std::f64::consts::TAU; (radius * a.cos(), radius * a.sin(), z) }).collect()
+fn ring_xy(cx: f64, cy: f64, radius: f64, z: f64, steps: usize) -> Vec<V3> {
+    (0..steps).map(|i| { let a = i as f64 / steps as f64 * std::f64::consts::TAU; (cx + radius * a.cos(), cy + radius * a.sin(), z) }).collect()
 }
 
 fn ring_xz(radius: f64, y: f64, steps: usize) -> Vec<V3> {
     (0..steps).map(|i| { let a = i as f64 / steps as f64 * std::f64::consts::TAU; (radius * a.cos(), y, radius * a.sin()) }).collect()
+}
+
+/// A circle in the y-z plane, for the ends of the motor cylinder.
+fn ring_yz(x: f64, cy: f64, radius: f64, steps: usize) -> Vec<V3> {
+    (0..steps).map(|i| { let a = i as f64 / steps as f64 * std::f64::consts::TAU; (x, cy + radius * a.sin(), radius * a.cos()) }).collect()
 }
 
 /// A rounded slab: two outlines joined at the corner tangent points.
@@ -138,86 +212,144 @@ fn slab(outline: &[(f64, f64)], steps: usize, front: impl Fn((f64, f64)) -> V3, 
 }
 
 /// All the lines of the model for a pan and tilt, in drawing units (see `shape::UNIT`).
-fn model(pan: f64, tilt: f64) -> Vec<Line> {
+fn model(pan: f64, tilt: f64, behind: bool) -> Vec<Line> {
     use shape::*;
     let mut lines = Vec::new();
 
-    // The base stays put: a rounded block, the floor ring, and marks for front and the pan limits.
-    let base = rounded_rect(BASE_HALF_W, BASE_HALF_D, BASE_CORNER, 4);
-    slab(&base, 4, |(x, z)| (x, 0.0, z), |(x, z)| (x, BASE_HEIGHT, z), Kind::Base, &mut lines);
-    close_loop(&ring_xz(FLOOR_RING, 0.0, 40), Kind::Base, &mut lines);
+    // ── Base (never turns): a rounded block, slightly wider at the bottom, with a rounded top edge ──
+    let bottom = rounded_rect(BASE_HALF_W_BOTTOM, BASE_HALF_D_BOTTOM, BASE_CORNER, 4);
+    let shoulder_y = BASE_HEIGHT - BASE_TOP_ROUND;
+    let upper = rounded_rect(BASE_HALF_W_TOP, BASE_HALF_D_TOP, BASE_CORNER, 4);
+    let crown = rounded_rect(BASE_HALF_W_TOP - BASE_TOP_ROUND, BASE_HALF_D_TOP - BASE_TOP_ROUND, BASE_CORNER - 1.5, 4);
+    let bottom_pts: Vec<V3> = bottom.iter().map(|&(x, z)| (x, 0.0, z)).collect();
+    let upper_pts: Vec<V3> = upper.iter().map(|&(x, z)| (x, shoulder_y, z)).collect();
+    let crown_pts: Vec<V3> = crown.iter().map(|&(x, z)| (x, BASE_HEIGHT, z)).collect();
+    close_loop(&bottom_pts, Kind::Base, &mut lines);
+    close_loop(&upper_pts, Kind::Base, &mut lines);
+    close_loop(&crown_pts, Kind::Base, &mut lines);
+    for corner in 0..4 {
+        for i in [corner * 5, corner * 5 + 4] {
+            lines.push(Line { a: bottom_pts[i], b: upper_pts[i], kind: Kind::Base });
+            lines.push(Line { a: upper_pts[i], b: crown_pts[i], kind: Kind::Base });
+        }
+    }
+    // The clip groove just above the desk.
+    let groove: Vec<V3> = rounded_rect(BASE_HALF_W_BOTTOM - 0.1, BASE_HALF_D_BOTTOM - 0.1, BASE_CORNER, 4).iter().map(|&(x, z)| (x, CLIP_GROOVE, z)).collect();
+    close_loop(&groove, Kind::Detail, &mut lines);
+    // Two microphone holes on the front, and the USB-C slot on the back.
+    for side in [-1.0, 1.0] {
+        let hole: Vec<V3> = (0..8).map(|i| { let a = i as f64 / 8.0 * std::f64::consts::TAU; (side * MIC_X + MIC_RADIUS * a.cos(), MIC_HEIGHT + MIC_RADIUS * a.sin(), -BASE_HALF_D_TOP - 0.2) }).collect();
+        close_loop(&hole, Kind::BaseFront, &mut lines);
+    }
+    let usb: Vec<V3> = rounded_rect(USB_HALF_W, USB_HALF_H, USB_HALF_H, 3).iter().map(|&(x, y)| (x, USB_HEIGHT + y, BASE_HALF_D_TOP + 0.2)).collect();
+    close_loop(&usb, Kind::BaseBack, &mut lines);
+    // The floor ring, with marks for front and the two pan limits.
+    close_loop(&ring_xz(FLOOR_RING, 0.0, 44), Kind::Base, &mut lines);
     for (deg, kind, length) in [(0.0, Kind::Base, 9.0), (PAN_LIMIT, Kind::Limit, 6.0), (-PAN_LIMIT, Kind::Limit, 6.0)] {
         let f = forward(deg, 0.0);
         lines.push(Line { a: (f.0 * FLOOR_RING, 0.0, f.2 * FLOOR_RING), b: (f.0 * (FLOOR_RING + length), 0.0, f.2 * (FLOOR_RING + length)), kind });
     }
 
-    // Everything above the base turns with pan.
+    // ── Everything above the base turns with pan: the disc, the arm, the motor and the head's mount ──
     let mut turning: Vec<Line> = Vec::new();
-    close_loop(&ring_xz(HUB_RADIUS, BASE_HEIGHT, 20), Kind::Moving, &mut turning);
-    close_loop(&ring_xz(HUB_RADIUS, HUB_TOP, 20), Kind::Moving, &mut turning);
-    for k in 0..4 {
-        let a = k as f64 * std::f64::consts::FRAC_PI_2;
-        turning.push(Line { a: (HUB_RADIUS * a.cos(), BASE_HEIGHT, HUB_RADIUS * a.sin()), b: (HUB_RADIUS * a.cos(), HUB_TOP, HUB_RADIUS * a.sin()), kind: Kind::Moving });
+    let disc_bottom = BASE_HEIGHT;
+    let disc_top = BASE_HEIGHT + DISC_THICKNESS;
+    close_loop(&ring_xz(DISC_RADIUS, disc_bottom, 36), Kind::Moving, &mut turning);
+    close_loop(&ring_xz(DISC_RADIUS, disc_top, 36), Kind::Moving, &mut turning);
+    close_loop(&ring_xz(DISC_RADIUS - 1.3, disc_top, 36), Kind::Detail, &mut turning);
+    for k in 0..8 {
+        let a = k as f64 / 8.0 * std::f64::consts::TAU;
+        turning.push(Line { a: (DISC_RADIUS * a.cos(), disc_bottom, DISC_RADIUS * a.sin()), b: (DISC_RADIUS * a.cos(), disc_top, DISC_RADIUS * a.sin()), kind: Kind::Moving });
     }
-    // The yoke is a U in the x-y plane, extruded front to back.
-    let inner = YOKE_HALF_W - YOKE_ARM;
-    let u: [(f64, f64); 8] = [
-        (-YOKE_HALF_W, HUB_TOP), (YOKE_HALF_W, HUB_TOP), (YOKE_HALF_W, ARM_TOP), (inner, ARM_TOP),
-        (inner, HUB_TOP + YOKE_FLOOR), (-inner, HUB_TOP + YOKE_FLOOR), (-inner, ARM_TOP), (-YOKE_HALF_W, ARM_TOP),
-    ];
-    let front: Vec<V3> = u.iter().map(|p| (p.0, p.1, -YOKE_HALF_D)).collect();
-    let back: Vec<V3> = u.iter().map(|p| (p.0, p.1, YOKE_HALF_D)).collect();
+    // The arm: a plate from the disc up to the underside of the motor.
+    let arm_inner = ARM_OUTER_X + ARM_WIDTH;
+    let arm_top = TILT_AXIS - MOTOR_RADIUS + 1.5;
+    let arm_corners = [(ARM_OUTER_X, disc_top), (arm_inner, disc_top), (arm_inner, arm_top), (ARM_OUTER_X, arm_top)];
+    let front: Vec<V3> = arm_corners.iter().map(|p| (p.0, p.1, -ARM_HALF_D)).collect();
+    let back: Vec<V3> = arm_corners.iter().map(|p| (p.0, p.1, ARM_HALF_D)).collect();
     close_loop(&front, Kind::Moving, &mut turning);
     close_loop(&back, Kind::Moving, &mut turning);
-    for i in 0..u.len() { turning.push(Line { a: front[i], b: back[i], kind: Kind::Moving }); }
-    // The pivot caps on the outer faces of the arms.
-    for side in [-1.0, 1.0] {
-        let cap: Vec<V3> = (0..14).map(|i| { let a = i as f64 / 14.0 * std::f64::consts::TAU; (side * YOKE_HALF_W, TILT_AXIS + 3.4 * a.sin(), 3.4 * a.cos()) }).collect();
-        close_loop(&cap, Kind::Moving, &mut turning);
+    for i in 0..4 { turning.push(Line { a: front[i], b: back[i], kind: Kind::Moving }); }
+    // The motor cylinder: end discs and the lines along it.
+    let motor_ends = [MOTOR_OUTER_X, MOTOR_INNER_X];
+    for x in motor_ends { close_loop(&ring_yz(x, TILT_AXIS, MOTOR_RADIUS, 32), Kind::Moving, &mut turning); }
+    close_loop(&ring_yz(MOTOR_OUTER_X + 1.2, TILT_AXIS, MOTOR_RADIUS - 1.2, 32), Kind::Detail, &mut turning);
+    for k in 0..8 {
+        let a = k as f64 / 8.0 * std::f64::consts::TAU;
+        turning.push(Line { a: (MOTOR_OUTER_X, TILT_AXIS + MOTOR_RADIUS * a.sin(), MOTOR_RADIUS * a.cos()), b: (MOTOR_INNER_X, TILT_AXIS + MOTOR_RADIUS * a.sin(), MOTOR_RADIUS * a.cos()), kind: Kind::Moving });
     }
 
-    // The head tilts about the axis through the arms, then turns with pan. Its own coordinates are
-    // measured from the tilt axis; the front face is at -HEAD_HALF_D.
+    // ── The head tilts about the motor axis, then turns with pan. Its coordinates: x as in the
+    // world, y and z measured from the tilt axis; the front face is at z = -HEAD_HALF_D ──
     let mut head: Vec<Line> = Vec::new();
-    let outline = rounded_rect(HEAD_HALF_W, HEAD_HALF_H, HEAD_CORNER, 5);
-    slab(&outline, 5, |(x, y)| (x, y, -HEAD_HALF_D), |(x, y)| (x, y, HEAD_HALF_D), Kind::Moving, &mut head);
-    // A second outline just behind the front face gives the rounded front edge some depth.
-    let bevel = rounded_rect(HEAD_HALF_W - 2.0, HEAD_HALF_H - 2.0, HEAD_CORNER - 1.5, 5);
-    close_loop(&bevel.iter().map(|p| (p.0, p.1, -HEAD_HALF_D - 0.0)).collect::<Vec<_>>(), Kind::Moving, &mut head);
-    // The lens: glass edge and the rings inside it.
+    let head_centre_x = (HEAD_X0 + HEAD_X1) / 2.0;
+    let shell = rounded_rect((HEAD_X1 - HEAD_X0) / 2.0, HEAD_HALF_H, HEAD_CORNER, 5);
+    slab(&shell, 5, |(x, y)| (head_centre_x + x, y, -HEAD_HALF_D), |(x, y)| (head_centre_x + x, y, HEAD_HALF_D), Kind::Moving, &mut head);
+    // The front plate: inset from the shell, and 3 mm narrower on the motor side.
+    let plate_centre = (PLATE_X0 + HEAD_X1) / 2.0;
+    let plate = rounded_rect((HEAD_X1 - PLATE_X0) / 2.0 - PLATE_INSET, HEAD_HALF_H - PLATE_INSET, HEAD_CORNER - 1.0, 5);
+    close_loop(&plate.iter().map(|p| (plate_centre + p.0, p.1, -HEAD_HALF_D)).collect::<Vec<_>>(), Kind::HeadFront, &mut head);
+    // The lens: glass edge, recess, barrel and glass, with fine ridges between recess and edge.
     for (radius, depth) in LENS_RINGS {
-        close_loop(&ring_xy(radius, -HEAD_HALF_D + depth, 28), Kind::Lens, &mut head);
+        close_loop(&ring_xy(LENS_X, 0.0, radius, -HEAD_HALF_D + depth, 32), Kind::LensFront, &mut head);
     }
-    // Pins joining the head to the arms.
-    for side in [-1.0, 1.0] { head.push(Line { a: (side * HEAD_HALF_W, 0.0, 0.0), b: (side * (YOKE_HALF_W - YOKE_ARM), 0.0, 0.0), kind: Kind::Moving }); }
+    for k in 0..RIDGE_COUNT {
+        let a = k as f64 / RIDGE_COUNT as f64 * std::f64::consts::TAU;
+        head.push(Line {
+            a: (LENS_X + RIDGE_INNER * a.cos(), RIDGE_INNER * a.sin(), -HEAD_HALF_D + 0.5),
+            b: (LENS_X + RIDGE_OUTER * a.cos(), RIDGE_OUTER * a.sin(), -HEAD_HALF_D + 0.1),
+            kind: Kind::HeadFront,
+        });
+    }
+    // The status light.
+    close_loop(&ring_xy(LENS_X + LED_DX, LED_DY, LED_RADIUS, -HEAD_HALF_D, 8), Kind::LensFront, &mut head);
+    // The perforated panel on the back: three rings of dots round a plain middle.
+    for (half, dot) in DOT_RINGS {
+        let ring = rounded_rect(half, half, DOT_CORNER - (12.0 - half) * 0.3, 6);
+        for (x, y) in spaced_along(&ring, DOT_SPACING) {
+            close_loop(&ring_xy(DOT_PANEL_X + x, y, dot, HEAD_HALF_D, 8), Kind::HeadBack, &mut head);
+        }
+    }
     // What the camera sees: a ray and a view frustum at the official field of view, 16:9.
     let front_z = -HEAD_HALF_D;
     let half_diagonal = (FOV_DIAGONAL_DEGREES / 2.0).to_radians().tan();
     let diagonal = (16.0f64 * 16.0 + 9.0 * 9.0).sqrt();
     let (half_w, half_h) = (half_diagonal * 16.0 / diagonal * CONE_REACH, half_diagonal * 9.0 / diagonal * CONE_REACH);
-    head.push(Line { a: (0.0, 0.0, front_z), b: (0.0, 0.0, front_z - CONE_REACH * 1.2), kind: Kind::Aim });
+    head.push(Line { a: (LENS_X, 0.0, front_z), b: (LENS_X, 0.0, front_z - CONE_REACH * 1.2), kind: Kind::Aim });
     let far = [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)];
-    for (x, y) in far { head.push(Line { a: (0.0, 0.0, front_z), b: (x, y, front_z - CONE_REACH), kind: Kind::Aim }); }
+    for (x, y) in far { head.push(Line { a: (LENS_X, 0.0, front_z), b: (LENS_X + x, y, front_z - CONE_REACH), kind: Kind::Aim }); }
     for i in 0..4 {
         let (a, b) = (far[i], far[(i + 1) % 4]);
-        head.push(Line { a: (a.0, a.1, front_z - CONE_REACH), b: (b.0, b.1, front_z - CONE_REACH), kind: Kind::Aim });
+        head.push(Line { a: (LENS_X + a.0, a.1, front_z - CONE_REACH), b: (LENS_X + b.0, b.1, front_z - CONE_REACH), kind: Kind::Aim });
     }
 
-    let pivot = (0.0, TILT_AXIS, 0.0);
-    // Convert millimetres to drawing units, centred on the middle of the camera's height.
+    // Place everything: millimetres to drawing units, centred on the middle of the camera's height.
     let to_units = |v: V3| (v.0 / UNIT, (v.1 - 32.0) / UNIT, v.2 / UNIT);
     let pan_place = |v: V3| pan_by(v, pan);
     let mut out: Vec<Line> = lines.into_iter().map(|l| Line { a: to_units(l.a), b: to_units(l.b), kind: l.kind }).collect();
     for line in head {
         let place = |v: V3| {
-            let r = tilt_by(v, tilt);
-            pan_place((r.0 + pivot.0, r.1 + pivot.1, r.2 + pivot.2))
+            // Tilt about the x axis through the motor, then add the axis height and turn with pan.
+            let r = tilt_by((v.0, v.1, v.2), tilt);
+            pan_place((r.0, r.1 + TILT_AXIS, r.2))
         };
         out.push(Line { a: to_units(place(line.a)), b: to_units(place(line.b)), kind: line.kind });
     }
     for line in turning {
         out.push(Line { a: to_units(pan_place(line.a)), b: to_units(pan_place(line.b)), kind: line.kind });
     }
+    // Leave out the details on a side that faces away, so the far side does not show through.
+    let viewer = toward_viewer(behind);
+    let facing = |normal: V3| normal.0 * viewer.0 + normal.1 * viewer.1 + normal.2 * viewer.2 > 0.02;
+    let head_front = forward(pan, tilt);
+    let visible = |kind: Kind| match kind {
+        Kind::HeadFront | Kind::LensFront => facing(head_front),
+        Kind::HeadBack => facing((-head_front.0, -head_front.1, -head_front.2)),
+        Kind::BaseFront => facing((0.0, 0.0, -1.0)),
+        Kind::BaseBack => facing((0.0, 0.0, 1.0)),
+        _ => true,
+    };
+    out.retain(|line| visible(line.kind));
     out
 }
 
@@ -235,6 +367,7 @@ struct State {
     target: Cell<Option<(f64, f64)>>,
     shown: Cell<(f64, f64)>,
     animating: Cell<bool>,
+    behind: Cell<bool>,
     last_frame: Cell<i64>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
 }
@@ -253,11 +386,24 @@ impl GimbalModel {
         area.update_property(&[gtk::accessible::Property::Label("Gimbal model showing where the camera points")]);
         let state = Rc::new(State {
             area: area.clone(), target: Cell::new(None), shown: Cell::new((0.0, 0.0)),
-            animating: Cell::new(false), last_frame: Cell::new(0), tick: RefCell::default(),
+            animating: Cell::new(false), behind: Cell::new(current_config().model_view_behind), last_frame: Cell::new(0), tick: RefCell::default(),
         });
         let model = GimbalModel(state);
         let drawer = model.clone();
         area.set_draw_func(move |_, cr, width, height| drawer.draw(cr, width, height));
+        // Click to look from the other side.
+        area.set_cursor_from_name(Some("pointer"));
+        area.set_tooltip_text(Some("Click to flip between the front view and the view from behind"));
+        let click = gtk::GestureClick::new();
+        let flipper = Rc::downgrade(&model.0);
+        click.connect_released(move |_, _, _, _| {
+            let Some(state) = flipper.upgrade() else { return };
+            let behind = !state.behind.get();
+            state.behind.set(behind);
+            update_config(|c| c.model_view_behind = behind);
+            state.area.queue_draw();
+        });
+        area.add_controller(click);
         let weak = Rc::downgrade(&model.0);
         store.subscribe_gimbal(move |position| match weak.upgrade() {
             Some(state) => { GimbalModel(state).set_target(position); true }
@@ -313,23 +459,34 @@ impl GimbalModel {
         theme::with(|p| {
             let colour = |kind: Kind| match kind {
                 Kind::Base => (p.rgb("outline"), 1.4, 0.9),
-                Kind::Moving => (p.rgb("on_surface_variant"), 1.6, 0.95),
-                Kind::Lens => (p.rgb("primary"), 1.8, 1.0),
+                Kind::Moving => (p.rgb("on_surface_variant"), 1.5, 0.95),
+                Kind::Detail | Kind::HeadFront | Kind::HeadBack | Kind::BaseFront | Kind::BaseBack => (p.rgb("outline"), 1.0, 0.75),
+                Kind::Lens | Kind::LensFront => (p.rgb("primary"), 1.5, 1.0),
                 Kind::Aim => (p.rgb("primary"), 1.3, 0.55),
                 Kind::Limit => (p.rgb("tertiary"), 2.0, 0.9),
             };
             cr.set_line_cap(gtk::cairo::LineCap::Round);
+            cr.set_line_join(gtk::cairo::LineJoin::Round);
             // Without a reading the model sits dim at centre instead of pretending.
             let fade = if known { 1.0 } else { 0.35 };
-            for line in model(pan, tilt) {
-                if !known && line.kind == Kind::Aim { continue; }
-                let ((r, g, b), width, alpha) = colour(line.kind);
+            let behind = state.behind.get();
+            let lines = model(pan, tilt, behind);
+            // One stroke per style: the model has over a thousand short lines.
+            let styles: [&[Kind]; 6] = [
+                &[Kind::Base], &[Kind::Detail, Kind::HeadFront, Kind::HeadBack, Kind::BaseFront, Kind::BaseBack],
+                &[Kind::Moving], &[Kind::Lens, Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
+            ];
+            for kinds in styles {
+                if !known && kinds[0] == Kind::Aim { continue; }
+                let ((r, g, b), width, alpha) = colour(kinds[0]);
                 cr.set_source_rgba(r, g, b, alpha * fade);
                 cr.set_line_width(width);
-                let (ax, ay) = project(line.a);
-                let (bx, by) = project(line.b);
-                cr.move_to(cx + ax * scale, cy + ay * scale);
-                cr.line_to(cx + bx * scale, cy + by * scale);
+                for line in lines.iter().filter(|l| kinds.contains(&l.kind)) {
+                    let (ax, ay) = project(line.a, behind);
+                    let (bx, by) = project(line.b, behind);
+                    cr.move_to(cx + ax * scale, cy + ay * scale);
+                    cr.line_to(cx + bx * scale, cy + by * scale);
+                }
                 let _ = cr.stroke();
             }
         });
@@ -359,7 +516,7 @@ mod tests {
     fn the_drawn_lens_direction_matches_the_pan_and_tilt_maths() {
         // The model's aim ray starts at the lens and ends along `forward`.
         for (pan, tilt) in [(0.0, 0.0), (40.0, 15.0), (-75.0, -20.0), (130.0, 90.0)] {
-            let lines = model(pan, tilt);
+            let lines = model(pan, tilt, false);
             let ray = lines.iter().filter(|l| l.kind == Kind::Aim).next().expect("an aim line");
             let d = (ray.b.0 - ray.a.0, ray.b.1 - ray.a.1, ray.b.2 - ray.a.2);
             let length = (d.0 * d.0 + d.1 * d.1 + d.2 * d.2).sqrt();
@@ -389,9 +546,9 @@ mod tests {
 
     #[test]
     fn projection_keeps_the_scene_inside_a_sensible_box() {
-        for line in model(0.0, 0.0) {
+        for line in model(0.0, 0.0, false) {
             for point in [line.a, line.b] {
-                let (x, y) = project(point);
+                let (x, y) = project(point, false);
                 assert!(x.abs() < 3.0 && y.abs() < 3.0, "{point:?} -> {x}, {y}");
             }
         }
@@ -411,7 +568,7 @@ mod shape_tests {
     /// size OBSBOT publishes: 48.37 wide, 46.46 deep and 64.2 high, in millimetres.
     #[test]
     fn the_camera_body_has_the_published_size() {
-        let body: Vec<Line> = model(0.0, 0.0).into_iter().filter(|l| matches!(l.kind, Kind::Moving | Kind::Lens)
+        let body: Vec<Line> = model(0.0, 0.0, false).into_iter().filter(|l| !matches!(l.kind, Kind::Aim | Kind::Limit | Kind::Base)
             || (l.kind == Kind::Base && l.a.0.hypot(l.a.2) * shape::UNIT < shape::FLOOR_RING - 1.0)).collect();
         let mm = |units: f64| units * shape::UNIT;
         let (x0, x1) = extent(&body, |v| v.0);
@@ -425,7 +582,7 @@ mod shape_tests {
 
     #[test]
     fn the_view_cone_uses_the_official_field_of_view() {
-        let lines = model(0.0, 0.0);
+        let lines = model(0.0, 0.0, false);
         let aims: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
         // Ray, four edges from the lens, four edges of the far rectangle.
         assert_eq!(aims.len(), 9);

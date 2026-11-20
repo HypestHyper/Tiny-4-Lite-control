@@ -83,6 +83,8 @@ pub struct AppConfig {
     pub preview_popped_out: bool,
     /// Draw minimise, maximise and close buttons in the header.
     pub window_buttons: bool,
+    /// Draw the gimbal model from behind instead of from the front.
+    pub model_view_behind: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -153,6 +155,7 @@ impl Default for AppConfig {
             popup_height: 360,
             preview_popped_out: false,
             window_buttons: true,
+            model_view_behind: false,
         }
     }
 }
