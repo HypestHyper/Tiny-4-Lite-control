@@ -1403,10 +1403,11 @@ pub(crate) fn read_camera_presets(device: &str) -> Result<Vec<CameraPresetEntry>
     xu_query(device, 0x0c, UVC_GET_CUR, &mut list)?;
     let count = usize::from(list[0]).min(3);
     let slots = list[1..1 + count].to_vec();
+    if slots.is_empty() { return Ok(Vec::new()); }
     xu_query(device, 0x0c, UVC_SET_CUR, &mut list)?;
     std::thread::sleep(std::time::Duration::from_millis(400));
     let mut entries = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..slots.len() {
         let mut entry = [0u8; 60];
         xu_query(device, 0x0d, UVC_GET_CUR, &mut entry)?;
         match parse_camera_preset_entry(&entry)? {
