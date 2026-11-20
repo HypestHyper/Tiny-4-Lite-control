@@ -40,6 +40,8 @@ pub struct AppConfig {
     pub audio_auto_gain: Option<bool>,
     /// Last successfully submitted microphone-disabled state; no reliable GET_CUR read-back is established.
     pub audio_microphone_disabled: Option<bool>,
+    /// Last successfully submitted microphone-during-sleep setting; camera GET_CUR is authoritative.
+    pub audio_microphone_during_sleep: Option<bool>,
     /// Last successfully submitted microphone noise-reduction level: 0 Off, 1 Weak, 2 Medium, 3 Strong.
     pub audio_noise_reduction: Option<u8>,
     /// Last successfully submitted radio distance: 0 Close, 1 Standard, 2 Far; no camera read-back is established.
@@ -98,6 +100,7 @@ impl Default for AppConfig {
             exposure_compensation_position: None,
             audio_auto_gain: None,
             audio_microphone_disabled: None,
+            audio_microphone_during_sleep: None,
             audio_noise_reduction: None,
             audio_radio_distance: None,
             pop_filter_enabled: None,
@@ -226,6 +229,7 @@ mod tests {
         assert!(config.auto_exposure_mode.is_none());
         assert!(config.exposure_compensation_position.is_none());
         assert!(config.audio_auto_gain.is_none());
+        assert!(config.audio_microphone_during_sleep.is_none());
         assert!(config.audio_noise_reduction.is_none());
         assert!(config.gesture_states.is_empty());
         assert_eq!(config.theme, "system");
@@ -257,6 +261,7 @@ mod tests {
         config.exposure_compensation_position = Some(18);
         config.audio_auto_gain = Some(true);
         config.audio_microphone_disabled = Some(true);
+        config.audio_microphone_during_sleep = Some(true);
         config.audio_noise_reduction = Some(3);
         config.gesture_states.insert("dynamic_zoom".into(), true);
         config.gesture_zoom_ratio = Some(2.25);
@@ -288,6 +293,7 @@ mod tests {
         assert_eq!(decoded.exposure_compensation_position, Some(18));
         assert_eq!(decoded.audio_auto_gain, Some(true));
         assert_eq!(decoded.audio_microphone_disabled, Some(true));
+        assert_eq!(decoded.audio_microphone_during_sleep, Some(true));
         assert_eq!(decoded.audio_noise_reduction, Some(3));
         assert_eq!(decoded.gesture_states.get("dynamic_zoom"), Some(&true));
         assert_eq!(decoded.gesture_zoom_ratio, Some(2.25));
