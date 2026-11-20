@@ -151,24 +151,17 @@ pub(crate) fn append(
 }
 
 
-fn refresh_camera_native(combo: &gtk::ComboBoxText, device: &str, status: &gtk::Label) -> Vec<crate::CameraPresetEntry> {
+fn refresh_camera_native(combo: &gtk::ComboBoxText, device: &str) -> Result<Vec<crate::CameraPresetEntry>, String> {
     combo.remove_all();
-    match crate::read_camera_presets(device) {
-        Ok(entries) => {
-            for entry in &entries {
-                combo.append(Some(&entry.slot.to_string()), &format!(
-                    "Slot {} · {} · Pan {:+.1}° / Tilt {:+.1}° / Zoom {:.2}×",
-                    entry.slot + 1, entry.name, entry.pan_degrees, entry.tilt_degrees, entry.zoom
-                ));
-            }
-            if !entries.is_empty() { combo.set_active(Some(0)); }
-            entries
-        }
-        Err(error) => {
-            status.set_text(&format!("Could not read camera-native presets: {error}"));
-            Vec::new()
-        }
+    let entries = crate::read_camera_presets(device)?;
+    for entry in &entries {
+        combo.append(Some(&entry.slot.to_string()), &format!(
+            "Slot {} · {} · Pan {:+.1}° / Tilt {:+.1}° / Zoom {:.2}×",
+            entry.slot + 1, entry.name, entry.pan_degrees, entry.tilt_degrees, entry.zoom
+        ));
     }
+    if !entries.is_empty() { combo.set_active(Some(0)); }
+    Ok(entries)
 }
 
 /// Camera-resident preset management. Unlike the local configuration
@@ -225,15 +218,19 @@ pub(crate) fn append_camera_native(
     actions.append(&delete);
     layout.append(&actions);
 
-    let initial_entries = refresh_camera_native(&combo, device, status);
-    if let Some(first) = initial_entries.first() { name.set_text(&first.name); }
+    match refresh_camera_native(&combo, device) {
+        Ok(entries) => if let Some(first) = entries.first() { name.set_text(&first.name); },
+        Err(error) => status.set_text(&format!("Could not read camera-native presets: {error}")),
+    }
 
     let device_refresh = device.to_string();
     let combo_refresh = combo.clone();
     let status_refresh = status.clone();
     refresh_button.connect_clicked(move |_| {
-        let entries = refresh_camera_native(&combo_refresh, &device_refresh, &status_refresh);
-        status_refresh.set_text(&format!("Read {} camera-native preset(s).", entries.len()));
+        match refresh_camera_native(&combo_refresh, &device_refresh) {
+            Ok(entries) => status_refresh.set_text(&format!("Read {} camera-native preset(s).", entries.len())),
+            Err(error) => status_refresh.set_text(&format!("Could not read camera-native presets: {error}")),
+        }
     });
 
     let device_save = device.to_string();
@@ -264,10 +261,17 @@ pub(crate) fn append_camera_native(
         };
         match crate::save_camera_preset(&device_save, slot, &preset_name, update) {
             Ok(()) => {
-                let refreshed = refresh_camera_native(&combo_save, &device_save, &status_save);
-                combo_save.set_active_id(Some(&slot.to_string()));
-                status_save.set_text(&format!("Camera preset '{}' {} in slot {}.", preset_name, if update { "updated" } else { "created" }, slot + 1));
-                let _ = refreshed;
+                match refresh_camera_native(&combo_save, &device_save) {
+                    Ok(entries) => {
+                        combo_save.set_active_id(Some(&slot.to_string()));
+                        if entries.iter().any(|entry| entry.slot == slot && entry.name == preset_name) {
+                            status_save.set_text(&format!("Camera preset '{}' {} and verified in slot {}.", preset_name, if update { "updated" } else { "created" }, slot + 1));
+                        } else {
+                            status_save.set_text(&format!("Preset command was submitted, but slot {} did not read back as '{}'.", slot + 1, preset_name));
+                        }
+                    }
+                    Err(error) => status_save.set_text(&format!("Preset command was submitted, but read-back failed: {error}")),
+                }
             }
             Err(error) => status_save.set_text(&format!("Could not save camera preset: {error}")),
         }
@@ -299,9 +303,17 @@ pub(crate) fn append_camera_native(
         let preset_name = name_rename.text().trim().to_string();
         match crate::rename_camera_preset(&device_rename, slot, &preset_name) {
             Ok(()) => {
-                refresh_camera_native(&combo_rename, &device_rename, &status_rename);
-                combo_rename.set_active_id(Some(&slot.to_string()));
-                status_rename.set_text(&format!("Camera preset slot {} renamed to '{}'.", slot + 1, preset_name));
+                match refresh_camera_native(&combo_rename, &device_rename) {
+                    Ok(entries) => {
+                        combo_rename.set_active_id(Some(&slot.to_string()));
+                        if entries.iter().any(|entry| entry.slot == slot && entry.name == preset_name) {
+                            status_rename.set_text(&format!("Camera preset slot {} renamed to '{}' and verified.", slot + 1, preset_name));
+                        } else {
+                            status_rename.set_text(&format!("Rename command was submitted, but slot {} did not read back as '{}'.", slot + 1, preset_name));
+                        }
+                    }
+                    Err(error) => status_rename.set_text(&format!("Rename command was submitted, but read-back failed: {error}")),
+                }
             }
             Err(error) => status_rename.set_text(&format!("Could not rename camera preset: {error}")),
         }
@@ -317,11 +329,12 @@ pub(crate) fn append_camera_native(
         };
         match crate::delete_camera_preset(&device_delete, slot) {
             Ok(()) => {
-                let entries = refresh_camera_native(&combo_delete, &device_delete, &status_delete);
-                if entries.iter().any(|entry| entry.slot == slot) {
-                    status_delete.set_text("The camera acknowledged deletion, but the slot is still present. It was not removed.");
-                } else {
-                    status_delete.set_text(&format!("Camera preset slot {} deleted and verified absent.", slot + 1));
+                match refresh_camera_native(&combo_delete, &device_delete) {
+                    Ok(entries) if entries.iter().any(|entry| entry.slot == slot) => {
+                        status_delete.set_text("The delete command was submitted, but the slot is still present.");
+                    }
+                    Ok(_) => status_delete.set_text(&format!("Camera preset slot {} deleted and verified absent.", slot + 1)),
+                    Err(error) => status_delete.set_text(&format!("Delete command was submitted, but read-back failed: {error}")),
                 }
             }
             Err(error) => status_delete.set_text(&format!("Could not delete camera preset: {error}")),
@@ -409,8 +422,8 @@ pub(crate) fn append_initial_state(container: &gtk::Box, device: &str, status: &
                 status_set.set_text("Camera initial state saved and verified by read-back.");
             }
             Err(error) => {
-                status_set.set_text(&format!("Could not set camera initial state: {error}"));
                 refresh_initial_state(&current_set, &device_set, &status_set);
+                status_set.set_text(&format!("Could not set camera initial state: {error}"));
             }
         }
         set_initial_busy.set_sensitive(true);
