@@ -119,7 +119,11 @@ The selector 0x02 float32 values at payload offsets 20 and 24 remain movement-as
 
 ## 6. Linux app implementation
 
-The app implements the read-only path in `app/src/main.rs`:
+**Current source update (2026-11-20):** the active `get_gimbal_position()` path was changed to the candidate XU unit 2 / selector `0x02` GET_CUR response, using the two observed six-byte record signatures and float32 fields at offsets 20 and 24. The Controls page initializes the readout immediately and polls every 250 ms. This is a candidate read path, not a confirmed replacement for the standard Camera Terminal request described above: the 2026-11-19 motion capture contains selector `0x02` SET_CUR traffic but no GET_CUR requests. Linux hardware validation is still required. The standard Camera Terminal helper remains in source but is not the active read path.
+
+The separate **Set initial state** operation is not implemented. The 2026-11-19 capture's save-action window (epoch 1795052741.355522–1795052764.996286) includes camera-to-host `AA 29` response records, but the corresponding host-to-camera command has not been isolated from unrelated traffic. Do not synthesize a setter or substitute a local preset for this camera operation.
+
+The app implements the current read-only candidate path in `app/src/main.rs`:
 
 - Camera Terminal entity 1, selector 0x0D, GET_CUR, 8-byte buffer.
 - Decode signed little-endian pan and tilt values.
