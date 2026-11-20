@@ -175,11 +175,12 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
         _ => false,
     };
 
+    // Position telemetry is an independent XU read path. Keep it visible
+    // even if the standard V4L2 movement controls are absent or inactive.
+    add_gimbal_position_feedback(container, device);
+
     let has_pan = controls.iter().any(|c| c.name == "pan_absolute" && !c.disabled);
     let has_tilt = controls.iter().any(|c| c.name == "tilt_absolute" && !c.disabled);
-    if has_pan && has_tilt {
-        add_gimbal_position_feedback(container, device);
-    }
     if has_pan || has_tilt {
         let frame = gtk::Frame::new(Some("Gimbal movement"));
         ui::layout::mark_compact_item(frame.upcast_ref(), "camera:gimbal-movement");
