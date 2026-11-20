@@ -539,19 +539,11 @@ fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
     )
 }
 
-/// Read standard UVC Camera Terminal PanTilt Absolute using GET_CUR only.
+/// Read candidate live pan/tilt telemetry through XU unit 2 / selector 0x02 GET_CUR.
+/// This is read-only; Linux hardware behavior remains to be verified.
 pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
-    // Documented candidate: XU unit 2 / selector 0x02 GET_CUR, 60-byte
-    // response. Only the two float32 values at offset 20 are decoded for the
-    // observed position-like response records. Never issue SET_CUR here.
     let mut data = [0u8; 60];
     xu_query(device, 0x02, UVC_GET_CUR, &mut data)?;
-    let record = &data[..6];
-    if record != [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
-        && record != [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00]
-    {
-        return Err(format!("Unrecognized position response record: {:02x?}", record));
-    }
     decode_candidate_gimbal_position(&data)
 }
 
