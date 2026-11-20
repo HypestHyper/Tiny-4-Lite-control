@@ -69,8 +69,7 @@ mod sim {
     use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
-    pub const PAN_LIMIT: f64 = 130.0;
-    pub const TILT_LIMIT: f64 = 90.0;
+    pub use crate::backend::angles::{PAN_LIMIT, TILT_LIMIT};
     /// Degrees per second for each unit of speed.
     const RATE: f64 = 0.4;
 
@@ -112,8 +111,8 @@ mod sim {
             let Some((name, value)) = pair.split_once('=') else { continue };
             let Ok(value) = value.parse::<f64>() else { continue };
             match name {
-                "pan_absolute" => g.pan = (value / 3600.0).clamp(-PAN_LIMIT, PAN_LIMIT),
-                "tilt_absolute" => g.tilt = (value / 3600.0).clamp(-TILT_LIMIT, TILT_LIMIT),
+                "pan_absolute" => g.pan = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(-PAN_LIMIT, PAN_LIMIT),
+                "tilt_absolute" => g.tilt = (value / crate::backend::angles::RAW_PER_DEGREE).clamp(-TILT_LIMIT, TILT_LIMIT),
                 "pan_speed" => g.pan_speed = value,
                 "tilt_speed" => g.tilt_speed = value,
                 _ => {}
@@ -480,7 +479,7 @@ pub(crate) fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
 pub(crate) const UVC_CAMERA_TERMINAL_UNIT: u8 = 1;
 pub(crate) const UVC_CT_PANTILT_ABSOLUTE: u8 = 0x0d;
 // Existing V4L2 PTZ controls use 3600 raw units for a one-degree step.
-pub(crate) const PANTILT_RAW_UNITS_PER_DEGREE: f64 = 3600.0;
+pub(crate) use super::angles::RAW_PER_DEGREE as PANTILT_RAW_UNITS_PER_DEGREE;
 
 /// The largest single step the app will send, in degrees. Movement tests start small.
 pub(crate) const MAX_STEP_DEGREES: i64 = 5;
@@ -497,15 +496,14 @@ pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, m
     let current = get_control(device, control)?;
     let target = (current + degrees * PANTILT_RAW_UNITS_PER_DEGREE as i64).clamp(min, max);
     set_control(device, control, target)?;
-    Ok(target as f64 / PANTILT_RAW_UNITS_PER_DEGREE)
+    Ok(super::angles::raw_to_degrees(target))
 }
 /// Turn the camera to pan 0, tilt 0 (the middle of the V4L2 pan and tilt ranges). One command, so
 /// both axes start together. The camera physically turns, so callers ask the user first.
 pub(crate) fn centre_gimbal(device: &str) -> Result<(), String> {
     run_v4l2(device, "--set-ctrl=pan_absolute=0,tilt_absolute=0").map(|_| ())
 }
-pub(crate) const PAN_DISPLAY_LIMIT_DEGREES: f64 = 130.0;
-pub(crate) const TILT_DISPLAY_LIMIT_DEGREES: f64 = 90.0;
+pub(crate) use super::angles::{PAN_LIMIT as PAN_DISPLAY_LIMIT_DEGREES, TILT_LIMIT as TILT_DISPLAY_LIMIT_DEGREES};
 
 pub(crate) fn camera_terminal_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
     if ui_test_mode() {
@@ -531,8 +529,8 @@ pub(crate) fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
     let pan_raw = i32::from_le_bytes(data[0..4].try_into().expect("four-byte pan field"));
     let tilt_raw = i32::from_le_bytes(data[4..8].try_into().expect("four-byte tilt field"));
     (
-        (pan_raw as f64 / PANTILT_RAW_UNITS_PER_DEGREE).clamp(-PAN_DISPLAY_LIMIT_DEGREES, PAN_DISPLAY_LIMIT_DEGREES),
-        (tilt_raw as f64 / PANTILT_RAW_UNITS_PER_DEGREE).clamp(-TILT_DISPLAY_LIMIT_DEGREES, TILT_DISPLAY_LIMIT_DEGREES),
+        super::angles::raw_to_degrees(i64::from(pan_raw)).clamp(-PAN_DISPLAY_LIMIT_DEGREES, PAN_DISPLAY_LIMIT_DEGREES),
+        super::angles::raw_to_degrees(i64::from(tilt_raw)).clamp(-TILT_DISPLAY_LIMIT_DEGREES, TILT_DISPLAY_LIMIT_DEGREES),
     )
 }
 
@@ -578,9 +576,7 @@ pub(crate) fn query_obsbot(device: &str, receiver: u8, command: u16) -> Result<V
 
 pub(crate) fn decode_live_gimbal_position(data: &[u8]) -> Result<(f64, f64), String> {
     if data.len() < 12 { return Err(format!("Live gimbal reply is {} bytes; expected at least 12.", data.len())); }
-    let pitch = i16::from_le_bytes([data[8], data[9]]) as f64 / 100.0;
-    let pan = i16::from_le_bytes([data[10], data[11]]) as f64 / 100.0;
-    Ok((pan, -pitch))
+    Ok(super::angles::from_live(i16::from_le_bytes([data[8], data[9]]), i16::from_le_bytes([data[10], data[11]])))
 }
 
 pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
@@ -664,7 +660,7 @@ pub(crate) fn decode_candidate_gimbal_position(data: &[u8; 60]) -> Result<(f64, 
     if record != [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
         && record != [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00]
     {
-        return Err(format!("Unrecognized position response record: {:02x?}", record));
+        return Err(format!("Unrecognised position response record: {:02x?}", record));
     }
     let pan = f32::from_le_bytes(data[20..24].try_into().unwrap()) as f64;
     let tilt = f32::from_le_bytes(data[24..28].try_into().unwrap()) as f64;
@@ -1419,7 +1415,7 @@ pub(crate) fn decode_xu_command_response(data: &[u8; 60]) -> String {
     let position_record = record == [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
         || record == [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00];
     if !position_record {
-        return format!("No recognized position-like response record at bytes 9..14: {:02x?}\nOffset-20 values are not decoded for this response.", record);
+        return format!("No recognised position-like response record at bytes 9..14: {:02x?}\nOffset-20 values are not decoded for this response.", record);
     }
     let pan = f32::from_le_bytes(data[20..24].try_into().unwrap());
     let tilt = f32::from_le_bytes(data[24..28].try_into().unwrap());
@@ -1427,7 +1423,7 @@ pub(crate) fn decode_xu_command_response(data: &[u8; 60]) -> String {
         format!("Candidate position record: {:02x?}\nCandidate pan: {pan:.2}\nCandidate tilt: {tilt:.2}\n\nUnverified: these floats are position-like in prior captures, but live movement correlation is still required.",
             record)
     } else {
-        format!("Recognized record, but non-finite float values at offset 20: {pan:?}, {tilt:?}")
+        format!("Recognised record, but non-finite float values at offset 20: {pan:?}, {tilt:?}")
     }
 }
 

@@ -44,7 +44,7 @@ bash app/tests/headless-screenshots.sh \
   app/artifacts/headless-ui
 ```
 
-The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads Auto/Manual/Aperture Priority screenshots at multiple scroll positions, a screenshot at the normal 900 × 680 window size, Capture, and Diagnostics. It also compares screenshots before and after wheel input over a slider and dropdown, then drags the enabled Auto exposure compensation slider and checks that its value label changes. These screenshots validate rendering and layout only; they do not validate physical camera behavior or vendor commands.
+The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests, builds the GTK app, and uploads Auto/Manual/Aperture Priority screenshots at multiple scroll positions, a screenshot at the normal 900 × 680 window size, Capture, and Diagnostics. It also compares screenshots before and after wheel input over a slider and dropdown, then drags the enabled Auto exposure compensation slider and checks that its value label changes. These screenshots validate rendering and layout only; they do not validate physical camera behaviour or vendor commands.
 
 
 ### Device discovery and standard V4L2 controls
@@ -73,9 +73,9 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   a response matching the command and sequence with a valid 12-byte
   header CRC and four-byte payload. It ignores empty or nonmatching mailbox
   polls; the observed one-byte empty-mailbox response cannot be mistaken for
-  the framed reply. The UI initializes from camera read-back, offers an explicit
+  the framed reply. The UI initialises from camera read-back, offers an explicit
   **Read camera state** action, verifies each change after SET_CUR, and
-  displays Unknown on query failure or an unrecognized value. A successful
+  displays Unknown on query failure or an unrecognised value. A successful
   setter transfer alone is never shown as confirmed state. This is
   autofocus priority, separate from Auto Exposure Face / Global.
 - Auto Exposure priority has its own grouped Global / Face control,
@@ -84,12 +84,12 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   `0x06`, using full 60-byte SET_CUR and GET_CUR transfers. SET payload:
   Face = `03 01 00` + 57 zero bytes; Global = `03 01 01` + 57 zero
   bytes. GET_CUR status byte 7 is authoritative: `00` = Face,
-  `01` = Global. The app initializes from camera read-back and performs
+  `01` = Global. The app initialises from camera read-back and performs
   a read-back after every change; the saved local value is only a
   fallback if the camera query fails. UI and persisted state reflect
   the actual read-back value, not the requested value. This is distinct
   from autofocus priority. Protocol read-back is capture-verified;
-  integrated app behavior still needs physical camera validation.
+  integrated app behaviour still needs physical camera validation.
   Exposure compensation (−3.0 to +3.0) uses standard UVC Processing
   Unit 3, selector 1 (Backlight Compensation). Direct hardware tests
   cross-checked OBSBOT Center +2.0 with BLC 15 (`0f 00`) and +2.3
@@ -99,7 +99,7 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   startup and follows every SET_CUR with GET_CUR. It displays and
   persists the returned value, not merely the requested value. The
   control is available only while Auto Exposure is Auto. The current value
-  is initialized with UVC GET_CUR when supported, and successful changes
+  is initialised with UVC GET_CUR when supported, and successful changes
   are persisted locally.
 - Uses `zoom_absolute` as the only manual zoom/FOV path. The user
   confirmed smooth adjustment from 0 to 100 and these presets: Wide=0
@@ -144,7 +144,7 @@ selector `0x06` for the 60-byte status block.
 - FOV presets are implemented through V4L2 `zoom_absolute`, not a
   separate vendor command: Wide=0, Medium=5, Narrow=15. The generic
   V4L2 slider covers 0–100.
-- HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
+- HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initialises from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
 - Microphone controls use XU unit 2 / selector 0x06. **Microphone
   during sleep** reads the shared status block at byte offset 0x10
   (Off=0, On=1). Its write is a separate tagged command:
@@ -234,7 +234,7 @@ for the future in-process service, but are not replayed to the camera at
 startup. Camera read-back remains authoritative for settings that the
 device exposes. Autofocus priority is queried from the camera when the
 Controls page is populated, after each setter, and on explicit refresh;
-the persisted `focus_mode` is not trusted to initialize the UI. Gesture
+the persisted `focus_mode` is not trusted to initialise the UI. Gesture
 states without reliable camera read-back remain locally remembered as the
 last successfully submitted commands.
 
@@ -243,7 +243,7 @@ safe value validation, and write-to-temporary-file followed by rename.
 The settings module is implemented and loaded at application startup.
 The dedicated in-process camera service that will consume its service
 policy, own device monitoring, and implement optional idle sleep/wake
-behavior is not implemented yet. The service should receive a config
+behaviour is not implemented yet. The service should receive a config
 snapshot at startup and reload policy only after an explicit settings
 change, rather than independently guessing defaults.
 
@@ -334,7 +334,7 @@ revision as build-verified.
 - No camera movement or sleep action runs automatically at startup.
 - There is no separately installed background daemon or automatic
   sleep/wake service. Persistent TOML configuration is implemented;
-  the in-process camera service and optional restore-on-connect behavior
+  the in-process camera service and optional restore-on-connect behaviour
   are still future work.
 - Global / Face autofocus-priority setter and camera-side GET read-back
   are hardware-verified on 2026-11-20 and implemented in the backend and
@@ -359,8 +359,6 @@ revision as build-verified.
 
 ## Centre
 
-The Centre button on the gimbal card, and `tiny4lite-control gimbal centre --yes`, set `pan_absolute`
-and `tilt_absolute` to 0 in one V4L2 command. The camera turns, so the window asks first and the command
-line needs `--yes`. Zero is the middle of the V4L2 ranges (pan ±468000, tilt ±324000, in arcseconds) and
-the readings from a real camera showed 0 and 0 as the starting point for a +1° step. No research note
-verifies that this is the physical centre or the camera's own "home", so treat it as "pan 0, tilt 0".
+The Centre button on the gimbal card, and `tiny4lite-control gimbal centre --yes`, send pan 0 and tilt 0
+in one V4L2 command (`pan_absolute=0,tilt_absolute=0`). The user confirmed on a real camera that this is
+the physical centre. The camera turns, so the window asks first and the command line needs `--yes`.

@@ -14,8 +14,7 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-pub const PAN_LIMIT: f64 = 130.0;
-pub const TILT_LIMIT: f64 = 90.0;
+pub use crate::backend::angles::{PAN_LIMIT, TILT_LIMIT};
 
 type V3 = (f64, f64, f64);
 

@@ -198,7 +198,7 @@ impl Joystick {
                     let again = this.clone();
                     store.call(None, move |d| backend::step_gimbal(d, control, degrees, range.0, range.1), move |result| {
                         match result {
-                            Ok(target) => again.0.store.toast(&format!("{axis} target {target:+.0}°")),
+                            Ok(target) => again.0.store.toast(&format!("{axis} target {}", backend::angles::format(target))),
                             Err(error) => again.0.store.error(&format!("Could not turn {}: {error}", axis.to_lowercase())),
                         }
                         again.poll_position_once();
@@ -319,9 +319,8 @@ impl Joystick {
             match position {
                 Some((p, t)) => {
                     // Avoid "-0.0°" for tiny negative values.
-                    let clean = |v: f64| if v.abs() < 0.05 { 0.0 } else { v };
-                    pan.set_text(&format!("{:+.1}°", clean(p)));
-                    tilt.set_text(&format!("{:+.1}°", clean(t)));
+                    pan.set_text(&backend::angles::format(p));
+                    tilt.set_text(&backend::angles::format(t));
                     pan.set_tooltip_text(None);
                     tilt.set_tooltip_text(None);
                 }

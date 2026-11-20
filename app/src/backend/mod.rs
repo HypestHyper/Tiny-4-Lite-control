@@ -1,3 +1,4 @@
+pub mod angles;
 pub mod device;
 pub mod registry;
 pub mod state;

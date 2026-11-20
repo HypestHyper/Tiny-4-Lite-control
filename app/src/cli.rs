@@ -19,7 +19,7 @@ pub const NEEDS_YES: i32 = 4;
 pub const NO_CAMERA: i32 = 5;
 
 const COMMANDS: &[&str] = &[
-    "list", "get", "set", "toggle", "reset", "info", "status", "gimbal", "preset", "position",
+    "list", "get", "set", "toggle", "reset", "info", "deps", "status", "gimbal", "preset", "position",
     "startup", "capture", "completions", "help", "__complete",
 ];
 
@@ -97,6 +97,7 @@ fn dispatch(args: &[String]) -> i32 {
         "help" => { print!("{}", help(rest.first().map(String::as_str))); OK }
         "completions" => completions(rest.first().map(String::as_str)),
         "__complete" => complete(rest),
+        "deps" => { print!("{}", registry::dependency_map()); OK }
         "list" => with_camera(&options, |device, snapshot| list(&options, device, snapshot)),
         "get" => with_camera(&options, |_, snapshot| get(&options, snapshot)),
         "info" => with_camera(&options, |_, snapshot| info(&options, snapshot)),
@@ -172,10 +173,6 @@ fn tab_slug(group: Group) -> &'static str {
 }
 
 /// Degrees for display, without a negative zero.
-fn deg(value: impl Into<f64>) -> f64 {
-    let value = value.into();
-    if value.abs() < 0.05 { 0.0 } else { value }
-}
 
 fn normalise(text: &str) -> String {
     text.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
@@ -499,7 +496,7 @@ fn status(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             println!("{:<9}{}", setting.label.split_whitespace().next().unwrap_or(""), show(setting, snapshot, setting.read(snapshot)));
         }
     }
-    match position { Some((pan, tilt)) => println!("Gimbal   pan {:+.1}°, tilt {:+.1}°", deg(pan), deg(tilt)), None => println!("Gimbal   position not available") }
+    match position { Some((pan, tilt)) => println!("Gimbal   pan {}, tilt {}", backend::angles::format(pan), backend::angles::format(tilt)), None => println!("Gimbal   position not available") }
     OK
 }
 
@@ -508,7 +505,7 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
         Some("position") => match backend::get_gimbal_position(device) {
             Ok((pan, tilt)) => {
                 if options.json { println!("{}", json!({ "pan_degrees": pan, "tilt_degrees": tilt })); }
-                else { println!("pan {:+.1}°, tilt {:+.1}°", deg(pan), deg(tilt)); }
+                else { println!("pan {}, tilt {}", backend::angles::format(pan), backend::angles::format(tilt)); }
                 OK
             }
             Err(error) => fail(&format!("Could not read the gimbal position: {error}")),
@@ -541,7 +538,7 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
                     continue;
                 };
                 match backend::step_gimbal(device, control, value, range.0, range.1) {
-                    Ok(target) => println!("{axis} target {target:+.0}°"),
+                    Ok(target) => println!("{axis} target {}", backend::angles::format(target)),
                     Err(error) => { eprintln!("Could not turn {axis}: {error}"); code = FAILED; }
                 }
             }
@@ -639,7 +636,7 @@ fn position(options: &Options, device: &str) -> i32 {
                 if options.json {
                     println!("{}", json!(entries.iter().map(|e| json!({ "position": e.slot + 1, "name": e.name, "pan_degrees": e.pan_degrees, "tilt_degrees": e.tilt_degrees, "zoom": e.zoom })).collect::<Vec<_>>()));
                 } else if entries.is_empty() { println!("The camera has no saved positions."); }
-                else { for e in entries { println!("{}  {}  pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", e.slot + 1, e.name, deg(e.pan_degrees), deg(e.tilt_degrees), e.zoom); } }
+                else { for e in entries { println!("{}  {}  pan {}, tilt {}, zoom {:.2}×", e.slot + 1, e.name, backend::angles::format(e.pan_degrees), backend::angles::format(e.tilt_degrees), e.zoom); } }
                 OK
             }
             Err(error) => fail(&format!("Could not read the camera's saved positions: {error}")),
@@ -669,7 +666,7 @@ fn startup(options: &Options, device: &str) -> i32 {
         Some("show") | None => match backend::read_initial_camera_state(device) {
             Ok(s) => {
                 if options.json { println!("{}", json!({ "pan_degrees": s.pan, "tilt_degrees": s.tilt, "zoom": s.zoom, "source": s.source })); }
-                else { println!("pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", deg(s.pan), deg(s.tilt), s.zoom); }
+                else { println!("pan {}, tilt {}, zoom {:.2}×", backend::angles::format(s.pan), backend::angles::format(s.tilt), s.zoom); }
                 OK
             }
             Err(e) => fail(&format!("Could not read the start-up position: {e}")),
@@ -741,6 +738,7 @@ Settings (every setting the windows show):
   toggle NAME                Flip an on/off setting
   reset NAME                 Return a slider to its default
   info NAME                  Explain a setting: values, range, what it needs
+  deps                       Print the dependency map (what blocks what) as Markdown
 
 Other things the windows do:
   status                     Power, exposure, focus, tracking and gimbal position

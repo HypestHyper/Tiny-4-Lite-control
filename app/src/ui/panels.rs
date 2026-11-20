@@ -114,7 +114,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
                             match &found {
                                 Some(e) => {
                                     slot.name.set_text(&e.name);
-                                    slot.detail.set_text(&format!("Pan {:+.1}° · Tilt {:+.1}° · Zoom {:.2}×", e.pan_degrees, e.tilt_degrees, e.zoom));
+                                    slot.detail.set_text(&format!("Pan {} · Tilt {} · Zoom {:.2}×", backend::angles::format(e.pan_degrees), backend::angles::format(e.tilt_degrees), e.zoom));
                                 }
                                 None => { slot.name.set_text(""); slot.detail.set_text("Empty. Point the camera, name it, and save."); }
                             }
@@ -352,7 +352,7 @@ fn startup_pose_card(store: &Store) -> gtk::Box {
             store.call(Some("startup-pose"), |d| backend::read_initial_camera_state(d), move |r| match r {
                 Ok(state) => {
                     let source = match state.source { 0..=2 => format!("Position {}", state.source + 1), 3 => "Custom position".into(), other => format!("Unknown ({other})") };
-                    current.set_text(&format!("{source} · Pan {:+.1}° · Tilt {:+.1}° · Zoom {:.2}×", state.pan, state.tilt, state.zoom));
+                    current.set_text(&format!("{source} · Pan {} · Tilt {} · Zoom {:.2}×", backend::angles::format(state.pan), backend::angles::format(state.tilt), state.zoom));
                 }
                 Err(_) => current.set_text("Not available right now."),
             });

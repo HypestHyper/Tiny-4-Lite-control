@@ -81,7 +81,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if pan.is_finite() && tilt.is_finite() {
             for (name, degrees) in [("pan_absolute", pan), ("tilt_absolute", tilt)] {
                 if let Some(control) = parse_controls(&output).into_iter().find(|c| c.name == name && !c.disabled) {
-                    let raw = (degrees.round() as i64) * 3600;
+                    let raw = backend::angles::degrees_to_raw(degrees);
                     settings.insert(format!("v4l2:{name}"), raw.clamp(control.min, control.max));
                 }
             }

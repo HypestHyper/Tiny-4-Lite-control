@@ -46,7 +46,7 @@ the standard absolute pan and tilt controls. Which way "+" turns has not been ch
 position readout above the buttons shows the result.
 
 Keyboard: `Alt+1`…`Alt+5` switch tabs, `Ctrl+F` or just typing opens search, `Esc` closes search or a
-dialog. With the joystick focused the arrow keys move the gimbal and releasing them stops it; `Space` or
+dialogue. With the joystick focused the arrow keys move the gimbal and releasing them stops it; `Space` or
 `Esc` stops it at once.
 
 ### Window-manager rules
@@ -94,7 +94,8 @@ tiny4lite-control info shutter-speed        # what it does, its range, what it n
 tiny4lite-control status
 tiny4lite-control gimbal move --pan 30 --seconds 2    # percent of full speed; always stops
 tiny4lite-control gimbal step --pan 1 --tilt -1        # whole degrees, 1 to 5 each, either direction
-tiny4lite-control gimbal centre --yes                   # turn to pan 0°, tilt 0° (the camera moves, so --yes is required)
+tiny4lite-control deps                                   # what blocks what, as Markdown (also in docs/dependencies.md)
+tiny4lite-control gimbal centre --yes                   # turn to the physical centre, pan 0° tilt 0° (the camera moves, so --yes is required)
 tiny4lite-control gimbal position
 tiny4lite-control preset list | apply NAME | save NAME | delete NAME
 tiny4lite-control position list | go 1 | save 1 Desk | delete 1    # the camera's three saved positions
@@ -191,10 +192,10 @@ Backlight Compensation control; there is no separate backlight slider because it
 3. Return where each value came from in the reader (`from_camera(...)`, `from_saved(...)`; nothing means
    Unknown) and, if the camera can confirm a write, return the value it reports from the writer. Mark
    `.last_sent()` if the camera cannot report it, add `.info(...)` for the info
-   dialog, `.needs(...)` for dependencies, `.experimental()` if it is unverified, `.not_quick()` to keep it
+   dialogue, `.needs(...)` for dependencies, `.experimental()` if it is unverified, `.not_quick()` to keep it
    out of the slim window's list.
 
-The full window, slim window, search, customise list and info dialogs pick it up with no UI code.
+The full window, slim window, search, customise list and info dialogues pick it up with no UI code.
 
 ## Appearance
 
