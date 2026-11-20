@@ -64,9 +64,11 @@ The application is a Rust + GTK4 test bench. Current source of truth:
   round-tripping persisted settings.
 - `apply_on_connect` is reserved and defaults to `false`. Loading
   settings does not send camera commands or move the gimbal. Camera
-  read-back remains authoritative where available; locally saved
-  gesture/focus values represent the last successfully submitted
-  setting where the camera has no reliable read-back.
+  read-back remains authoritative where available. Autofocus priority is
+  queried when Controls is populated, after each setter, and on explicit
+  refresh; the persisted `focus_mode` is not trusted to initialize the UI.
+  Gesture states without reliable camera read-back remain locally saved as
+  the last successfully submitted setting.
 - This is the persistence foundation, not yet the complete service
   architecture. A dedicated in-process camera service for serialized
   device ownership, monitoring, disconnect/reconnect handling, and
