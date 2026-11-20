@@ -187,18 +187,18 @@ Four outgoing 60-byte XU SET_CUR command frames were found. Their vendor functio
 | 119472 | 23.167025s | Face → Global | `0x24` | `bf fb 01 00` |
 | 153688 | 29.833731s | Global → Face | `0x25` | `be 07 00 00` |
 
-The 15.217s, 23.167s, and 29.833s writes occur shortly before their corresponding user checkpoints, consistent with the user action preceding the checkpoint marker. The first write at 6.052s occurs well after the baseline marker and before the first transition; it is consistent with the initial Global state but is not independently tied to a specific click. The three subsequent correlated transitions establish the working payload assignment:
+The packet bytes and sequence numbers above are raw observations. **The UI-state labels assigned in the original analysis were reversed.** The 2026-11-20 controlled read-back tests below independently establish the correct mapping:
 
-- **Global:** `bf fb 01 00`
-- **Face:** `be 07 00 00`
+- **Face:** `bf fb 01 00`
+- **Global:** `be 07 00 00`
 
-This reverses the earlier app implementation's assignment. The previous mapping in the implementation-status document and app README is superseded by this controlled capture.
+The original action checkpoints were not reliable enough to assign those labels. Retain the captured bytes and frame numbers, but use the 2026-11-20 read-back results as the authoritative state mapping.
 
 ### Missing final transition
 
 No focus-priority SET_CUR was found for the final Face → Global checkpoint at 39.067s. Inspection of all control transfers from 34s through 41s found only interface alternate-setting changes, periodic UVC GET requests, and a separate three-byte endpoint control request (`00 7d 00`). None is the 60-byte focus-priority command. The final UI transition therefore did not produce a focus command in this recording.
 
-The focus command submissions that were present had matching USB completions with status 0. This establishes successful host USB transfer completion only; it does not prove that the camera applied the priority. There is no reliable camera-side read-back for this setting.
+The focus command submissions that were present had matching USB completions with status 0. This establishes successful host USB transfer completion only; it does not prove that the camera applied the priority. At the time this capture was analyzed, no camera-side read-back had been tested. The 2026-11-20 tests below subsequently established a working GET path.
 
 ### App correction prompted by this capture
 
@@ -245,3 +245,82 @@ The last user checkpoint recorded HDR Off, but no corresponding outgoing command
 ### App implementation
 
 The test app now exposes an HDR switch in Camera settings. It reads status byte `0x06` on startup to initialize the switch, falls back to the last successfully submitted local setting if the status read is unavailable, sends the captured 60-byte selector `0x06` payload on change, and persists the preference in `config.toml`. Unit tests cover both command prefixes and the status-byte interpretation. A successful ioctl confirms host-side request completion; the independent status read-back is the stronger state verification.
+
+
+---
+
+## 2026-11-20 Tiny 2 Lite autofocus-priority setter and read-back verification
+
+**Target:** OBSBOT Tiny 2 Lite, VID:PID `3564:fef9`  
+**USB bus/device:** `3/42`  
+**Linux monitor:** `usbmon3`  
+**Linux UVC video node:** `/dev/video0` (the separate `/dev/video1` node is metadata capture, not the video/XU control node)
+
+### Corrected state mapping
+
+The original 2026-11-18 capture contained the correct setter payloads, but the Face/Global labels were assigned backwards during analysis. On 2026-11-20, the user explicitly selected each mode in OBSBOT Center, disconnected the camera from the Windows VM, returned USB ownership to Linux, and queried the camera through XU unit 2 / selector `0x02`.
+
+The getter returned the following four-byte values:
+
+| OBSBOT Center selection immediately before USB hand-off | GET reply payload | Little-endian integer |
+|---|---|---:|
+| Face | `bf fb 01 00` | `0x0001FBBF` |
+| Global | `be 07 00 00` | `0x000007BE` |
+
+This establishes the authoritative mapping:
+
+- **Face:** `bf fb 01 00`
+- **Global:** `be 07 00 00`
+
+The values match the two payloads found in the 2026-11-18 `CAM_SET_FACE_FOCUS` writes. The prior analysis had swapped their UI labels; the raw packet bytes do not need alteration.
+
+### Setter
+
+- Vendor command: `CAM_SET_FACE_FOCUS`
+- Wire command ID: `0x3602`
+- Receiver: `0x02`
+- XU unit: `2`
+- XU selector: `0x02`
+- UVC request: `SET_CUR` (`bmRequestType=0x21`, `bRequest=0x01`)
+- `wValue=0x0200`, `wIndex=0x0200`, `wLength=60`
+- Four-byte priority value begins at framed payload offset 16.
+
+| Requested mode | Four-byte setter value |
+|---|---|
+| Face | `bf fb 01 00` |
+| Global | `be 07 00 00` |
+
+The 2026-11-18 capture contains these two values in alternating writes. Its original action labels were reversed, as described above. USB completion status 0 confirms host transfer completion; the independent GET results are the evidence that establishes the state mapping.
+
+### Getter
+
+- Vendor command: `CAM_GET_FACE_FOCUS`
+- Wire command ID: `0x35C2`
+- Receiver: `0x02`
+- XU unit: `2`
+- XU selector: `0x02`
+- The framed header-only GET command is submitted through XU `SET_CUR`; the response is retrieved by XU `GET_CUR`.
+- UVC control fields for both operations: `wValue=0x0200`, `wIndex=0x0200`, `wLength=60`.
+
+The request frame uses flags `0x01`, a 12-byte header, sender `0x0A`, receiver `0x02`, and command `0x35C2`. The CRC16/USB is calculated over the complete 12-byte header with CRC bytes 6–7 zeroed. The matching response uses flags `0x29`, echoes the request sequence and command, and contains a four-byte nested payload at response offset 14.
+
+The response payload is a priority value, **not a Boolean enable flag**. Decode it as a four-byte little-endian value and map it using the table above. The Boolean decoder documented by the third-party `obsbot-mcp` implementation is not correct for this Tiny 2 Lite response.
+
+### Hardware test details
+
+Two successful matching query responses were recorded using request sequence `0x16` after selecting each mode in OBSBOT Center:
+
+- Face selection returned response prefix `aa 29 16 00 0c 00 d4 6a 02 0a c2 35 04 00 bf fb 01 00`.
+- Global selection returned response prefix `aa 29 16 00 0c 00 d4 6a 02 0a c2 35 04 00 be 07 00 00`.
+
+An earlier successful query using sequence `0x15` also returned `bf fb 01 00`. Subsequent GET_CUR polls after consuming the matching reply returned a one-byte zero response, consistent with an empty/consumed mailbox. The implementation must match command ID and sequence and must not mistake the later empty poll for the query result.
+
+### Implementation requirements and evidence limits
+
+- Initialize the UI from this camera-side GET result, not from a hard-coded default or only a locally remembered selection.
+- After a successful setter, query again where practical and update the displayed state from the returned value.
+- Treat unknown four-byte values, malformed replies, and timeouts as **Unknown**; do not coerce them to Face or Global.
+- Match both response command ID `0x35C2` and the outstanding 16-bit sequence number.
+- Do not decode the reply as Boolean.
+- Keep this autofocus-priority command separate from Face-priority auto-exposure, which uses XU selector `0x06`, tag `0x03`, and a different status field.
+- These tests verify the command mapping and camera-side state read-back. They do **not** independently prove the visible autofocus behavior or image-quality difference between Face and Global modes.
