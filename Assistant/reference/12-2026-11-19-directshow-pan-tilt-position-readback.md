@@ -123,16 +123,17 @@ The selector 0x02 float32 values at payload offsets 20 and 24 remain movement-as
 
 The separate **Set initial state** operation is not implemented. In the 2026-11-19 save-action window (epoch 1795052741.355522–1795052764.996286), frame 119027 was a host-to-camera SET_CUR with an `AA 01` payload and frame 141561 was another host-to-camera SET_CUR with an `AA 25` payload; neither has been tied to the button action. The repeated `AA 29` records are camera-to-host GET_CUR responses, not the save command. Their fields remain unmapped. Do not synthesize a setter or substitute a local preset for this camera operation.
 
-The app implements the current read-only candidate path in `app/src/main.rs`:
+The active read-only candidate path in `app/src/main.rs` is:
 
-- Camera Terminal entity 1, selector 0x0D, GET_CUR, 8-byte buffer.
-- Decode signed little-endian pan and tilt values.
-- Convert using the existing 3600-raw-units-per-degree app scale.
+- XU unit 2, selector 0x02, GET_CUR, 60-byte response.
+- Accept the two observed six-byte response signatures:
+  `04 0a 44 3a 18 00` and `02 0a 42 29 05 00`.
+- Decode float32 little-endian pan and tilt at payload offsets 20 and 24.
 - Clamp displayed values to Pan [-130°, +130°] and Tilt [-90°, +90°].
 
-The Controls page adds a **Gimbal position** readout. It polls at 4 Hz (every 250 ms), displays signed degree values, and shows **Unavailable** with the ioctl error as a tooltip if the read fails. The timer ends when the readout widgets are destroyed. It performs no writes and does not move the camera.
+The earlier standard Camera Terminal implementation remains as an inactive helper in source: entity 1, selector 0x0D, GET_CUR, 8-byte response containing signed little-endian pan and tilt. Its 3600-raw-units-per-degree conversion was derived from the app's movement controls but was not validated as live telemetry on Linux.
 
-The readout is created only when the selected video node advertises both enabled `pan_absolute` and `tilt_absolute` V4L2 controls.
+The Controls page adds a **Gimbal position** readout. It initializes immediately, then polls at 4 Hz (every 250 ms), displays signed degree values, and shows **Unavailable** with the exact read error as a tooltip if the query fails. The timer ends when the readout widgets are destroyed. It performs no writes and does not move the camera. The readout is shown independently of whether standard V4L2 pan/tilt movement controls are enabled.
 
 ## 7. Validation status and next hardware check
 
@@ -143,17 +144,17 @@ The readout is created only when the selected video node advertises both enabled
 - Linux app request tuple and decoder are implemented as read-only code.
 
 **Not yet confirmed on Linux:**
-- Whether `UVCIOC_CTRL_QUERY` for entity 1 / selector 0x0D succeeds on the Tiny 2 Lite Linux V4L2 node.
-- Whether the Linux response uses the 3600-raw-units-per-degree scale assumed from existing app controls.
+- Whether host-initiated XU unit 2 / selector 0x02 GET_CUR returns the two expected response signatures on the user's Linux camera.
+- Whether float32 values at offsets 20/24 track actual physical Pan/Tilt movement rather than a cached or unrelated state.
 - Whether values update smoothly at the 4 Hz UI polling interval.
 
-The camera was owned by the Windows VM during the Windows test. Linux cannot query it concurrently while USB passthrough assigns it to the VM. To validate, return USB ownership to the Linux host, ensure the camera has a V4L2 node, launch the app, and gently move the gimbal by hand. Displayed values should change with physical movement and settle when stationary. If the ioctl fails, preserve the exact error; do not silently fall back to the old XU status block or cached V4L2 values.
+To validate, return USB ownership to the Linux host, ensure the camera has a V4L2 node, launch the app, and gently move the gimbal by hand. Displayed values should change with physical movement and settle when stationary. If the ioctl fails or returns an unknown signature, preserve the exact error; do not silently fall back to cached V4L2 movement targets.
 
 ## 8. Safety and scope
 
-- This feature performs only Camera Terminal GET_CUR reads.
-- No SET_CUR movement requests are added.
-- No undocumented Extension Unit writes are added.
+- The active position readout performs only XU GET_CUR reads; it does not send movement commands.
+- The earlier Camera Terminal GET_CUR helper is also read-only.
+- No SET_CUR movement requests are added by the position readout.
 - The app does not restore position or move the camera on startup.
 - Software display bounds remain Pan ±130° and Tilt ±90°.
 - Roll remains outside this feature until its live behaviour and encoding are separately validated.
