@@ -416,6 +416,7 @@ pub(crate) fn populate_controls(device: &str, container: &gtk::Box, window: &gtk
     add_audio_controls(container, device, status);
     ui::presets::append(container, device, window, status);
     ui::presets::append_camera_native(container, device, status);
+    ui::presets::append_initial_state(container, device, status);
     ui::video::append(container, device, status);
     add_sleep_controls(container, device, status);
 
