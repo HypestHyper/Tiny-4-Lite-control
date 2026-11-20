@@ -134,11 +134,32 @@ mod shape {
     pub const DOT_CORNER: f64 = 5.2;
     /// Radius of the floor ring that shows the pan range.
     pub const FLOOR_RING: f64 = 38.0;
-    /// Field of view drawn as the cone: 79.4° diagonal (official spec) at 16:9.
-    pub const FOV_DIAGONAL_DEGREES: f64 = 79.4;
+    /// Diagonal field of view at zoom 0 (the "Widest" preset, 86°), 16:9.
+    pub const FOV_DIAGONAL_DEGREES: f64 = 86.0;
+    /// Zoom control position and the zoom factor measured there. The three presets are documented
+    /// (0 → 1.00×, 5 → 1.15×, 15 → 1.47×); the factor at the top of the range (100) is NOT
+    /// documented, so 2.0× is an assumption and only the end of the curve depends on it.
+    pub const ZOOM_CURVE: [(f64, f64); 4] = [(0.0, 1.0), (5.0, 1.15), (15.0, 1.47), (100.0, 2.0)];
     pub const CONE_REACH: f64 = 40.0;
     /// One drawing unit is this many millimetres.
     pub const UNIT: f64 = 32.0;
+}
+
+/// Zoom factor at a zoom control position (0–100), straight between the documented points.
+pub fn zoom_factor(zoom: f64) -> f64 {
+    let curve = shape::ZOOM_CURVE;
+    let z = zoom.clamp(curve[0].0, curve[curve.len() - 1].0);
+    for pair in curve.windows(2) {
+        let ((z0, f0), (z1, f1)) = (pair[0], pair[1]);
+        if z <= z1 { return f0 + (f1 - f0) * (z - z0) / (z1 - z0); }
+    }
+    curve[curve.len() - 1].1
+}
+
+/// Diagonal field of view in degrees: the widest angle divided down by the zoom factor.
+pub fn fov_diagonal(zoom: f64) -> f64 {
+    let wide = (shape::FOV_DIAGONAL_DEGREES / 2.0).to_radians().tan();
+    2.0 * (wide / zoom_factor(zoom)).atan().to_degrees()
 }
 
 /// A rounded rectangle as a closed outline: each corner is `steps + 1` points, so the straight
@@ -212,7 +233,7 @@ fn slab(outline: &[(f64, f64)], steps: usize, front: impl Fn((f64, f64)) -> V3, 
 }
 
 /// All the lines of the model for a pan and tilt, in drawing units (see `shape::UNIT`).
-fn model(pan: f64, tilt: f64, behind: bool) -> Vec<Line> {
+fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
     use shape::*;
     let mut lines = Vec::new();
 
@@ -290,7 +311,10 @@ fn model(pan: f64, tilt: f64, behind: bool) -> Vec<Line> {
     let plate = rounded_rect((HEAD_X1 - PLATE_X0) / 2.0 - PLATE_INSET, HEAD_HALF_H - PLATE_INSET, HEAD_CORNER - 1.0, 5);
     close_loop(&plate.iter().map(|p| (plate_centre + p.0, p.1, -HEAD_HALF_D)).collect::<Vec<_>>(), Kind::HeadFront, &mut head);
     // The lens: glass edge, recess, barrel and glass, with fine ridges between recess and edge.
+    // Zooming draws the inner glass further into the barrel, a sketch of the lens working.
+    let zoom_t = (zoom_factor(zoom) - 1.0) / (ZOOM_CURVE[ZOOM_CURVE.len() - 1].1 - 1.0);
     for (radius, depth) in LENS_RINGS {
+        let depth = depth * (1.0 + 0.9 * zoom_t * (depth / LENS_RINGS[3].1));
         close_loop(&ring_xy(LENS_X, 0.0, radius, -HEAD_HALF_D + depth, 32), Kind::LensFront, &mut head);
     }
     for k in 0..RIDGE_COUNT {
@@ -312,7 +336,7 @@ fn model(pan: f64, tilt: f64, behind: bool) -> Vec<Line> {
     }
     // What the camera sees: a ray and a view frustum at the official field of view, 16:9.
     let front_z = -HEAD_HALF_D;
-    let half_diagonal = (FOV_DIAGONAL_DEGREES / 2.0).to_radians().tan();
+    let half_diagonal = (fov_diagonal(zoom) / 2.0).to_radians().tan();
     let diagonal = (16.0f64 * 16.0 + 9.0 * 9.0).sqrt();
     let (half_w, half_h) = (half_diagonal * 16.0 / diagonal * CONE_REACH, half_diagonal * 9.0 / diagonal * CONE_REACH);
     head.push(Line { a: (LENS_X, 0.0, front_z), b: (LENS_X, 0.0, front_z - CONE_REACH * 1.2), kind: Kind::Aim });
@@ -366,6 +390,9 @@ struct State {
     /// Where the camera says it points, or `None` if it has not answered.
     target: Cell<Option<(f64, f64)>>,
     shown: Cell<(f64, f64)>,
+    /// Zoom control position (0–100): where the camera says it is, and what is drawn now.
+    zoom_target: Cell<f64>,
+    zoom_shown: Cell<f64>,
     animating: Cell<bool>,
     behind: Cell<bool>,
     last_frame: Cell<i64>,
@@ -385,7 +412,7 @@ impl GimbalModel {
         area.set_accessible_role(gtk::AccessibleRole::Img);
         area.update_property(&[gtk::accessible::Property::Label("Gimbal model showing where the camera points")]);
         let state = Rc::new(State {
-            area: area.clone(), target: Cell::new(None), shown: Cell::new((0.0, 0.0)),
+            area: area.clone(), target: Cell::new(None), shown: Cell::new((0.0, 0.0)), zoom_target: Cell::new(0.0), zoom_shown: Cell::new(0.0),
             animating: Cell::new(false), behind: Cell::new(current_config().model_view_behind), last_frame: Cell::new(0), tick: RefCell::default(),
         });
         let model = GimbalModel(state);
@@ -410,6 +437,17 @@ impl GimbalModel {
             None => false,
         });
         model.set_target(store.gimbal());
+        // The zoom comes from the snapshot the rest of the app already keeps.
+        let zoom_of = |snapshot: &crate::backend::registry::Snapshot| snapshot.control("zoom_absolute").map(|c| c.value as f64);
+        if let Some(z) = zoom_of(&store.snapshot()) { model.0.zoom_target.set(z); model.0.zoom_shown.set(z); }
+        let weak = Rc::downgrade(&model.0);
+        store.subscribe(move |snapshot| match weak.upgrade() {
+            Some(state) => {
+                if let Some(z) = zoom_of(snapshot) { GimbalModel(state).set_zoom(z); }
+                true
+            }
+            None => false,
+        });
         model
     }
 
@@ -429,6 +467,13 @@ impl GimbalModel {
         }
     }
 
+    fn set_zoom(&self, zoom: f64) {
+        let state = &self.0;
+        if (state.zoom_target.get() - zoom).abs() < f64::EPSILON { return; }
+        state.zoom_target.set(zoom);
+        if current_config().reduce_motion { state.zoom_shown.set(zoom); state.area.queue_draw(); } else { self.animate(); }
+    }
+
     fn animate(&self) {
         let state = &self.0;
         if state.animating.replace(true) { return; }
@@ -436,14 +481,17 @@ impl GimbalModel {
         let weak = Rc::downgrade(state);
         let id = state.area.add_tick_callback(move |_, clock| {
             let Some(state) = weak.upgrade() else { return glib::ControlFlow::Break };
-            let Some((tp, tt)) = state.target.get() else { state.animating.set(false); return glib::ControlFlow::Break };
+            let (tp, tt) = state.target.get().unwrap_or_else(|| state.shown.get());
             let now = clock.frame_time();
             let dt = if state.last_frame.get() == 0 { 1.0 / 60.0 } else { ((now - state.last_frame.get()) as f64 / 1_000_000.0).clamp(0.001, 0.1) };
             state.last_frame.set(now);
             let (cp, ct) = state.shown.get();
             let (np, nt) = (approach(cp, tp, dt), approach(ct, tt, dt));
-            let done = (np - tp).abs() < 0.05 && (nt - tt).abs() < 0.05;
+            let (zt, zc) = (state.zoom_target.get(), state.zoom_shown.get());
+            let nz = approach(zc, zt, dt);
+            let done = (np - tp).abs() < 0.05 && (nt - tt).abs() < 0.05 && (nz - zt).abs() < 0.3;
             state.shown.set(if done { (tp, tt) } else { (np, nt) });
+            state.zoom_shown.set(if done { zt } else { nz });
             state.area.queue_draw();
             if done { state.animating.set(false); glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
         });
@@ -470,7 +518,7 @@ impl GimbalModel {
             // Without a reading the model sits dim at centre instead of pretending.
             let fade = if known { 1.0 } else { 0.35 };
             let behind = state.behind.get();
-            let lines = model(pan, tilt, behind);
+            let lines = model(pan, tilt, state.zoom_shown.get(), behind);
             // One stroke per style: the model has over a thousand short lines.
             let styles: [&[Kind]; 6] = [
                 &[Kind::Base], &[Kind::Detail, Kind::HeadFront, Kind::HeadBack, Kind::BaseFront, Kind::BaseBack],
@@ -516,7 +564,7 @@ mod tests {
     fn the_drawn_lens_direction_matches_the_pan_and_tilt_maths() {
         // The model's aim ray starts at the lens and ends along `forward`.
         for (pan, tilt) in [(0.0, 0.0), (40.0, 15.0), (-75.0, -20.0), (130.0, 90.0)] {
-            let lines = model(pan, tilt, false);
+            let lines = model(pan, tilt, 0.0, false);
             let ray = lines.iter().filter(|l| l.kind == Kind::Aim).next().expect("an aim line");
             let d = (ray.b.0 - ray.a.0, ray.b.1 - ray.a.1, ray.b.2 - ray.a.2);
             let length = (d.0 * d.0 + d.1 * d.1 + d.2 * d.2).sqrt();
@@ -546,7 +594,7 @@ mod tests {
 
     #[test]
     fn projection_keeps_the_scene_inside_a_sensible_box() {
-        for line in model(0.0, 0.0, false) {
+        for line in model(0.0, 0.0, 0.0, false) {
             for point in [line.a, line.b] {
                 let (x, y) = project(point, false);
                 assert!(x.abs() < 3.0 && y.abs() < 3.0, "{point:?} -> {x}, {y}");
@@ -568,7 +616,7 @@ mod shape_tests {
     /// size OBSBOT publishes: 48.37 wide, 46.46 deep and 64.2 high, in millimetres.
     #[test]
     fn the_camera_body_has_the_published_size() {
-        let body: Vec<Line> = model(0.0, 0.0, false).into_iter().filter(|l| !matches!(l.kind, Kind::Aim | Kind::Limit | Kind::Base)
+        let body: Vec<Line> = model(0.0, 0.0, 0.0, false).into_iter().filter(|l| !matches!(l.kind, Kind::Aim | Kind::Limit | Kind::Base)
             || (l.kind == Kind::Base && l.a.0.hypot(l.a.2) * shape::UNIT < shape::FLOOR_RING - 1.0)).collect();
         let mm = |units: f64| units * shape::UNIT;
         let (x0, x1) = extent(&body, |v| v.0);
@@ -580,17 +628,33 @@ mod shape_tests {
         assert!((mm(z1 - z0) - 46.4).abs() < 1.5, "depth {}", mm(z1 - z0));
     }
 
+    /// The three documented presets give the documented angles: 86° wide, 78° normal, 65° narrow.
     #[test]
-    fn the_view_cone_uses_the_official_field_of_view() {
-        let lines = model(0.0, 0.0, false);
+    fn zoom_presets_give_the_documented_angles() {
+        assert!((zoom_factor(5.0) - 1.15).abs() < 1e-9 && (zoom_factor(15.0) - 1.47).abs() < 1e-9);
+        assert!((fov_diagonal(0.0) - 86.0).abs() < 0.01);
+        assert!((fov_diagonal(5.0) - 78.0).abs() < 0.6, "{}", fov_diagonal(5.0));
+        assert!((fov_diagonal(15.0) - 65.0).abs() < 0.6, "{}", fov_diagonal(15.0));
+        assert!(fov_diagonal(100.0) < fov_diagonal(15.0));
+    }
+
+    #[test]
+    fn zooming_narrows_the_cone() {
+        let reach = |zoom: f64| model(0.0, 0.0, zoom, false).iter().filter(|l| l.kind == Kind::Aim).map(|l| l.b.0.abs()).fold(0.0, f64::max);
+        assert!(reach(15.0) < reach(0.0) && reach(100.0) < reach(15.0));
+    }
+
+    #[test]
+    fn the_view_cone_uses_the_documented_field_of_view() {
+        let lines = model(0.0, 0.0, 0.0, false);
         let aims: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
         // Ray, four edges from the lens, four edges of the far rectangle.
         assert_eq!(aims.len(), 9);
-        // Half the diagonal of the far rectangle, seen from the lens, is half the official 79.4°.
+        // Half the diagonal of the far rectangle, seen from the lens, is half the widest 86°.
         let far = &aims[1].b;
         let lens = &aims[1].a;
         let (dx, dy, dz) = (far.0 - lens.0, far.1 - lens.1, far.2 - lens.2);
         let angle = (dx.hypot(dy)).atan2(dz.abs()).to_degrees();
-        assert!((angle - 79.4 / 2.0).abs() < 0.2, "half diagonal {angle}");
+        assert!((angle - 86.0 / 2.0).abs() < 0.2, "half diagonal {angle}");
     }
 }
