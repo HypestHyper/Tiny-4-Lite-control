@@ -490,7 +490,18 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
                     }
                     _ => Vec::new(),
                 };
-                if !payload.is_empty() {
+                if command == 0x35c2 {
+                    data[0..2].copy_from_slice(&[0xaa, 0x29]);
+                    data[2..4].copy_from_slice(&sequence.to_le_bytes());
+                    data[4..6].copy_from_slice(&12u16.to_le_bytes());
+                    data[8..12].copy_from_slice(&[0x02, 0x0a, 0xc2, 0x35]);
+                    data[12..14].copy_from_slice(&4u16.to_le_bytes());
+                    data[14..18].copy_from_slice(
+                        &LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes(),
+                    );
+                    let crc = crc16_usb(&data[..12]);
+                    data[6..8].copy_from_slice(&crc.to_le_bytes());
+                } else if !payload.is_empty() {
                     data[0] = 0xaa; data[1] = 0x29;
                     data[2..4].copy_from_slice(&sequence.to_le_bytes());
                     data[4..6].copy_from_slice(&12u16.to_le_bytes());
@@ -524,46 +535,6 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
             std::io::Error::last_os_error()));
     }
     Ok(())
-}
-
-// GET_CUR for framed selector-0x02 replies must retain the actual UVC
-// transfer length. The camera returns a one-byte empty-mailbox response
-// after a matching reply has been consumed.
-fn xu_get_cur_with_length(device: &str, selector: u8, data: &mut [u8]) -> Result<usize, String> {
-    if ui_test_mode() {
-        data.fill(0);
-        if selector == 0x02 && data.len() >= 18
-            && LAST_UI_TEST_QUERY_COMMAND.load(Ordering::Relaxed) == 0x35c2
-        {
-            let sequence = LAST_UI_TEST_QUERY_SEQUENCE.load(Ordering::Relaxed);
-            data[0..2].copy_from_slice(&[0xaa, 0x29]);
-            data[2..4].copy_from_slice(&sequence.to_le_bytes());
-            data[4..6].copy_from_slice(&12u16.to_le_bytes());
-            data[8..12].copy_from_slice(&[0x02, 0x0a, 0xc2, 0x35]);
-            data[12..14].copy_from_slice(&4u16.to_le_bytes());
-            data[14..18].copy_from_slice(
-                &LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes(),
-            );
-            let crc = crc16_usb(&data[..12]);
-            data[6..8].copy_from_slice(&crc.to_le_bytes());
-            return Ok(18);
-        }
-        return Ok(data.len());
-    }
-
-    use std::os::fd::AsRawFd;
-    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
-        .map_err(|e| format!("Cannot open {device} for OBSBOT read-back: {e}"))?;
-    let mut query = UvcXuControlQuery {
-        unit: XU_UNIT, selector, query: UVC_GET_CUR, _pad: 0,
-        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
-    };
-    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
-    if result < 0 {
-        return Err(format!("OBSBOT XU selector 0x{selector:02x} GET_CUR: {}",
-            std::io::Error::last_os_error()));
-    }
-    Ok(usize::from(query.size))
 }
 
 fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
@@ -1911,8 +1882,8 @@ fn get_face_focus(device: &str) -> Result<FaceFocusPriority, String> {
     for _ in 0..8 {
         std::thread::sleep(std::time::Duration::from_millis(30));
         let mut response = [0u8; 60];
-        let length = xu_get_cur_with_length(device, 0x02, &mut response)?;
-        if let Some(priority) = decode_face_focus_reply(&response[..length.min(response.len())], sequence)? {
+        xu_query(device, 0x02, UVC_GET_CUR, &mut response)?;
+        if let Some(priority) = decode_face_focus_reply(&response, sequence)? {
             return Ok(priority);
         }
     }
