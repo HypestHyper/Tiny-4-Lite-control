@@ -1473,8 +1473,8 @@ pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: boo
 pub(crate) fn rename_camera_preset(device: &str, slot: u8, name: &str) -> Result<(), String> {
     let index = preset_slot_index(slot)?;
     let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed.len() > 40 || !trimmed.is_ascii() {
-        return Err("Preset names must contain 1–40 ASCII bytes.".into());
+    if trimmed.is_empty() || trimmed.len() > 32 || !trimmed.bytes().all(|b| b.is_ascii_graphic() || b == b' ') {
+        return Err("Preset names must contain 1–32 printable ASCII characters.".into());
     }
     let mut payload = index.to_le_bytes().to_vec();
     payload.extend_from_slice(trimmed.as_bytes());
