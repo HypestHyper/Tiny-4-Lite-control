@@ -136,10 +136,10 @@ The standard Camera Terminal entity 1 / selector `0x0D` path described in Sectio
 
 The saved USB capture `obsbot-capture-1795052714-353354509.pcapng` does contain the camera-native initial-state write sequence. The earlier interpretation that the action was unmapped was wrong.
 
-The capture contains:
+The capture contains the exact paired host-to-camera writes:
 
-- A host-to-camera framed SET_CUR command `0x3EC4`, payload length 24. The first four bytes are source index 3 (an independent pose); the remaining fields are pan, pitch, roll, zoom and trailing float.
-- A host-to-camera framed SET_CUR command `0x3E44`, payload length 40. This is the startup picture/action settings block.
+- Frame **183705**, sequence `0x008b`: framed SET_CUR command `0x3EC4`, payload length 24. The payload begins with source index 3 (independent pose), followed by pan `0.0`, pitch `103.4`, roll `0.0`, zoom `1.0`, and trailing `0.0`.
+- Frame **183843**, sequence `0x008c`: framed SET_CUR command `0x3E44`, payload length 40. This is the startup picture/action settings block. The captured block begins with AI mode `0xfe` (not set) and the remaining "not set" sentinels/default fields.
 
 The camera's stored startup pose is read with query `0x3884`. Its 24-byte reply starts with the source index (0–2 means a preset slot; 3 means an independent pose), followed by the pose values. The 40-byte action block is read with query `0x3E84`.
 
