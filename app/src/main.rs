@@ -552,6 +552,16 @@ pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
     {
         return Err(format!("Unrecognized position response record: {:02x?}", record));
     }
+    decode_candidate_gimbal_position(&data)
+}
+
+fn decode_candidate_gimbal_position(data: &[u8; 60]) -> Result<(f64, f64), String> {
+    let record = &data[..6];
+    if record != [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
+        && record != [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00]
+    {
+        return Err(format!("Unrecognized position response record: {:02x?}", record));
+    }
     let pan = f32::from_le_bytes(data[20..24].try_into().unwrap()) as f64;
     let tilt = f32::from_le_bytes(data[24..28].try_into().unwrap()) as f64;
     if !pan.is_finite() || !tilt.is_finite() {
@@ -960,7 +970,7 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     }
     let auto_gain_device = device.to_string();
     let auto_gain_status = status.clone();
-    auto_gain.connect_state_set(move |switch, enabled| {
+    auto_gain.connect_state_set(move |_switch, enabled| {
         match set_auto_gain(&auto_gain_device, enabled) {
             Ok(()) => auto_gain_status.set_text(if enabled {
                 "Microphone auto gain enabled."
@@ -968,8 +978,8 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
                 "Microphone auto gain disabled."
             }),
             Err(error) => {
-                switch.set_active(!enabled);
                 auto_gain_status.set_text(&format!("Could not change auto gain: {error}"));
+                return gtk::glib::Propagation::Stop;
             }
         }
         gtk::glib::Propagation::Proceed
@@ -1366,7 +1376,7 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
     }
     let hdr_status = status.clone();
     let hdr_device = device.to_string();
-    hdr_switch.connect_state_set(move |switch, enabled| {
+    hdr_switch.connect_state_set(move |_switch, enabled| {
         match set_hdr_enabled(&hdr_device, enabled) {
             Ok(()) => {
                 hdr_status.set_text(if enabled {
@@ -1376,8 +1386,8 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
                 });
             }
             Err(error) => {
-                switch.set_active(!enabled);
                 hdr_status.set_text(&format!("Could not change HDR: {error}"));
+                return gtk::glib::Propagation::Stop;
             }
         }
         gtk::glib::Propagation::Proceed
@@ -1411,15 +1421,29 @@ fn add_camera_settings(container: &gtk::Box, device: &str, window: &gtk::Applica
 
     let led_slider_status = status.clone();
     let led_slider_device = device.to_string();
+    let led_last_value = Rc::new(Cell::new(initial_led.min(3)));
+    let led_reverting = Rc::new(Cell::new(false));
+    let led_last_value_cb = led_last_value.clone();
+    let led_reverting_cb = led_reverting.clone();
     led_level.connect_value_changed(move |scale| {
-        let setting = scale.value().round() as u8;
-        let result = set_led_brightness(&led_slider_device, setting);
-        let description = match setting {
-            0 => "Off".to_string(),
-            n => format!("brightness level {n}"),
-        };
-        led_slider_status.set_text(&result.map(|_| format!("LED setting: {description}."))
-            .unwrap_or_else(|e| format!("Could not change LED setting: {e}")));
+        if led_reverting_cb.get() { return; }
+        let setting = scale.value().round().clamp(0.0, 3.0) as u8;
+        match set_led_brightness(&led_slider_device, setting) {
+            Ok(()) => {
+                led_last_value_cb.set(setting);
+                let description = match setting {
+                    0 => "Off".to_string(),
+                    n => format!("brightness level {n}"),
+                };
+                led_slider_status.set_text(&format!("LED setting: {description}."));
+            }
+            Err(error) => {
+                led_reverting_cb.set(true);
+                scale.set_value(led_last_value_cb.get() as f64);
+                led_reverting_cb.set(false);
+                led_slider_status.set_text(&format!("Could not change LED setting: {error}"));
+            }
+        }
     });
 
     let led_note = gtk::Label::new(Some("Off plus three brightness levels. Each position sends selector 0x06, tag 0x1A directly. The separate tag 0x18 command is intentionally not used here because its observed effect is blink/steady behaviour, not a verified power switch."));
@@ -2531,6 +2555,25 @@ mod xu_protocol_tests {
         );
         assert_eq!(controls[0].default_value, 2);
         assert_eq!(controls[0].value, 2);
+    }
+
+    #[test]
+    fn candidate_gimbal_position_records_decode_live_float_pair() {
+        for signature in [
+            [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00],
+            [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00],
+        ] {
+            let mut data = [0u8; 60];
+            data[..6].copy_from_slice(&signature);
+            data[20..24].copy_from_slice(&(-42.5f32).to_le_bytes());
+            data[24..28].copy_from_slice(&(27.25f32).to_le_bytes());
+            assert_eq!(decode_candidate_gimbal_position(&data).unwrap(), (-42.5, 27.25));
+        }
+        let mut unknown = [0u8; 60];
+        assert!(decode_candidate_gimbal_position(&unknown).is_err());
+        unknown[..6].copy_from_slice(&[0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]);
+        unknown[20..24].copy_from_slice(&(f32::NAN).to_le_bytes());
+        assert!(decode_candidate_gimbal_position(&unknown).is_err());
     }
 
     #[test]
