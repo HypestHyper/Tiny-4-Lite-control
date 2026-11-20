@@ -1922,7 +1922,13 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     selector.set_sensitive(autofocus_enabled);
 
     // Camera read-back is authoritative. Never initialize from stale config.
-    let initial = get_face_focus(device).ok();
+    let initial = match get_face_focus(device) {
+        Ok(priority) => Some(priority),
+        Err(error) => {
+            status.set_text(&format!("Autofocus priority is Unknown: {error}"));
+            None
+        }
+    };
     if let Some(priority) = initial {
         global.set_active(priority == FaceFocusPriority::Global);
         face.set_active(priority == FaceFocusPriority::Face);
@@ -3113,9 +3119,10 @@ mod xu_protocol_tests {
     #[test]
     fn face_focus_get_request_uses_header_only_get_opcode_and_full_header_crc() {
         let frame = face_focus_get_frame(0x0016);
-        assert_eq!(&frame[..6], hex("aa0116000c00").as_slice());
-        assert_eq!(&frame[8..12], hex("0a02c235").as_slice());
-        assert_eq!(u16::from_le_bytes([frame[6], frame[7]]), crc16_usb(&frame[..12]));
+        assert_eq!(&frame[..12], hex("aa0116000c00d6680a02c235").as_slice());
+        let mut header = frame[..12].to_vec();
+        header[6..8].fill(0);
+        assert_eq!(u16::from_le_bytes([frame[6], frame[7]]), crc16_usb(&header));
     }
 
     #[test]
