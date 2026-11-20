@@ -25,7 +25,13 @@ real pan and tilt, with the numbers on top. It is viewed from behind and a littl
 lens points; a blue cone shows the view. It is a drawing of the angles the camera reports (the same position
 query as the readout), never a command. It glides between readings rather than jumping, asks for the position
 about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
-window is in the background or the card is hidden. With no reading it dims and shows no view cone. Positive pan
+window is in the background or the card is hidden. With no reading it dims and shows no view cone.
+
+The drawing is sized from OBSBOT's published dimensions (48.37 × 46.46 × 64.2 mm, a two-axis gimbal with a built-in
+stand), and the cone from the published 79.4° diagonal field of view; tests check both. The shapes themselves
+(rounded head, lens rings, U-shaped yoke, hub and base) are a close approximation, not a scan. Every
+dimension is a named constant in the `shape` module of `src/ui/gimbal_model.rs`, so correcting a detail is a
+one-number change. Positive pan
 turns right and positive tilt looks up, matching the joystick; whether those signs match your camera's own
 convention has not been checked on hardware. The slim window shows it with the joystick.
 

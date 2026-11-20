@@ -78,7 +78,13 @@ mod sim {
 
     fn gimbal() -> &'static Mutex<Gimbal> {
         static G: OnceLock<Mutex<Gimbal>> = OnceLock::new();
-        G.get_or_init(|| Mutex::new(Gimbal { pan: 0.0, tilt: 0.0, pan_speed: 0.0, tilt_speed: 0.0, at: Instant::now() }))
+        G.get_or_init(|| {
+            // TINY4LITE_UI_TEST_GIMBAL="pan,tilt" starts the pretend gimbal somewhere, for screenshots.
+            let (pan, tilt) = std::env::var("TINY4LITE_UI_TEST_GIMBAL").ok()
+                .and_then(|v| v.split_once(',').and_then(|(p, t)| Some((p.trim().parse::<f64>().ok()?, t.trim().parse::<f64>().ok()?))))
+                .unwrap_or((0.0, 0.0));
+            Mutex::new(Gimbal { pan: pan.clamp(-PAN_LIMIT, PAN_LIMIT), tilt: tilt.clamp(-TILT_LIMIT, TILT_LIMIT), pan_speed: 0.0, tilt_speed: 0.0, at: Instant::now() })
+        })
     }
 
     impl Gimbal {
