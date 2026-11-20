@@ -224,7 +224,7 @@ Important TShark quirks observed in this environment:
 
 ## 7. Captured payloads used by the experimental app toggle
 
-A fresh OBSBOT Center session capture (`pop filter fresh session`, Unix start 1795044907) reproduced byte-2 values `0x0f` through `0x12` and the same bytes 6–7 as the prior session. The two payloads currently replayed by the app are the exact 60-byte commands for `0x0f` OFF and `0x10` ON. Both contain the session-stable sequence `50 C8 D7 B9 0F 22 01` at payload offsets 25–31; remaining offsets 32–59 are zero. This capture is the basis for the current prototype. It does not establish that these payloads remain valid after a sequence advance, Center restart, or camera reconnect.
+A fresh OBSBOT Center session capture (`pop filter fresh session`, Unix start 1795044907) reproduced byte-2 values `0x0f` through `0x12` and the same bytes 6–7 as the prior session. The written extraction summary records the session-stable sequence `50 C8 D7 B9 0F 22 01` at payload offsets 25–31 and says offsets 32–59 are zero. However, the current app builder places `0x01` at offset 32 after copying its 32-byte prefix. Until the complete raw 60-byte packets are re-extracted and compared by offset, this section must not describe the app's payload as an exact replay. The fresh capture remains the basis for the experimental prototype, but it does not establish validity after a sequence advance, Center restart, or camera reconnect.
 
 The app stores only the last submitted UI state. It does not claim read-back or confirmed device acceptance. Treat the implementation as experimental and validate it on the physical camera.
 
