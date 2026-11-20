@@ -662,8 +662,8 @@ pub(crate) fn read_initial_camera_state(device: &str) -> Result<InitialCameraSta
 }
 
 fn initial_pose_payload(source: u32, pan: f32, tilt: f32, zoom: f32) -> Result<Vec<u8>, String> {
-    if !pan.is_finite() || !tilt.is_finite() || pan.abs() > 150.0 || !(-70.0..=90.0).contains(&tilt) {
-        return Err(format!("Initial pose is outside camera limits: pan -150..150°, tilt -70..90° (received {pan:+.1}° / {tilt:+.1}°)."));
+    if !pan.is_finite() || !tilt.is_finite() || pan.abs() > 180.0 || !(-180.0..=180.0).contains(&tilt) {
+        return Err(format!("Initial pose is outside representable camera angles: pan/tilt must be within ±180° (received {pan:+.1}° / {tilt:+.1}°)."));
     }
     if !zoom.is_finite() || !(1.0..=4.0).contains(&zoom) {
         return Err(format!("Initial zoom must be 1.0–4.0× (received {zoom:.2}×)."));
@@ -3127,7 +3127,8 @@ mod xu_protocol_tests {
             .map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
         assert_eq!(values, vec![12.5, 8.0, 0.0, 1.5, 0.0]);
         assert!(initial_pose_payload(3, 151.0, 0.0, 1.0).is_err());
-        assert!(initial_pose_payload(3, 0.0, -71.0, 1.0).is_err());
+        assert!(initial_pose_payload(3, 0.0, -181.0, 1.0).is_err());
+        assert!(initial_pose_payload(3, 0.0, -103.4, 1.0).is_ok());
         assert!(initial_pose_payload(3, 0.0, 0.0, 4.1).is_err());
     }
 
