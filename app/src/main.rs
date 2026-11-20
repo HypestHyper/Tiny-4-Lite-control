@@ -1342,7 +1342,6 @@ static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
-static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
 
 fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
