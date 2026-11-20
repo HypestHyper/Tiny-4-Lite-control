@@ -71,6 +71,7 @@ impl PreviewHub {
     }
 
     pub fn is_enabled(&self) -> bool { self.0.enabled.get() }
+    pub fn is_running(&self) -> bool { self.0.running.get() }
 
     /// Pause or resume the live picture (kept off the camera when paused).
     pub fn set_enabled(&self, enabled: bool) {
@@ -235,7 +236,6 @@ impl ViewInner {
 #[derive(Clone)]
 pub struct PreviewView {
     inner: Rc<ViewInner>,
-    hub: PreviewHub,
 }
 
 impl PreviewView {
@@ -286,11 +286,10 @@ impl PreviewView {
         root.connect_map(move |_| h.update_demand());
         let h = hub.clone();
         root.connect_unmap(move |_| h.update_demand());
-        PreviewView { inner, hub: hub.clone() }
+        PreviewView { inner }
     }
 
     pub fn widget(&self) -> &gtk::Overlay { &self.inner.root }
-    pub fn hub(&self) -> &PreviewHub { &self.hub }
 
     /// Put a control on top of the picture, in the top-right corner row.
     pub fn add_control(&self, overlay_row: &gtk::Box) {

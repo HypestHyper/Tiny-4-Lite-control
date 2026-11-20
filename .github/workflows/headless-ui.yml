@@ -2,7 +2,7 @@ name: Headless GTK UI validation
 
 on:
   push:
-    branches: [test-app-v0.1]
+    branches: [test-app-v0.1, claude/upbeat-rubin-gnae3f]
     paths:
       - "app/**"
       - ".github/workflows/headless-ui.yml"
@@ -21,7 +21,7 @@ jobs:
       - name: Install GTK and virtual-display dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libfontconfig1-dev v4l-utils xvfb xdotool imagemagick
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libfontconfig1-dev v4l-utils xvfb xdotool imagemagick x11-utils
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

@@ -72,6 +72,17 @@ impl Dialogs {
         scrim.set_halign(gtk::Align::Fill);
         scrim.set_valign(gtk::Align::Fill);
         let overlay = gtk::Overlay::new();
+        // Escape cancels.
+        let keys = gtk::EventControllerKey::new();
+        let target = scrim.clone();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape && target.is_visible() {
+                target.set_visible(false);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        scrim.add_controller(keys);
         Rc::new(Dialogs { overlay, scrim })
     }
 
@@ -120,17 +131,6 @@ impl Dialogs {
         let hide_cancel = hide.clone();
         cancel.connect_clicked(move |_| hide_cancel());
         go.connect_clicked(move |_| { hide(); on_confirm(); });
-        // Escape cancels.
-        let keys = gtk::EventControllerKey::new();
-        let this = self.clone();
-        keys.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape && this.scrim.is_visible() {
-                this.scrim.set_visible(false);
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        self.scrim.add_controller(keys);
     }
 }
 

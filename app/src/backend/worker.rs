@@ -86,6 +86,7 @@ impl Camera {
     }
 
     /// Number of waiting jobs, for tests.
+    #[cfg(test)]
     pub fn pending(&self) -> usize {
         self.shared.queue.lock().unwrap_or_else(|e| e.into_inner()).jobs.len()
     }

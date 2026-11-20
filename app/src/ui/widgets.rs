@@ -283,7 +283,6 @@ impl SettingRow {
     }
 
     pub fn widget(&self) -> &gtk::Box { &self.0.root }
-    pub fn setting(&self) -> &'static Setting { self.0.setting }
 
     fn make_control(setting: &Setting, density: Density) -> (Control, bool) {
         match &setting.kind {
@@ -394,11 +393,12 @@ impl SettingRow {
         let option = row.setting.options(&snapshot).into_iter().find(|o| o.value == value);
         if let Some(confirm) = option.as_ref().and_then(|o| o.confirm) {
             let this = self.clone();
-            let label = option.as_ref().map(|o| o.label).unwrap_or("");
             // Put the control back to the real state until the user agrees.
             this.show(row.current.get());
-            let action = format!("Set to {}", label.to_lowercase());
-            row.store.confirm("warning", &format!("{}?", row.setting.label), confirm, &action, move || this.commit(Value::Int(value)));
+            row.store.confirm("warning", confirm.title, confirm.body, confirm.action, move || {
+                this.show(Some(Value::Int(value)));
+                this.commit(Value::Int(value));
+            });
             return;
         }
         self.commit(Value::Int(value));
@@ -416,7 +416,17 @@ impl SettingRow {
         let announce = !matches!(row.setting.kind, Kind::Slider(_)) || !row.dragging.get();
         row.store.write(setting, value, move |result| {
             match result {
-                Ok(()) => { if announce { store.toast(&message); } }
+                Ok(()) => {
+                    if announce { store.toast(&message); }
+                    // Once the hold on this control ends, show what the camera really has
+                    // (it may have rounded or limited the value).
+                    if let Some(row) = weak.upgrade() {
+                        let (weak_again, store_again) = (Rc::downgrade(&row), row.store.clone());
+                        glib::timeout_add_local_once(EDIT_HOLD + Duration::from_millis(250), move || {
+                            if let Some(row) = weak_again.upgrade() { SettingRow(row).apply(&store_again.snapshot()); }
+                        });
+                    }
+                }
                 Err(_) => {
                     // Show what the camera really has.
                     if let Some(row) = weak.upgrade() {
@@ -608,4 +618,42 @@ trait SummaryVisibility { fn density_summary_hidden(&self, density: Density) -> 
 impl SummaryVisibility for Setting {
     /// In the slim window the summary is not shown inline, so it moves into the info popover.
     fn density_summary_hidden(&self, density: Density) -> bool { density == Density::Slim }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::backend::registry::Group;
+
+    /// Every icon the UI asks for must exist in the bundled font subset, or it
+    /// would draw as a question mark. Names are read from the source so a typo
+    /// fails here instead of on someone's screen.
+    #[test]
+    fn every_icon_used_in_the_ui_is_in_the_font() {
+        let mut names: Vec<String> = Group::ALL.iter().map(|g| g.icon().to_string()).collect();
+        names.extend(super::super::full::page_icons().into_iter().map(String::from));
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let Ok(source) = std::fs::read_to_string(entry.path()) else { continue };
+            for call in ["icon(\"", "icon_button(\"", "icon_text_button(\"", "set_icon(&", "show_message(\"", "confirm(\""] {
+                for (at, _) in source.match_indices(call) {
+                    let rest = &source[at + call.len()..];
+                    // For set_icon the name is the literal after the label argument.
+                    let rest = if call.starts_with("set_icon") { rest.split_once(", \"").map(|x| x.1).unwrap_or("") } else { rest };
+                    // For confirm and the others, the first literal is the icon.
+                    if let Some((name, _)) = rest.split_once('"') {
+                        if !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()) { names.push(name.to_string()); }
+                    }
+                }
+            }
+        }
+        assert!(names.len() > 20, "the scan found only {} icon names", names.len());
+        for name in names {
+            assert!(super::super::icons::glyph(&name).is_some(), "icon `{name}` is not in the font; add it to assets/icon-names.txt and run tools/subset-fonts.py");
+        }
+    }
+
+    #[test]
+    fn every_listed_icon_resolves() {
+        for name in super::super::icons::NAMES { assert!(super::super::icons::glyph(name).is_some()); }
+    }
 }

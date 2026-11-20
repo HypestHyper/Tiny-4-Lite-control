@@ -71,7 +71,7 @@ def main() -> None:
     for n in sorted(names):
         rust.append(f'        "{n}" => 0x{table[n]:04x},')
     rust += ["        _ => return None,", "    };", "    char::from_u32(code)", "}", "",
-             "pub const NAMES: &[&str] = &["]
+             "#[allow(dead_code)]", "pub const NAMES: &[&str] = &["]
     rust += [f'    "{n}",' for n in sorted(names)]
     rust += ["];", ""]
     (ROOT / "src/ui/icons.rs").write_text("\n".join(rust))

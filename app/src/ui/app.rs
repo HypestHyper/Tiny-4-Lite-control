@@ -51,10 +51,19 @@ impl Ctx {
         let camera = Camera::spawn(path.as_deref().unwrap_or(""));
         let store = Store::new(camera, connection);
         let hub = PreviewHub::new(&store);
+        {
+            // After a reconnect, bring the picture back without the user doing anything.
+            let hub = hub.clone();
+            store.subscribe(move |snapshot| {
+                if snapshot.error.is_none() && !snapshot.controls.is_empty() && !hub.is_running() { hub.update_demand(); }
+                true
+            });
+        }
         let ctx = Rc::new(Ctx {
             app: app.clone(), store, hub, style,
             full: RefCell::default(), slim: RefCell::default(), popup: RefCell::default(), scan_timer: RefCell::default(),
         });
+        ctx.watch_unplug();
         if connection == Connection::Connected {
             // Restore the remembered capture mode; this never moves the gimbal.
             ctx.store.call(None, |device| backend::apply_saved_video_mode(device), |_| {});
@@ -109,6 +118,25 @@ impl Ctx {
         *self.scan_timer.borrow_mut() = Some(id);
     }
 
+    /// Notice the camera being unplugged: while connected, check once in a while
+    /// that its video node still exists (a single `stat`).
+    fn watch_unplug(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local(Duration::from_secs(4), move || {
+            let Some(ctx) = weak.upgrade() else { return glib::ControlFlow::Break };
+            if ctx.store.connection() == Connection::Connected
+                && !backend::ui_test_mode()
+                && !std::path::Path::new(&ctx.store.device()).exists()
+            {
+                ctx.hub.stop();
+                ctx.store.set_camera(Camera::spawn(""), Connection::Absent);
+                ctx.store.error("The camera was unplugged.");
+                ctx.start_scanning();
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+
     pub fn show_full(self: &Rc<Self>) {
         update_config(|c| c.last_window = "full".into());
         if let Some(slim) = self.slim.borrow().as_ref() {
@@ -117,7 +145,7 @@ impl Ctx {
         }
         let mut full = self.full.borrow_mut();
         let window = full.get_or_insert_with(|| FullWindow::new(self));
-        window.window.present();
+        windowing::present(&window.window);
     }
 
     pub fn show_slim(self: &Rc<Self>) {
@@ -128,7 +156,7 @@ impl Ctx {
         }
         let mut slim = self.slim.borrow_mut();
         let window = slim.get_or_insert_with(|| SlimWindow::new(self));
-        window.window.present();
+        windowing::present(&window.window);
     }
 
     /// Move the preview into its own window, or back.
@@ -138,7 +166,7 @@ impl Ctx {
         if popped {
             let mut popup = self.popup.borrow_mut();
             let window = popup.get_or_insert_with(|| PreviewWindow::new(self));
-            window.window.present();
+            windowing::present(&window.window);
         } else if let Some(popup) = self.popup.borrow().as_ref() {
             popup.window.set_visible(false);
         }
@@ -146,6 +174,7 @@ impl Ctx {
 
     pub fn quit(&self) {
         self.hub.stop();
+        backend::flush_config();
         self.app.quit();
     }
 }

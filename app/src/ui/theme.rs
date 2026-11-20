@@ -90,7 +90,6 @@ pub fn contrast_ratio(a: &str, b: &str) -> f64 {
 
 #[derive(Clone, Debug)]
 pub struct Palette {
-    pub dark: bool,
     roles: Vec<(&'static str, String)>,
 }
 
@@ -184,7 +183,7 @@ impl Palette {
         // The preview and joystick stay dark in both themes: they show a camera image.
         roles.push(("stage", "#0d0f12".to_string()));
         roles.push(("on_stage", "#e6e9ee".to_string()));
-        Palette { dark, roles }
+        Palette { roles }
     }
 }
 
@@ -193,7 +192,6 @@ thread_local! {
 }
 
 pub fn set_current(palette: Palette) { CURRENT.with(|p| *p.borrow_mut() = palette); }
-pub fn current() -> Palette { CURRENT.with(|p| p.borrow().clone()) }
 
 // ── Scale ─────────────────────────────────────────────────────────────────
 
@@ -240,7 +238,7 @@ fn scale_template(template: &str, geometric: f64) -> String {
 }
 
 /// The complete stylesheet for a palette and scale.
-pub fn stylesheet(palette: &Palette, geometric: f64, reduce_motion: bool) -> String {
+pub fn stylesheet(palette: &Palette, geometric: f64, reduce_motion: bool, composited: bool) -> String {
     let mut css = String::new();
     for (name, value) in &palette.roles {
         css.push_str(&format!("@define-color t_{name} {value};\n"));
@@ -248,6 +246,8 @@ pub fn stylesheet(palette: &Palette, geometric: f64, reduce_motion: bool) -> Str
     css.push_str(&scale_template(TEMPLATE, geometric));
     for (id, _, hex) in ACCENTS { css.push_str(&format!(".t4 button.swatch-{id} {{ background: {hex}; }}\n")); }
     if reduce_motion { css.push_str("\n* { transition: none; animation: none; }\n"); }
+    // Without a compositor a shadow is drawn as a black frame, so drop them.
+    if !composited { css.push_str("\n.t4 popover > contents, .toast, .dialog-card { box-shadow: none; }\n"); }
     css
 }
 
@@ -257,7 +257,6 @@ const TEMPLATE: &str = r#"
 
 window.t4, window.t4 > contents { background: @t_surface_dim; color: @t_on_surface; }
 window.t4.csd { border-radius: §18§; }
-window.t4 label { color: inherit; }
 .t4 tooltip.background { background: @t_inverse_surface; color: @t_inverse_on_surface; border-radius: §8§; padding: §6§ §10§; }
 .t4 tooltip.background label { color: @t_inverse_on_surface; font-size: ¶12.5¶; }
 
@@ -301,7 +300,7 @@ window.t4 label { color: inherit; }
 .t4 button.danger:hover { background: @t_error_hover; color: #ffffff; }
 .t4 button.round { padding: 0; border-radius: §20§; }
 .t4 button.round:active { border-radius: §12§; }
-.t4 button.round.small { min-height: §32§; min-width: §32§; border-radius: §16§; }
+.t4 button.round.small { min-height: §32§; min-width: §32§; padding: 0; border-radius: §16§; }
 .t4 button.round.small:active { border-radius: §8§; }
 .t4 button.flat-icon { background: transparent; color: @t_on_surface_variant; }
 .t4 button.flat-icon:hover { background: alpha(@t_on_surface, 0.08); color: @t_on_surface; }

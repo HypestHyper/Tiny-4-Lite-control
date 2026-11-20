@@ -107,7 +107,8 @@ impl Style {
         let dark = self.is_dark();
         let palette = Palette::new(&theme::accent_hex(&self.accent.borrow()), dark);
         let factor = self.scale.get().factor(self.auto_compact.get());
-        self.provider.load_from_data(&theme::stylesheet(&palette, factor, self.reduce_motion.get()));
+        let composited = gtk::gdk::Display::default().is_none_or(|d| d.is_composited());
+        self.provider.load_from_data(&theme::stylesheet(&palette, factor, self.reduce_motion.get(), composited));
         theme::set_current(palette);
         if let Some(settings) = gtk::Settings::default() {
             settings.set_property("gtk-application-prefer-dark-theme", dark);

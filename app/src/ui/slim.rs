@@ -85,7 +85,6 @@ impl SlimWindow {
 
         // Content
         let preview = PreviewView::new(&ctx.hub);
-        preview.widget().set_size_request(-1, -1);
         let pause_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let pop = widgets::icon_button("open_in_new", "Open the preview in its own window", true);
         pop.add_css_class("on-stage");
@@ -95,9 +94,7 @@ impl SlimWindow {
         preview.add_control(&pause_row);
         let preview_wrap = gtk::Revealer::new();
         preview_wrap.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-        let aspect = gtk::AspectFrame::new(0.5, 0.5, 16.0 / 9.0, false);
-        aspect.set_child(Some(preview.widget()));
-        preview_wrap.set_child(Some(&aspect));
+        preview_wrap.set_child(Some(preview.widget()));
 
         let joystick = Joystick::new(&store);
         let joystick_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -181,7 +178,13 @@ impl SlimWindow {
         sensor.set_can_target(false);
         dialogs.overlay().add_overlay(&sensor);
         let weak_ctx = Rc::downgrade(ctx);
-        sensor.connect_resize(move |_, width, _| { if let Some(ctx) = weak_ctx.upgrade() { ctx.style.report_width(width); } });
+        let preview_state = state.clone();
+        sensor.connect_resize(move |_, width, _| {
+            if let Some(ctx) = weak_ctx.upgrade() { ctx.style.report_width(width); }
+            // Keep the preview 16:9 as the window is resized (the slim root has 14 px margins).
+            let height = (f64::from(width - 28) * 9.0 / 16.0).round().clamp(110.0, 420.0) as i32;
+            preview_state.preview.widget().set_size_request(-1, height);
+        });
 
         let keys = gtk::EventControllerKey::new();
         let s = state.clone();

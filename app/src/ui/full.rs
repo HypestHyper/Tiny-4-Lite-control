@@ -17,6 +17,10 @@ use std::time::Duration;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page { Tab(Tab), Presets }
 
+/// Icons used by the tab bar, for the icon coverage test.
+#[cfg(test)]
+pub(crate) fn page_icons() -> Vec<&'static str> { PAGES.iter().map(|p| p.2).collect() }
+
 const PAGES: [(Page, &str, &str); 5] = [
     (Page::Tab(Tab::Camera), "Camera", "photo_camera"),
     (Page::Tab(Tab::Tracking), "Tracking", "person_search"),
@@ -39,7 +43,8 @@ pub struct FullWindow {
 }
 
 struct FullState {
-    rows: Rows,
+    /// Keeps the rows alive: their signal handlers hold only weak references.
+    _rows: Rows,
     search_rows: RefCell<Rows>,
     stack: gtk::Stack,
     tabs: RefCell<Vec<(Page, gtk::ToggleButton)>>,
@@ -242,7 +247,7 @@ impl FullWindow {
         right.add_overlay(&sensor);
 
         let state = Rc::new(FullState {
-            rows, search_rows: RefCell::new(Rc::default()), stack: stack.clone(), tabs: RefCell::default(),
+            _rows: rows, search_rows: RefCell::new(Rc::default()), stack: stack.clone(), tabs: RefCell::default(),
             last_page: Cell::new(0), search: search.clone(), search_timer: RefCell::default(), popped: popped.clone(),
             _view: hub_view.clone(),
         });
@@ -324,7 +329,6 @@ impl FullWindow {
         let relayout = {
             let (paned, stage, right, preview_card, gimbal_card, stacked, ctx) =
                 (paned.clone(), stage.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), ctx.clone());
-            let state = state.clone();
             Rc::new(move |width: i32| {
                 ctx.style.report_width(width);
                 let narrow = width < if stacked.get() { 880 } else { 820 };

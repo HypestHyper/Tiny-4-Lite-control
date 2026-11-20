@@ -16,16 +16,6 @@ use std::sync::OnceLock;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Tab { Camera, Tracking, Audio, Device }
 
-impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Camera, Tab::Tracking, Tab::Audio, Tab::Device];
-    pub fn title(self) -> &'static str {
-        match self { Tab::Camera => "Camera", Tab::Tracking => "Tracking", Tab::Audio => "Audio", Tab::Device => "Device" }
-    }
-    pub fn icon(self) -> &'static str {
-        match self { Tab::Camera => "photo_camera", Tab::Tracking => "person_search", Tab::Audio => "mic", Tab::Device => "tune" }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Group {
     Exposure, WhiteBalance, Focus, Zoom, Picture,
@@ -84,19 +74,29 @@ impl Value {
     }
 }
 
+/// Wording for a confirmation dialog.
+#[derive(Clone, Copy, Debug)]
+pub struct Confirm {
+    pub title: &'static str,
+    pub body: &'static str,
+    pub action: &'static str,
+}
+
 #[derive(Clone, Debug)]
 pub struct Opt {
     pub value: i64,
     pub label: &'static str,
     pub hint: &'static str,
     /// If set, changing to this option first asks the user to confirm.
-    pub confirm: Option<&'static str>,
+    pub confirm: Option<Confirm>,
 }
 
 const fn opt(value: i64, label: &'static str, hint: &'static str) -> Opt {
     Opt { value, label, hint, confirm: None }
 }
 
+/// Number formats. `Iso` is here for drivers that report ISO sensitivity.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fmt { Plain, Shutter, Kelvin, Ev, Ratio, Level, Iso }
 
@@ -142,6 +142,8 @@ pub enum Kind {
 
 // ── Dependencies ──────────────────────────────────────────────────────────
 
+/// A dependency test. `IsNot` is available for entries that need it.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub enum Cond { Is(i64), IsNot(i64) }
 pub const ON: Cond = Cond::Is(1);
@@ -577,7 +579,11 @@ fn build() -> Vec<Setting> {
             "Put the camera to sleep, or wake it.",
             Kind::Choice(vec![
                 opt(0, "Awake", ""),
-                Opt { value: 1, label: "Asleep", hint: "", confirm: Some("The gimbal will move to its resting position. Clear the space around the camera first.") },
+                Opt { value: 1, label: "Asleep", hint: "", confirm: Some(Confirm {
+                    title: "Put the camera to sleep?",
+                    body: "The gimbal will move to its resting position. Clear the space around the camera first.",
+                    action: "Sleep",
+                }) },
             ]),
             |s| s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None }),
             |d, v| set_sleep_mode(d, v.as_i64() == 1))

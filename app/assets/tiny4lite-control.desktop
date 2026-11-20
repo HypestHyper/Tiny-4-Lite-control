@@ -1,9 +1,19 @@
 [Desktop Entry]
 Type=Application
 Name=Tiny 2 Lite Control
-Comment=V4L2 controls for the OBSBOT Tiny 2 Lite
+Comment=Camera, gimbal and tracking controls for the OBSBOT Tiny 2 Lite
 Exec=tiny4lite-control
 Icon=tiny4lite-control
 Terminal=false
 Categories=AudioVideo;Video;Utility;
 StartupNotify=true
+StartupWMClass=io.github.hypesthyper.Tiny4LiteControl
+Actions=Slim;Preview;
+
+[Desktop Action Slim]
+Name=Quick controls
+Exec=tiny4lite-control --slim
+
+[Desktop Action Preview]
+Name=Preview in its own window
+Exec=tiny4lite-control --preview

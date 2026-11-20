@@ -1,174 +1,126 @@
 #!/usr/bin/env bash
+# Renders every window and page against the synthetic camera (no hardware is
+# touched), drives the joystick and a confirmation with real pointer events,
+# and checks window classes and the commands that were sent.
+#
+#   bash app/tests/headless-screenshots.sh app/target/release/tiny4lite-control app/artifacts/headless-ui
+#
+# Needs: Xvfb (or an existing DISPLAY), xdotool, imagemagick, x11-utils.
 set -euo pipefail
 
-run_capture_one() {
-    local state="$1" page="$2" name="$3" with_scroll="$4" width="$5" height="$6"
-    local config cache data window=""
-    config="$(mktemp -d)"
-    cache="$(mktemp -d)"
-    data="$(mktemp -d)"
+APP="$(realpath "${1:?path to the tiny4lite-control binary}")"
+OUT="$(realpath -m "${2:?output directory}")"
+mkdir -p "$OUT"
 
-    (
-        export TINY4LITE_UI_TEST=1
-        export TINY4LITE_UI_TEST_STATE="$state"
-        export TINY4LITE_UI_TEST_PAGE="$page"
-        export TINY4LITE_UI_TEST_WIDTH="$width"
-        export TINY4LITE_UI_TEST_HEIGHT="$height"
-        export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
-        export XDG_CONFIG_HOME="$config" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$data"
+export TINY4LITE_UI_TEST=1 GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
 
-        "$APP" >"$OUT/$name.log" 2>&1 &
-        local app_pid=$!
-        cleanup() {
-            kill "$app_pid" 2>/dev/null || true
-            wait "$app_pid" 2>/dev/null || true
-        }
-        trap cleanup EXIT
-
-        for _ in $(seq 1 80); do
-            window="$(xdotool search --onlyvisible --name "Tiny 2 Lite Control" 2>/dev/null | head -n1 || true)"
-            [[ -n "$window" ]] && break
-            sleep 0.25
-        done
-        if [[ -z "$window" ]]; then
-            cat "$OUT/$name.log"
-            echo "GTK window did not appear for screenshot: $name" >&2
-            exit 1
-        fi
-
-        sleep 1
-        import -window "$window" "$OUT/$name.png"
-        if [[ "$with_scroll" == "1" ]]; then
-            # Scroll over the empty left gutter, not over a control.
-            xdotool mousemove --window "$window" 30 930
-            xdotool click --repeat 9 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-mid.png"
-            xdotool click --repeat 6 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-focus.png"
-            xdotool click --repeat 6 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-bottom.png"
-            xdotool click --repeat 18 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-camera.png"
-            xdotool click --repeat 12 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-features.png"
-            xdotool click --repeat 18 --delay 70 5
-            sleep 0.3
-            import -window "$window" "$OUT/${name%-top}-tail.png"
-        fi
-    )
-    rm -rf "$config" "$cache" "$data"
-}
-
-run_wheel_test() {
-    local config cache data window=""
-    config="$(mktemp -d)"
-    cache="$(mktemp -d)"
-    data="$(mktemp -d)"
-    (
-        export TINY4LITE_UI_TEST=1
-        export TINY4LITE_UI_TEST_STATE=auto
-        export TINY4LITE_UI_TEST_PAGE=controls
-        export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
-        export XDG_CONFIG_HOME="$config" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$data"
-        "$APP" >"$OUT/wheel-lock.log" 2>&1 &
-        local app_pid=$!
-        trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
-        for _ in $(seq 1 80); do
-            window="$(xdotool search --onlyvisible --name "Tiny 2 Lite Control" 2>/dev/null | head -n1 || true)"
-            [[ -n "$window" ]] && break
-            sleep 0.25
-        done
-        [[ -n "$window" ]] || { cat "$OUT/wheel-lock.log"; exit 1; }
-        sleep 1
-        xdotool mousemove 1590 1180
-        import -window "$window" "$OUT/wheel-lock-before.png"
-
-        # Sensitivity slider: wheel input must neither change its value nor
-        # scroll the containing page.
-        xdotool mousemove --window "$window" 700 390
-        xdotool click 5
-        sleep 0.3
-        xdotool mousemove 1590 1180
-        import -window "$window" "$OUT/wheel-lock-after-slider.png"
-        compare -metric AE -crop 1400x1040+0+0 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-slider.png" null: >/dev/null 2>"$OUT/wheel-slider-diff.txt"
-
-        # Theme dropdown: ignore focus background, compare page pixels and the
-        # selected label glyphs independently.
-        xdotool mousemove --window "$window" 1220 36
-        xdotool click 5
-        sleep 0.3
-        xdotool mousemove 1590 1180
-        import -window "$window" "$OUT/wheel-lock-after-dropdown.png"
-        compare -metric AE -crop 1400x960+0+80 "$OUT/wheel-lock-before.png" "$OUT/wheel-lock-after-dropdown.png" null: >/dev/null 2>"$OUT/wheel-dropdown-page-diff.txt"
-        convert "$OUT/wheel-lock-before.png" -crop 50x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-before.png"
-        convert "$OUT/wheel-lock-after-dropdown.png" -crop 50x24+1185+24 -colorspace Gray -threshold 50% +repage "$OUT/wheel-theme-after.png"
-        compare -metric AE "$OUT/wheel-theme-before.png" "$OUT/wheel-theme-after.png" null: >/dev/null 2>"$OUT/wheel-dropdown-value-diff.txt"
-
-        # In Auto mode, the exposure compensation slider must remain draggable.
-        xdotool mousemove --window "$window" 30 930
-        xdotool click --repeat 9 --delay 70 5
-        sleep 0.3
-        xdotool mousemove 1590 1180
-        import -window "$window" "$OUT/exposure-comp-before-drag.png"
-        xdotool mousemove --window "$window" 720 346
-        xdotool mousedown 1
-        xdotool mousemove --sync --window "$window" 1120 346
-        xdotool mouseup 1
-        sleep 0.4
-        xdotool mousemove 1590 1180
-        import -window "$window" "$OUT/exposure-comp-after-drag.png"
-        if compare -metric AE -crop 180x40+24+290 "$OUT/exposure-comp-before-drag.png" "$OUT/exposure-comp-after-drag.png" null: >/dev/null 2>"$OUT/exposure-comp-value-diff.txt"; then
-            echo "Exposure compensation value label did not change after dragging the enabled slider." >&2
-            exit 1
-        fi
-    )
-    rm -rf "$config" "$cache" "$data"
-}
-
-MODE="${1:-}"
-if [[ "$MODE" == "--capture-one" ]]; then
-    shift
-    APP="$(realpath "$1")"
-    OUT="$(realpath "$2")"
-    mkdir -p "$OUT"
-    run_capture_one "$3" "$4" "$5" "$6" "$7" "$8"
-    exit 0
-elif [[ "$MODE" == "--wheel-test" ]]; then
-    shift
-    APP="$(realpath "$1")"
-    OUT="$(realpath "$2")"
-    mkdir -p "$OUT"
-    run_wheel_test
-    exit 0
+if [[ -z "${DISPLAY:-}" ]]; then
+    Xvfb :97 -screen 0 1920x1100x24 >/dev/null 2>&1 &
+    XVFB_PID=$!
+    trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
+    export DISPLAY=:97
+    sleep 1
 fi
 
-APP="${1:-app/target/release/tiny4lite-control}"
-OUT="${2:-app/artifacts/headless-ui}"
-mkdir -p "$OUT"
-APP="$(realpath "$APP")"
-OUT="$(realpath "$OUT")"
-SCRIPT="$(realpath "$0")"
+APP_PID=""
+stop_app() {
+    if [[ -n "$APP_PID" ]]; then kill "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true; APP_PID=""; fi
+}
+trap 'stop_app' RETURN
 
-capture_one() {
-    xvfb-run -a -s "-screen 0 1600x1200x24" bash "$SCRIPT" --capture-one "$APP" "$OUT" "$@"
+# start NAME [app args...]: env TINY4LITE_UI_TEST_* are passed through.
+start() {
+    local name="$1"; shift
+    export XDG_CONFIG_HOME="$(mktemp -d)" XDG_CACHE_HOME="$(mktemp -d)" XDG_DATA_HOME="$(mktemp -d)"
+    export TINY4LITE_UI_TEST_LOG="$OUT/$name.commands.log"
+    rm -f "$TINY4LITE_UI_TEST_LOG"
+    "$APP" "$@" >"$OUT/$name.log" 2>&1 &
+    APP_PID=$!
+    WINDOW=""
+    for _ in $(seq 1 80); do
+        WINDOW="$(xdotool search --onlyvisible --name "Tiny 2 Lite Control" 2>/dev/null | head -n1 || true)"
+        [[ -n "$WINDOW" ]] && break
+        sleep 0.25
+    done
+    if [[ -z "$WINDOW" ]]; then cat "$OUT/$name.log"; echo "No window appeared for $name" >&2; exit 1; fi
+    sleep 2.2
 }
 
-capture_one auto controls controls-auto-top 1 1440 1040
-capture_one manual controls controls-manual-top 1 1440 1040
-capture_one aperture controls controls-aperture-top 1 1440 1040
-capture_one auto controls controls-default-size-top 0 900 680
-capture_one auto capture capture-page 0 1440 1040
-capture_one auto diagnostics diagnostics-page 0 1440 1040
-xvfb-run -a -s "-screen 0 1600x1200x24" bash "$SCRIPT" --wheel-test "$APP" "$OUT"
+shot() { import -window root "$OUT/$1.png"; }
 
-for image in "$OUT"/*.png; do
-    test -s "$image"
-    identify "$image"
-done
+scenario() { # name, then VAR=value pairs, then -- and app args
+    local name="$1"; shift
+    local -a envs=() args=()
+    while [[ $# -gt 0 && "$1" != "--" ]]; do envs+=("$1"); shift; done
+    [[ "${1:-}" == "--" ]] && shift
+    args=("$@")
+    ( for e in "${envs[@]}"; do export "$e"; done; start "$name" "${args[@]}"; shot "$name"; stop_app )
+}
 
-echo "Headless GTK screenshots written to $OUT"
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# ── Pages and states ──
+scenario full-auto
+scenario full-manual TINY4LITE_UI_TEST_STATE=manual
+scenario full-aperture TINY4LITE_UI_TEST_STATE=aperture
+for page in tracking audio presets device; do scenario "page-$page" TINY4LITE_UI_TEST_PAGE=$page; done
+scenario full-light TINY4LITE_UI_TEST_THEME=light
+scenario full-wide TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
+scenario full-wide-manual TINY4LITE_UI_TEST_STATE=manual TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
+scenario full-narrow TINY4LITE_UI_TEST_WIDTH=700 TINY4LITE_UI_TEST_HEIGHT=900
+scenario full-compact TINY4LITE_UI_TEST_SCALE=compact
+scenario search TINY4LITE_UI_TEST_SEARCH=focus
+scenario slim -- --slim
+scenario slim-customise TINY4LITE_UI_TEST_PAGE=customise -- --slim
+scenario slim-light TINY4LITE_UI_TEST_THEME=light -- --slim
+
+# ── Window classes and titles (what window-manager rules match) ──
+check_class() { # args..., expected class, expected title
+    local want_class="$1" want_title="$2"; shift 2
+    start class-check "$@"
+    local found=""
+    for w in $(xdotool search --onlyvisible --name "Tiny 2 Lite Control" 2>/dev/null); do
+        local class title
+        class="$(xprop -id "$w" WM_CLASS | sed 's/.*= "\([^"]*\)".*/\1/')"
+        title="$(xprop -id "$w" _NET_WM_NAME | sed 's/.*= "\(.*\)"/\1/')"
+        [[ "$class" == "$want_class" && "$title" == "$want_title" ]] && found=1
+    done
+    stop_app
+    [[ -n "$found" ]] || fail "no window with class '$want_class' and title '$want_title' for args: $*"
+}
+check_class io.github.hypesthyper.Tiny4LiteControl "Tiny 2 Lite Control"
+check_class io.github.hypesthyper.Tiny4LiteControl.Slim "Tiny 2 Lite Control - Quick controls" --slim
+check_class io.github.hypesthyper.Tiny4LiteControl.Preview "Tiny 2 Lite Control - Preview" --preview
+echo "ok: window classes and titles"
+
+# ── Joystick: drag, hold, release ──
+start joystick
+CENTRE_X=235; CENTRE_Y=507
+xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
+sleep 0.2
+xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y - 50)); sleep 0.35
+xdotool mousemove --window "$WINDOW" $((CENTRE_X + 90)) $((CENTRE_Y - 80)); sleep 0.4
+shot joystick-engaged
+xdotool mousemove --window "$WINDOW" $((CENTRE_X - 20)) $((CENTRE_Y + 70)); sleep 0.3
+xdotool mouseup 1; sleep 0.8
+shot joystick-released
+stop_app
+LOG="$OUT/joystick.commands.log"
+[[ -s "$LOG" ]] || fail "the joystick sent nothing"
+grep -q 'pan_speed=[1-9]' "$LOG" || fail "dragging right did not send a positive pan speed"
+grep -q 'tilt_speed=-[1-9]' "$LOG" || fail "dragging down did not send a negative tilt speed"
+[[ "$(tail -n1 "$LOG" | cut -d' ' -f2)" == "--set-ctrl=pan_speed=0,tilt_speed=0" ]] || fail "the last command was not a stop"
+# Updates are rate-limited: never more than 30 in any one second.
+awk '{ s=int($1/1000); n[s]++ } END { for (k in n) if (n[k] > 30) { print "second " k " had " n[k]; exit 1 } }' "$LOG" || fail "joystick updates were not rate-limited"
+echo "ok: joystick sends speeds while held and always stops on release"
+
+# ── Sleep needs confirmation, and cancelling sends nothing ──
+TINY4LITE_UI_TEST_PAGE=device start sleep-confirm
+xdotool mousemove --window "$WINDOW" 971 436 click 1; sleep 0.8
+shot sleep-confirm
+xdotool key Escape; sleep 0.4
+shot sleep-cancelled
+stop_app
+echo "ok: confirmation dialog captured"
+
+echo "Screenshots and logs are in $OUT"

@@ -5,8 +5,8 @@
 //! it goes through `backend::worker`.
 #![allow(dead_code)]
 
-use super::state::{current_config, update_config, update_config_checked};
-use crate::{config, video};
+use super::state::{current_config, update_config};
+use crate::video;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

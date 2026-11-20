@@ -51,6 +51,7 @@ pub fn glyph(name: &str) -> Option<char> {
     char::from_u32(code)
 }
 
+#[allow(dead_code)]
 pub const NAMES: &[&str] = &[
     "bedtime",
     "bookmarks",
