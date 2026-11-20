@@ -1938,21 +1938,18 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     selector.append(&face);
     layout.append(&selector);
 
-    let current = Rc::new(Cell::new(initial));
     for (button, requested) in [
         (global.clone(), FaceFocusPriority::Global),
         (face.clone(), FaceFocusPriority::Face),
     ] {
         let dev = device.to_string();
         let status_label = status.clone();
-        let current_state = current.clone();
         let global_button = global.clone();
         let face_button = face.clone();
         button.connect_clicked(move |selected| {
             if !selected.is_active() { return; }
             match set_face_focus(&dev, requested) {
                 Ok(actual) => {
-                    current_state.set(Some(actual));
                     global_button.set_active(actual == FaceFocusPriority::Global);
                     face_button.set_active(actual == FaceFocusPriority::Face);
                     if actual == requested {
@@ -1964,7 +1961,6 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
                 Err(error) => {
                     // The setter may have reached the camera even if GET timed
                     // out. Do not display the old selection as if still known.
-                    current_state.set(None);
                     global_button.set_active(false);
                     face_button.set_active(false);
                     status_label.set_text(&format!("Autofocus priority is unknown: {error}"));
@@ -1977,20 +1973,17 @@ fn add_focus_mode_control(container: &gtk::Box, device: &str, status: &gtk::Labe
     let refresh = gtk::Button::with_label("Read camera state");
     let dev_refresh = device.to_string();
     let status_refresh = status.clone();
-    let current_refresh = current.clone();
     let global_refresh = global.clone();
     let face_refresh = face.clone();
     refresh.connect_clicked(move |_| {
         match get_face_focus(&dev_refresh) {
             Ok(actual) => {
-                current_refresh.set(Some(actual));
                 global_refresh.set_active(actual == FaceFocusPriority::Global);
                 face_refresh.set_active(actual == FaceFocusPriority::Face);
                 update_config(|config| config.focus_mode = Some(actual.config_value().into()));
                 status_refresh.set_text(&format!("Camera reports {} autofocus priority.", actual.label()));
             }
             Err(error) => {
-                current_refresh.set(None);
                 global_refresh.set_active(false);
                 face_refresh.set_active(false);
                 status_refresh.set_text(&format!("Autofocus priority is unknown: {error}"));
