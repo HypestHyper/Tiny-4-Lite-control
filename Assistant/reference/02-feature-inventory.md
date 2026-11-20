@@ -60,12 +60,13 @@ A first test app should expose: - Recenter/home (only if a reliable
 method is verified). - Small relative pan/tilt buttons. - Absolute
 pan/tilt sliders. - Stop/cancel behavior if supported by the API.
 
-The app now has a read-only Camera Terminal PanTilt Absolute GET_CUR
-implementation (entity 1, selector 0x0D), based on confirmed Windows
-DirectShow live physical feedback. The Linux request and UI polling path
-are implemented, but direct Linux ioctl success and raw-unit conversion
-still require hardware validation. Do not substitute cached V4L2
-pan_absolute/tilt_absolute values for this read-back. See
+The app now reads live physical position through the framed gimbal
+controller query 0x0043 (receiver 3), decoding signed hundredths-of-a-degree
+pitch/yaw. It polls every 250 ms. Zoom uses the separate 0x6804 query.
+The standard Camera Terminal PanTilt Absolute GET_CUR path remains
+documented as a separate interface, but is not the active app read-back.
+Linux hardware validation of the 0x0043 path remains pending. Do not
+substitute cached V4L2 pan_absolute/tilt_absolute values. See
 [reference 12](12-2026-11-19-directshow-pan-tilt-position-readback.md).
 
 ### 4.3 Zoom and field-of-view presets
