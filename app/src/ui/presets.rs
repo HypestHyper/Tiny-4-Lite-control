@@ -187,7 +187,7 @@ pub(crate) fn append_camera_native(
     layout.set_margin_end(10);
 
     let description = gtk::Label::new(Some(
-        "Stored in the Tiny 2 Lite itself. Saving captures the current V4L2 pan, tilt and zoom. Recall physically moves the gimbal."
+        "Stored in the Tiny 2 Lite itself. Saving captures the camera's live gimbal pose and zoom. Recall physically moves the gimbal."
     ));
     description.set_wrap(true);
     description.set_xalign(0.0);
@@ -326,6 +326,93 @@ pub(crate) fn append_camera_native(
             }
             Err(error) => status_delete.set_text(&format!("Could not delete camera preset: {error}")),
         }
+    });
+
+    frame.set_child(Some(&layout));
+    container.append(&frame);
+}
+
+
+fn refresh_initial_state(label: &gtk::Label, device: &str, status: &gtk::Label) {
+    match crate::read_initial_camera_state(device) {
+        Ok(state) => {
+            let source = match state.source {
+                0..=2 => format!("Preset {}", state.source + 1),
+                3 => "Custom pose".to_string(),
+                other => format!("Unknown source {other}"),
+            };
+            label.set_text(&format!(
+                "{source} · Pan {:+.1}° · Tilt {:+.1}° · Zoom {:.2}×",
+                state.pan, state.tilt, state.zoom
+            ));
+            status.set_text("Read the camera's stored power-on initial state.");
+        }
+        Err(error) => {
+            label.set_text("Initial state unavailable");
+            status.set_text(&format!("Could not read camera initial state: {error}"));
+        }
+    }
+}
+
+/// The camera's power-on/startup pose is separate from ordinary user presets.
+pub(crate) fn append_initial_state(container: &gtk::Box, device: &str, status: &gtk::Label) {
+    let frame = gtk::Frame::new(Some("Power-on initial state"));
+    crate::ui::layout::mark_compact_item(frame.upcast_ref(), "camera:initial-state");
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    layout.set_margin_top(8);
+    layout.set_margin_bottom(8);
+    layout.set_margin_start(10);
+    layout.set_margin_end(10);
+
+    let description = gtk::Label::new(Some(
+        "The camera's own startup pose, not a local preset. Set it from the current live gimbal position. Existing startup picture settings are preserved."
+    ));
+    description.set_wrap(true);
+    description.set_xalign(0.0);
+    description.add_css_class("dim-label");
+    layout.append(&description);
+
+    let current = gtk::Label::new(Some("Reading camera state…"));
+    current.set_xalign(0.0);
+    current.set_wrap(true);
+    layout.append(&current);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.add_css_class("adaptive-row");
+    let refresh = gtk::Button::with_label("Refresh");
+    let set_initial = gtk::Button::with_label("Set current position as initial state");
+    set_initial.add_css_class("suggested-action");
+    actions.append(&refresh);
+    actions.append(&set_initial);
+    layout.append(&actions);
+
+    refresh_initial_state(&current, device, status);
+
+    let device_refresh = device.to_string();
+    let current_refresh = current.clone();
+    let status_refresh = status.clone();
+    refresh.connect_clicked(move |_| refresh_initial_state(&current_refresh, &device_refresh, &status_refresh));
+
+    let device_set = device.to_string();
+    let current_set = current.clone();
+    let status_set = status.clone();
+    set_initial.connect_clicked(move |_| {
+        set_initial.set_sensitive(false);
+        match crate::set_initial_camera_state(&device_set) {
+            Ok(state) => {
+                let source = if state.source == 3 { "Custom pose".to_string() } else { format!("Preset {}", state.source + 1) };
+                current_set.set_text(&format!(
+                    "{source} · Pan {:+.1}° · Tilt {:+.1}° · Zoom {:.2}×",
+                    state.pan, state.tilt, state.zoom
+                ));
+                status_set.set_text("Camera initial state saved and verified by read-back.");
+            }
+            Err(error) => {
+                status_set.set_text(&format!("Could not set camera initial state: {error}"));
+                refresh_initial_state(&current_set, &device_set, &status_set);
+            }
+        }
+        set_initial.set_sensitive(true);
     });
 
     frame.set_child(Some(&layout));
