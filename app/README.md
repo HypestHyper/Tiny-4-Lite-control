@@ -214,8 +214,11 @@ Loading the file does not send camera commands. In particular,
 `apply_on_connect` defaults to `false`; saved camera values are retained
 for the future in-process service, but are not replayed to the camera at
 startup. Camera read-back remains authoritative for settings that the
-device exposes. Locally remembered gesture/focus states are only the last
-successfully submitted commands where no reliable read-back exists.
+device exposes. Autofocus priority is queried from the camera when the
+Controls page is populated, after each setter, and on explicit refresh;
+the persisted `focus_mode` is not trusted to initialize the UI. Gesture
+states without reliable camera read-back remain locally remembered as the
+last successfully submitted commands.
 
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
