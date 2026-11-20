@@ -540,9 +540,23 @@ fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
 
 /// Read standard UVC Camera Terminal PanTilt Absolute using GET_CUR only.
 pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
-    let mut data = [0u8; 8];
-    camera_terminal_query(device, UVC_CT_PANTILT_ABSOLUTE, UVC_GET_CUR, &mut data)?;
-    Ok(decode_pan_tilt_absolute(&data))
+    // Documented candidate: XU unit 2 / selector 0x02 GET_CUR, 60-byte
+    // response. Only the two float32 values at offset 20 are decoded for the
+    // observed position-like response records. Never issue SET_CUR here.
+    let mut data = [0u8; 60];
+    xu_query(device, 0x02, UVC_GET_CUR, &mut data)?;
+    let record = &data[..6];
+    if record != [0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]
+        && record != [0x02, 0x0a, 0x42, 0x29, 0x05, 0x00]
+    {
+        return Err(format!("Unrecognized position response record: {:02x?}", record));
+    }
+    let pan = f32::from_le_bytes(data[20..24].try_into().unwrap()) as f64;
+    let tilt = f32::from_le_bytes(data[24..28].try_into().unwrap()) as f64;
+    if !pan.is_finite() || !tilt.is_finite() {
+        return Err("Position response contained non-finite coordinates.".into());
+    }
+    Ok((pan.clamp(-130.0, 130.0), tilt.clamp(-90.0, 90.0)))
 }
 
 fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], String> {
