@@ -1427,14 +1427,19 @@ fn send_camera_preset_command(device: &str, command: u16, payload: &[u8]) -> Res
 
 pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: bool) -> Result<(), String> {
     let index = preset_slot_index(slot)?;
-    let controls = ["pan_absolute", "tilt_absolute", "zoom_absolute"];
-    let values = controls.map(|name| get_control(device, name)).into_iter().collect::<Result<Vec<_>, _>>()?;
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.len() > 32 || !trimmed.bytes().all(|b| b.is_ascii_graphic() || b == b' ') {
+        return Err("Preset names must contain 1–32 printable ASCII characters.".into());
+    }
+    let (pan, tilt) = get_gimbal_position(device)?;
+    let zoom = get_live_zoom_factor(device)?;
     let mut payload = index.to_le_bytes().to_vec();
-    for value in [values[0] as f32, values[1] as f32, 0.0f32, values[2] as f32, -1000.0f32] {
+    for value in [pan as f32, -tilt as f32, 0.0f32, zoom, -1000.0f32] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
     send_camera_preset_command(device, if update { 0x3e04 } else { 0x3944 }, &payload)?;
-    rename_camera_preset(device, slot, name)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    rename_camera_preset(device, slot, trimmed)?;
     Ok(())
 }
 
@@ -1450,7 +1455,15 @@ pub(crate) fn rename_camera_preset(device: &str, slot: u8, name: &str) -> Result
 }
 
 pub(crate) fn delete_camera_preset(device: &str, slot: u8) -> Result<(), String> {
-    send_camera_preset_command(device, 0x3984, &preset_slot_index(slot)?.to_le_bytes())
+    let index = preset_slot_index(slot)?.to_le_bytes();
+    send_camera_preset_command(device, 0x3984, &index)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    const CLEARED: [u8; 44] = [
+        0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    send_camera_preset_command(device, 0x3d84, &CLEARED)
 }
 
 pub(crate) fn recall_camera_preset(device: &str, slot: u8) -> Result<(), String> {
