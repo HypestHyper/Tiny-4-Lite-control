@@ -396,8 +396,9 @@ pub(crate) fn append_initial_state(container: &gtk::Box, device: &str, status: &
     let device_set = device.to_string();
     let current_set = current.clone();
     let status_set = status.clone();
+    let set_initial_busy = set_initial.clone();
     set_initial.connect_clicked(move |_| {
-        set_initial.set_sensitive(false);
+        set_initial_busy.set_sensitive(false);
         match crate::set_initial_camera_state(&device_set) {
             Ok(state) => {
                 let source = if state.source == 3 { "Custom pose".to_string() } else { format!("Preset {}", state.source + 1) };
@@ -412,7 +413,7 @@ pub(crate) fn append_initial_state(container: &gtk::Box, device: &str, status: &
                 refresh_initial_state(&current_set, &device_set, &status_set);
             }
         }
-        set_initial.set_sensitive(true);
+        set_initial_busy.set_sensitive(true);
     });
 
     frame.set_child(Some(&layout));
