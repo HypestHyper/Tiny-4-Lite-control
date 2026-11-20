@@ -1059,7 +1059,7 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     // The captured GET_CUR configuration block exposes this setting at byte 16.
     let sleep_mic_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     sleep_mic_row.add_css_class("adaptive-row");
-    let sleep_mic_label = gtk::Label::new(Some("Microphone during sleep"));
+    let sleep_mic_label = gtk::Label::new(Some("Keep microphone on while sleeping"));
     sleep_mic_label.set_xalign(0.0);
     sleep_mic_label.set_hexpand(true);
     let sleep_mic = gtk::Switch::new();
@@ -1083,9 +1083,9 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
         match set_microphone_during_sleep(&sleep_mic_device, enabled) {
             Ok(()) => {
                 sleep_mic_status.set_text(if enabled {
-                    "Microphone during sleep enabled."
+                    "Keep microphone on while sleeping enabled."
                 } else {
-                    "Microphone during sleep disabled."
+                    "Keep microphone on while sleeping disabled."
                 });
                 gtk::glib::Propagation::Proceed
             }
