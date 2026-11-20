@@ -1,9 +1,9 @@
-# Builds the self-contained x86_64 AppImage for the Tiny 2 Lite test bench.
+# Builds the self-contained x86_64 AppImage for Tiny 2 Lite Control.
 name: Build AppImage
 
 on:
   push:
-    branches: [test-app-v0.1]
+    branches: [test-app-v0.1, claude/upbeat-rubin-gnae3f]
     paths:
       - "app/**"
       - ".github/workflows/appimage.yml"
