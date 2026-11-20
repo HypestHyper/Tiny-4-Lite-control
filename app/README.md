@@ -67,12 +67,18 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   Selection is tracked locally as the last successfully submitted
   command, not actual camera state. This is distinct from face-priority
   auto-exposure.
-- Auto Exposure priority has its own grouped Global / Face control, shown
-  only when V4L2 `auto_exposure` is Auto (menu value 0). The 2026-11-18
-  Linux capture identified selector `0x06` SET_CUR payloads:
-  Face = `03 01 00`, Global = `03 01 01`, padded to 60 bytes with
-  zeros. This is not the autofocus command. The last submitted selection
-  is persisted locally, but no reliable device read-back is known.
+- Auto Exposure priority has its own grouped Global / Face control,
+  shown only when V4L2 `auto_exposure` is Auto (menu value 0). The
+  2026-11-20 controlled Linux capture verified XU unit 2 / selector
+  `0x06`, using full 60-byte SET_CUR and GET_CUR transfers. SET payload:
+  Face = `03 01 00` + 57 zero bytes; Global = `03 01 01` + 57 zero
+  bytes. GET_CUR status byte 7 is authoritative: `00` = Face,
+  `01` = Global. The app initializes from camera read-back and performs
+  a read-back after every change; the saved local value is only a
+  fallback if the camera query fails. UI and persisted state reflect
+  the actual read-back value, not the requested value. This is distinct
+  from autofocus priority. Protocol read-back is capture-verified;
+  integrated app behavior still needs physical camera validation.
   Exposure compensation (−3.0 to +3.0) is implemented through UVC
   Processing Unit 3, selector 1 (Backlight Compensation). The 19
   OBSBOT Center positions map to unsigned little-endian values 1–19:
