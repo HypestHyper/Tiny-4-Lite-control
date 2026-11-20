@@ -318,7 +318,7 @@ revision as build-verified.
   reports neither option currently produces the expected behavior. A
   fresh action-correlated capture and visible behavior test are required.
   Reliable read-back for most gesture states, automatic firmware
-  detection, Linux validation of Camera Terminal pan/tilt read-back,
+  detection, Linux physical validation of framed live gimbal pose query `0x0043`,
   HDR visible-effect validation, physical Mirror image validation,
   pop-filter prototype validation, and camera-native preset-slot
   operations remain unimplemented or unverified.
