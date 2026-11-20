@@ -543,12 +543,13 @@ fn decode_pan_tilt_absolute(data: &[u8; 8]) -> (f64, f64) {
     )
 }
 
-/// Read candidate live pan/tilt telemetry through XU unit 2 / selector 0x02 GET_CUR.
-/// This is read-only; Linux hardware behavior remains to be verified.
+/// Read the Camera Terminal Pan/Tilt Absolute control directly.
+/// Windows DirectShow testing showed that this control follows hand-moved
+/// physical position. Linux still needs on-device confirmation.
 pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
-    let mut data = [0u8; 60];
-    xu_query(device, 0x02, UVC_GET_CUR, &mut data)?;
-    decode_candidate_gimbal_position(&data)
+    let mut data = [0u8; 8];
+    camera_terminal_query(device, UVC_CT_PANTILT_ABSOLUTE, UVC_GET_CUR, &mut data)?;
+    Ok(decode_pan_tilt_absolute(&data))
 }
 
 fn decode_candidate_gimbal_position(data: &[u8; 60]) -> Result<(f64, f64), String> {
@@ -1174,6 +1175,144 @@ fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8; 6]) -> Res
     let sequence = next_xu_sequence(&XU_SEQUENCE);
     let mut frame = obsbot_frame(sequence, function_group, command);
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)
+}
+
+fn obsbot_frame_with_payload(sequence: u16, command: u16, payload: &[u8]) -> Result<[u8; 60], String> {
+    if payload.len() > 44 {
+        return Err(format!("OBSBOT command payload is too large: {} bytes", payload.len()));
+    }
+    let mut frame = [0u8; 60];
+    frame[0] = 0xaa;
+    frame[1] = 0x25;
+    frame[2..4].copy_from_slice(&sequence.to_le_bytes());
+    frame[4..6].copy_from_slice(&12u16.to_le_bytes());
+    frame[8..12].copy_from_slice(&[0x0a, 0x04, command as u8, (command >> 8) as u8]);
+    let header_crc = crc16_usb(&frame[..12]);
+    frame[6..8].copy_from_slice(&header_crc.to_le_bytes());
+    let len = payload.len() as u16;
+    frame[12..14].copy_from_slice(&len.to_le_bytes());
+    frame[16..16 + payload.len()].copy_from_slice(payload);
+    let payload_crc = crc16_usb(&frame[12..16 + payload.len()]);
+    frame[14..16].copy_from_slice(&payload_crc.to_le_bytes());
+    Ok(frame)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CameraPresetEntry {
+    pub slot: u8,
+    pub name: String,
+    pub pan_degrees: f32,
+    pub tilt_degrees: f32,
+    pub zoom: f32,
+}
+
+fn decode_preset_base64(input: &[u8]) -> Result<String, String> {
+    fn value(byte: u8) -> Option<u8> {
+        match byte {
+            b'A'..=b'Z' => Some(byte - b'A'),
+            b'a'..=b'z' => Some(byte - b'a' + 26),
+            b'0'..=b'9' => Some(byte - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut output = Vec::new();
+    let mut accumulator = 0u32;
+    let mut bits = 0u32;
+    for byte in input {
+        if *byte == b'=' { break; }
+        let digit = value(*byte).ok_or_else(|| format!("Invalid base64 byte 0x{byte:02x} in preset name"))?;
+        accumulator = (accumulator << 6) | u32::from(digit);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push(((accumulator >> bits) & 0xff) as u8);
+        }
+    }
+    String::from_utf8(output).map_err(|error| format!("Preset name is not UTF-8: {error}"))
+}
+
+fn parse_camera_preset_entry(data: &[u8; 60]) -> Result<Option<CameraPresetEntry>, String> {
+    if data[0] != 0x00 { return Ok(None); }
+    let name_end = data[10..].iter().position(|byte| *byte == 0).unwrap_or(50);
+    let name = decode_preset_base64(&data[10..10 + name_end])?;
+    let pitch = i16::from_le_bytes([data[4], data[5]]) as f32 / 100.0;
+    let yaw = i16::from_le_bytes([data[6], data[7]]) as f32 / 100.0;
+    let zoom = u16::from_le_bytes([data[8], data[9]]) as f32 / 100.0;
+    Ok(Some(CameraPresetEntry { slot: data[1], name, pan_degrees: yaw, tilt_degrees: -pitch, zoom }))
+}
+
+/// Camera-native Tiny 2 Lite preset list. Selector 0x0D is a consuming
+/// cursor, so selector 0x0C must be echo-written before every enumeration.
+pub(crate) fn read_camera_presets(device: &str) -> Result<Vec<CameraPresetEntry>, String> {
+    let mut list = [0u8; 60];
+    xu_query(device, 0x0c, UVC_GET_CUR, &mut list)?;
+    let count = usize::from(list[0]).min(3);
+    let slots = list[1..1 + count].to_vec();
+    xu_query(device, 0x0c, UVC_SET_CUR, &mut list)?;
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let mut entries = Vec::new();
+    for _ in 0..3 {
+        let mut entry = [0u8; 60];
+        xu_query(device, 0x0d, UVC_GET_CUR, &mut entry)?;
+        match parse_camera_preset_entry(&entry)? {
+            Some(value) if slots.contains(&value.slot) => entries.push(value),
+            Some(_) => return Err("Camera preset cursor returned a slot absent from selector 0x0C.".into()),
+            None => break,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if entries.len() != slots.len() {
+        return Err(format!("Camera reports {} preset slots but {} entries could be read.", slots.len(), entries.len()));
+    }
+    Ok(entries)
+}
+
+fn preset_slot_index(slot: u8) -> Result<u32, String> {
+    if slot >= 3 { return Err("Tiny 2 Lite preset slot must be 1, 2, or 3.".into()); }
+    Ok(u32::from(slot))
+}
+
+fn send_camera_preset_command(device: &str, command: u16, payload: &[u8]) -> Result<(), String> {
+    let sequence = next_xu_sequence(&XU_SEQUENCE);
+    let mut frame = obsbot_frame_with_payload(sequence, command, payload)?;
+    xu_query(device, 0x02, UVC_SET_CUR, &mut frame)?;
+    Ok(())
+}
+
+pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: bool) -> Result<(), String> {
+    let index = preset_slot_index(slot)?;
+    let controls = ["pan_absolute", "tilt_absolute", "zoom_absolute"];
+    let values = controls.map(|name| get_control(device, name)).into_iter().collect::<Result<Vec<_>, _>>()?;
+    let mut payload = index.to_le_bytes().to_vec();
+    for value in [values[0] as f32, values[1] as f32, 0.0f32, values[2] as f32, -1000.0f32] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    send_camera_preset_command(device, if update { 0x3e04 } else { 0x3944 }, &payload)?;
+    rename_camera_preset(device, slot, name)?;
+    Ok(())
+}
+
+pub(crate) fn rename_camera_preset(device: &str, slot: u8, name: &str) -> Result<(), String> {
+    let index = preset_slot_index(slot)?;
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.len() > 40 || !trimmed.is_ascii() {
+        return Err("Preset names must contain 1–40 ASCII bytes.".into());
+    }
+    let mut payload = index.to_le_bytes().to_vec();
+    payload.extend_from_slice(trimmed.as_bytes());
+    send_camera_preset_command(device, 0x3a84, &payload)
+}
+
+pub(crate) fn delete_camera_preset(device: &str, slot: u8) -> Result<(), String> {
+    send_camera_preset_command(device, 0x3984, &preset_slot_index(slot)?.to_le_bytes())
+}
+
+pub(crate) fn recall_camera_preset(device: &str, slot: u8) -> Result<(), String> {
+    let mut payload = preset_slot_index(slot)?.to_le_bytes().to_vec();
+    for _ in 0..4 { payload.extend_from_slice(&1.0f32.to_le_bytes()); }
+    send_camera_preset_command(device, 0x39c4, &payload)
 }
 
 
