@@ -124,15 +124,18 @@ selector `0x06` for the 60-byte status block.
   separate vendor command: Wide=0, Medium=5, Narrow=15. The generic
   V4L2 slider covers 0–100.
 - HDR: one switch. The 2026-11-18 controlled Linux capture identified the selector `0x06` SET_CUR payload prefix: `01 01 01` enables HDR and `01 01 00` disables it. Status byte `0x06` reads `0x01` for On and `0x00` for Off. The switch initializes from camera status and falls back to the last successfully submitted local setting only when status is unavailable. The capture showed three matching state transitions; the final checkpoint had no corresponding command and is treated as an incomplete recording, not evidence against the mapping.
-- Microphone controls use XU unit 2 / selector 0x06. Auto gain and
-  noise reduction initialize from the 60-byte GET_CUR configuration
-  block. Their setters modify only their respective bytes and preserve
-  the other fields. Disable microphone uses a separate captured 60-byte
-  command payload with prefix `1c 01 <state>` (0=disabled, 1=enabled);
-  its state is remembered locally because matching GET_CUR read-back
-  has not been established. OBSBOT Center restarted the camera after
-  each microphone-disable toggle; the restart mechanism is unknown.
-  App-side hardware validation is pending.
+- Microphone controls use XU unit 2 / selector 0x06. **Microphone
+  during sleep** is a shared status-block setting at byte offset 16
+  (Off=0, On=1), confirmed by the 2026-11-18 capture with GET_CUR
+  read-back. The UI initializes from the camera and changes this setting
+  with GET_CUR / patch-one-byte / SET_CUR, preserving unrelated fields.
+  This is separate from **Disable microphone**, which uses its own
+  captured 60-byte command payload with prefix `1c 01 <state>`
+  (0=disabled, 1=enabled) and has no established GET_CUR read-back.
+  Auto gain and noise reduction also initialize from the 60-byte GET_CUR
+  configuration block and patch only their respective bytes. OBSBOT
+  Center restarted the camera after each Disable microphone toggle; the
+  restart mechanism is unknown. App-side hardware validation is pending.
 - Pop filter: experimental On/Off switch under Microphone processing.
   It replays fixed session-specific data through XU unit 2 / selector
   0x02 (OFF uses byte-2 value 0x0f; ON uses 0x10). Sequence/check fields
