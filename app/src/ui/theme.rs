@@ -405,6 +405,11 @@ window.t4.csd { border-radius: §18§; }
 .info-pop { padding: §6§; }
 .info-pop label.dim { font-size: ¶13¶; }
 
+/* Text areas (developer tools) */
+.t4 textview, .t4 textview text { background: @t_surface_high; color: @t_on_surface; }
+.t4 textview { border-radius: §12§; padding: §6§; font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace; font-size: ¶12.5¶; }
+.t4 textview text selection { background: alpha(@t_primary, 0.35); }
+
 /* Scrolling */
 .t4 scrolledwindow, .t4 viewport { background: transparent; border: none; }
 .t4 scrollbar { background: transparent; }

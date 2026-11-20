@@ -171,6 +171,12 @@ fn tab_slug(group: Group) -> &'static str {
     }
 }
 
+/// Degrees for display, without a negative zero.
+fn deg(value: impl Into<f64>) -> f64 {
+    let value = value.into();
+    if value.abs() < 0.05 { 0.0 } else { value }
+}
+
 fn normalise(text: &str) -> String {
     text.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
 }
@@ -493,7 +499,7 @@ fn status(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             println!("{:<9}{}", setting.label.split_whitespace().next().unwrap_or(""), show(setting, snapshot, setting.read(snapshot)));
         }
     }
-    match position { Some((pan, tilt)) => println!("Gimbal   pan {pan:+.1}°, tilt {tilt:+.1}°"), None => println!("Gimbal   position not available") }
+    match position { Some((pan, tilt)) => println!("Gimbal   pan {:+.1}°, tilt {:+.1}°", deg(pan), deg(tilt)), None => println!("Gimbal   position not available") }
     OK
 }
 
@@ -502,12 +508,38 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
         Some("position") => match backend::get_gimbal_position(device) {
             Ok((pan, tilt)) => {
                 if options.json { println!("{}", json!({ "pan_degrees": pan, "tilt_degrees": tilt })); }
-                else { println!("pan {pan:+.1}°, tilt {tilt:+.1}°"); }
+                else { println!("pan {:+.1}°, tilt {:+.1}°", deg(pan), deg(tilt)); }
                 OK
             }
             Err(error) => fail(&format!("Could not read the gimbal position: {error}")),
         },
         Some("stop") => stop_gimbal(device),
+        Some("step") => {
+            let degrees = |name: &str| options.flag(name).map(|v| v.parse::<i64>().map_err(|_| format!("{name} needs a whole number of degrees, for example 1 or -2."))).transpose();
+            let (pan, tilt) = match (degrees("--pan"), degrees("--tilt")) { (Ok(p), Ok(t)) => (p, t), (Err(e), _) | (_, Err(e)) => return usage_error(&e) };
+            if pan.is_none() && tilt.is_none() {
+                return usage_error(&format!("gimbal step needs --pan and/or --tilt in whole degrees (1 to {} each).", backend::MAX_STEP_DEGREES));
+            }
+            for (name, value) in [("--pan", pan), ("--tilt", tilt)] {
+                if value.is_some_and(|v| v == 0 || v.abs() > backend::MAX_STEP_DEGREES) {
+                    return usage_error(&format!("{name} must be between 1 and {} degrees, in either direction.", backend::MAX_STEP_DEGREES));
+                }
+            }
+            let mut code = OK;
+            for (axis, control, value) in [("pan", "pan_absolute", pan), ("tilt", "tilt_absolute", tilt)] {
+                let Some(value) = value else { continue };
+                let Some(range) = snapshot.control(control).filter(|c| !c.disabled).map(|c| (c.min, c.max)) else {
+                    eprintln!("This video node has no working absolute {axis} control.");
+                    code = FAILED;
+                    continue;
+                };
+                match backend::step_gimbal(device, control, value, range.0, range.1) {
+                    Ok(target) => println!("{axis} target {target:+.0}°"),
+                    Err(error) => { eprintln!("Could not turn {axis}: {error}"); code = FAILED; }
+                }
+            }
+            code
+        }
         Some("move") => {
             let percent = |name: &str| options.flag(name).map(|v| v.parse::<f64>().map_err(|_| format!("{name} needs a number from -100 to 100."))).transpose();
             let (pan, tilt) = match (percent("--pan"), percent("--tilt")) { (Ok(p), Ok(t)) => (p.unwrap_or(0.0), t.unwrap_or(0.0)), (Err(e), _) | (_, Err(e)) => return usage_error(&e) };
@@ -528,7 +560,7 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             std::thread::sleep(Duration::from_millis((seconds * 1000.0) as u64));
             stop_gimbal(device)
         }
-        _ => usage_error("gimbal needs one of: position, stop, move --pan N --tilt N [--seconds S]"),
+        _ => usage_error("gimbal needs one of: position, stop, step --pan N --tilt N, move --pan N --tilt N [--seconds S]"),
     }
 }
 
@@ -600,7 +632,7 @@ fn position(options: &Options, device: &str) -> i32 {
                 if options.json {
                     println!("{}", json!(entries.iter().map(|e| json!({ "position": e.slot + 1, "name": e.name, "pan_degrees": e.pan_degrees, "tilt_degrees": e.tilt_degrees, "zoom": e.zoom })).collect::<Vec<_>>()));
                 } else if entries.is_empty() { println!("The camera has no saved positions."); }
-                else { for e in entries { println!("{}  {}  pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", e.slot + 1, e.name, e.pan_degrees, e.tilt_degrees, e.zoom); } }
+                else { for e in entries { println!("{}  {}  pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", e.slot + 1, e.name, deg(e.pan_degrees), deg(e.tilt_degrees), e.zoom); } }
                 OK
             }
             Err(error) => fail(&format!("Could not read the camera's saved positions: {error}")),
@@ -630,7 +662,7 @@ fn startup(options: &Options, device: &str) -> i32 {
         Some("show") | None => match backend::read_initial_camera_state(device) {
             Ok(s) => {
                 if options.json { println!("{}", json!({ "pan_degrees": s.pan, "tilt_degrees": s.tilt, "zoom": s.zoom, "source": s.source })); }
-                else { println!("pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", s.pan, s.tilt, s.zoom); }
+                else { println!("pan {:+.1}°, tilt {:+.1}°, zoom {:.2}×", deg(s.pan), deg(s.tilt), s.zoom); }
                 OK
             }
             Err(e) => fail(&format!("Could not read the start-up position: {e}")),
@@ -706,6 +738,7 @@ Settings (every setting the windows show):
 Other things the windows do:
   status                     Power, exposure, focus, tracking and gimbal position
   gimbal position|stop       Read the gimbal position, or stop it
+  gimbal step --pan N --tilt N   Turn by N whole degrees (1 to 5 each, negative for the other way)
   gimbal move --pan N --tilt N [--seconds S]
                              Turn at N% of full speed (-100 to 100) for S seconds (default 1, up to 10)
   preset list|apply|save|delete NAME     Presets kept by this app (a preset with a saved position turns the gimbal: apply needs --yes)
@@ -788,7 +821,7 @@ _tiny4lite_control() {{
             elif [ "$cmd" = set ] && [ "$COMP_CWORD" -eq 3 ]; then COMPREPLY=($(compgen -W "$(tiny4lite-control __complete values "$prev" 2>/dev/null)" -- "$cur")); fi ;;
         list) COMPREPLY=($(compgen -W "$(tiny4lite-control __complete groups 2>/dev/null) --json" -- "$cur")) ;;
         preset) if [ "$COMP_CWORD" -eq 2 ]; then COMPREPLY=($(compgen -W "list apply save delete" -- "$cur")); else COMPREPLY=($(compgen -W "$(tiny4lite-control __complete presets 2>/dev/null)" -- "$cur")); fi ;;
-        gimbal) COMPREPLY=($(compgen -W "position stop move --pan --tilt --seconds" -- "$cur")) ;;
+        gimbal) COMPREPLY=($(compgen -W "position stop move step --pan --tilt --seconds" -- "$cur")) ;;
         position) COMPREPLY=($(compgen -W "list go save delete --yes" -- "$cur")) ;;
         startup) COMPREPLY=($(compgen -W "show set --yes" -- "$cur")) ;;
         capture) COMPREPLY=($(compgen -W "list get set" -- "$cur")) ;;
@@ -808,7 +841,7 @@ _tiny4lite_control() {{
             elif [[ "$words[2]" == set && CURRENT == 4 ]]; then compadd -- ${{(f)"$(tiny4lite-control __complete values "$words[3]" 2>/dev/null)"}}; fi ;;
         list) compadd -- ${{(f)"$(tiny4lite-control __complete groups 2>/dev/null)"}} --json ;;
         preset) if (( CURRENT == 3 )); then compadd list apply save delete; else compadd -- ${{(f)"$(tiny4lite-control __complete presets 2>/dev/null)"}}; fi ;;
-        gimbal) compadd position stop move --pan --tilt --seconds ;;
+        gimbal) compadd position stop move step --pan --tilt --seconds ;;
         position) compadd list go save delete --yes ;;
         startup) compadd show set --yes ;;
         capture) compadd list get set ;;
@@ -825,7 +858,7 @@ complete -c tiny4lite-control -n '__fish_seen_subcommand_from set; and test (cou
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from list' -a '(tiny4lite-control __complete groups 2>/dev/null) --json'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from preset; and test (count (commandline -opc)) -eq 2' -a 'list apply save delete'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from preset; and test (count (commandline -opc)) -ge 3' -a '(tiny4lite-control __complete presets 2>/dev/null)'
-complete -c tiny4lite-control -n '__fish_seen_subcommand_from gimbal' -a 'position stop move'
+complete -c tiny4lite-control -n '__fish_seen_subcommand_from gimbal' -a 'position stop move step'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from position' -a 'list go save delete'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from startup' -a 'show set'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from capture' -a 'list get set'

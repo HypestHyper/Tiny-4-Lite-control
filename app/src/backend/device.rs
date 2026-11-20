@@ -411,6 +411,24 @@ pub(crate) const UVC_CAMERA_TERMINAL_UNIT: u8 = 1;
 pub(crate) const UVC_CT_PANTILT_ABSOLUTE: u8 = 0x0d;
 // Existing V4L2 PTZ controls use 3600 raw units for a one-degree step.
 pub(crate) const PANTILT_RAW_UNITS_PER_DEGREE: f64 = 3600.0;
+
+/// The largest single step the app will send, in degrees. Movement tests start small.
+pub(crate) const MAX_STEP_DEGREES: i64 = 5;
+
+/// Turn the gimbal by a small, bounded angle using the standard absolute pan/tilt control.
+/// Returns the new target in degrees. The target stays inside the range the driver reports.
+pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, max: i64) -> Result<f64, String> {
+    if !matches!(control, "pan_absolute" | "tilt_absolute") {
+        return Err(format!("{control} is not a pan or tilt control."));
+    }
+    if degrees == 0 || degrees.abs() > MAX_STEP_DEGREES {
+        return Err(format!("A step is between 1 and {MAX_STEP_DEGREES} degrees."));
+    }
+    let current = get_control(device, control)?;
+    let target = (current + degrees * PANTILT_RAW_UNITS_PER_DEGREE as i64).clamp(min, max);
+    set_control(device, control, target)?;
+    Ok(target as f64 / PANTILT_RAW_UNITS_PER_DEGREE)
+}
 pub(crate) const PAN_DISPLAY_LIMIT_DEGREES: f64 = 130.0;
 pub(crate) const TILT_DISPLAY_LIMIT_DEGREES: f64 = 90.0;
 

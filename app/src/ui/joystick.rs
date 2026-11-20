@@ -12,7 +12,7 @@
 
 use super::store::Store;
 use super::{theme, widgets};
-use crate::backend::{current_config, run_v4l2, update_config};
+use crate::backend::{self, current_config, run_v4l2, update_config};
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -125,6 +125,8 @@ impl Joystick {
         }
         column.append(&readouts);
 
+        column.append(&self.step_row());
+
         let speed = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         speed.append(&widgets::line("Speed", &["setting-label"]));
         let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 10.0, 200.0, 5.0);
@@ -155,6 +157,50 @@ impl Joystick {
         speed.append(&value);
         column.append(&speed);
         column
+    }
+
+    /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
+    fn step_row(&self) -> gtk::Box {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.set_halign(gtk::Align::Center);
+        let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
+        for (axis, control) in [("Pan", "pan_absolute"), ("Tilt", "tilt_absolute")] {
+            row.append(&widgets::line(axis, &["small", "dim"]));
+            for degrees in [-1_i64, 1] {
+                let sign = if degrees < 0 { "−" } else { "+" };
+                let button = gtk::Button::with_label(&format!("{sign}1°"));
+                button.add_css_class("small");
+                button.set_tooltip_text(Some(&format!("Turn {} by 1° ({sign}). The readout above shows the direction it went.", axis.to_lowercase())));
+                widgets::label_accessible(&button, &format!("{axis} {sign}1 degree"));
+                let this = self.clone();
+                button.connect_clicked(move |_| {
+                    let store = this.0.store.clone();
+                    let snapshot = store.snapshot();
+                    let Some(range) = snapshot.control(control).map(|c| (c.min, c.max)) else { return };
+                    let again = this.clone();
+                    store.call(None, move |d| backend::step_gimbal(d, control, degrees, range.0, range.1), move |result| {
+                        match result {
+                            Ok(target) => again.0.store.toast(&format!("{axis} target {target:+.0}°")),
+                            Err(error) => again.0.store.error(&format!("Could not turn {}: {error}", axis.to_lowercase())),
+                        }
+                        again.poll_position_once();
+                    });
+                });
+                row.append(&button);
+                buttons.borrow_mut().push(button);
+            }
+        }
+        // Only usable when the driver offers working absolute pan and tilt.
+        let weak: Vec<_> = buttons.borrow().iter().map(|b| b.downgrade()).collect();
+        self.0.store.subscribe(move |snapshot| {
+            let usable = ["pan_absolute", "tilt_absolute"].iter().all(|n| snapshot.control(n).is_some_and(|c| !c.disabled));
+            let mut alive = false;
+            for button in &weak {
+                if let Some(button) = button.upgrade() { button.set_sensitive(usable); alive = true; }
+            }
+            alive
+        });
+        row
     }
 
     fn wire(&self) {

@@ -199,6 +199,9 @@ pub fn run() {
         let last_slim = current_config().last_window == "slim";
         if want_slim || (!want_full && last_slim) { ctx.show_slim(); } else { ctx.show_full(); }
         if options.contains("preview") || current_config().preview_popped_out { ctx.set_popped_out(true); }
+        if backend::ui_test_mode() && std::env::var("TINY4LITE_UI_TEST_DEVTOOLS").is_ok() {
+            if let Some(full) = ctx.full.borrow().as_ref() { super::devtools::open(full.window.upcast_ref(), &ctx.store.device()); }
+        }
         0
     });
     app.run();

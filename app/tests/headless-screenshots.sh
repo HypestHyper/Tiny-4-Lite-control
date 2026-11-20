@@ -114,6 +114,26 @@ grep -q 'tilt_speed=-[1-9]' "$LOG" || fail "dragging down did not send a negativ
 awk '{ s=int($1/1000); n[s]++ } END { for (k in n) if (n[k] > 30) { print "second " k " had " n[k]; exit 1 } }' "$LOG" || fail "joystick updates were not rate-limited"
 echo "ok: joystick sends speeds while held and always stops on release"
 
+# ── 1° step buttons send small signed moves ──
+TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start step
+xdotool mousemove --window "$WINDOW" 202 791 click 1; sleep 0.5      # Pan +1°
+xdotool mousemove --window "$WINDOW" 298 791 click 1; sleep 0.5      # Tilt -1°
+shot step-buttons
+stop_app
+grep -q -- '--set-ctrl=pan_absolute=3600' "$OUT/step.commands.log" || fail "Pan +1° did not send a one-degree pan step"
+grep -q -- '--set-ctrl=tilt_absolute=-3600' "$OUT/step.commands.log" || fail "Tilt -1° did not send a one-degree tilt step"
+echo "ok: 1° step buttons"
+
+# ── Developer tools open, and a diagnostic read does not break the app ──
+TINY4LITE_UI_TEST_DEVTOOLS=1 start devtools
+DEV="$(xdotool search --onlyvisible --name "Developer tools" 2>/dev/null | head -n1 || true)"
+[[ -n "$DEV" ]] || fail "the Developer tools window did not open"
+xdotool mousemove --window "$DEV" 87 335 click 1; sleep 0.8          # Read status (0x06)
+kill -0 "$APP_PID" 2>/dev/null || fail "the app exited while reading diagnostics"
+shot devtools-read-status
+stop_app
+echo "ok: developer tools"
+
 # ── Sleep needs confirmation, and cancelling sends nothing ──
 TINY4LITE_UI_TEST_PAGE=device start sleep-confirm
 xdotool mousemove --window "$WINDOW" 971 436 click 1; sleep 0.8

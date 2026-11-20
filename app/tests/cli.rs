@@ -235,3 +235,48 @@ fn every_setting_named_in_the_help_text_exists() {
         assert_eq!(out.status.code(), Some(0), "the help names `{name}` but it is not a setting: {}", text(&out.stderr));
     }
 }
+
+#[test]
+fn gimbal_steps_are_small_signed_and_bounded() {
+    let run = Run::new("step");
+    let log = run.config.join("step.log");
+    let step = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(args)
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    let out = step(&["gimbal", "step", "--pan", "1", "--tilt", "-2"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let sent = std::fs::read_to_string(&log).unwrap();
+    // 3600 driver units are one degree.
+    assert!(sent.contains("--set-ctrl=pan_absolute=3600"), "{sent}");
+    assert!(sent.contains("--set-ctrl=tilt_absolute=-7200"), "{sent}");
+    // Nothing is sent for a step that is too big, zero, or missing.
+    std::fs::remove_file(&log).unwrap();
+    for args in [&["gimbal", "step", "--pan", "6"][..], &["gimbal", "step", "--tilt", "0"], &["gimbal", "step"], &["gimbal", "step", "--pan", "x"]] {
+        assert_eq!(step(args).status.code(), Some(2), "{args:?}");
+    }
+    assert!(!log.exists(), "a rejected step must not reach the camera");
+}
+
+#[test]
+fn camera_positions_and_start_up_position_flow() {
+    let run = Run::new("positions");
+    assert_eq!(run.run(&["position", "list"]).status.code(), Some(0));
+    assert_eq!(run.run(&["position", "save", "1", "Desk"]).status.code(), Some(0));
+    assert_eq!(run.run(&["position", "save", "4", "Nope"]).status.code(), Some(2));
+    assert_eq!(run.run(&["position", "save", "1", "Bad \u{00e9}"]).status.code(), Some(1), "names must be plain ASCII");
+    // Moving or deleting needs --yes; the message explains why.
+    let go = run.run(&["position", "go", "1"]);
+    assert_eq!(go.status.code(), Some(4));
+    assert!(text(&go.stderr).contains("Clear the space"));
+    assert_eq!(run.run(&["position", "go", "1", "--yes"]).status.code(), Some(0));
+    assert_eq!(run.run(&["position", "delete", "1"]).status.code(), Some(4));
+    assert_eq!(run.run(&["position", "delete", "1", "--yes"]).status.code(), Some(0));
+    assert_eq!(run.run(&["startup", "set", "--yes"]).status.code(), Some(0));
+    let shown = text(&run.run(&["startup", "show"]).stdout);
+    assert!(!shown.contains("-0.0"), "negative zero in {shown}");
+}

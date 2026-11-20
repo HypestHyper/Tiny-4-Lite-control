@@ -20,6 +20,11 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
+The gimbal card also has **Pan −1° / +1°** and **Tilt −1° / +1°** buttons: small, bounded turns for precise
+moves and careful first tests (a step is at most 5°, and stays inside the range the driver reports). They use
+the standard absolute pan and tilt controls. Which way "+" turns has not been checked on a camera; the
+position readout above the buttons shows the result.
+
 Keyboard: `Alt+1`…`Alt+5` switch tabs, `Ctrl+F` or just typing opens search, `Esc` closes search or a
 dialog. With the joystick focused the arrow keys move the gimbal and releasing them stops it; `Space` or
 `Esc` stops it at once.
@@ -68,6 +73,7 @@ tiny4lite-control reset zoom                # back to the camera's default
 tiny4lite-control info shutter-speed        # what it does, its range, what it needs
 tiny4lite-control status
 tiny4lite-control gimbal move --pan 30 --seconds 2    # percent of full speed; always stops
+tiny4lite-control gimbal step --pan 1 --tilt -1        # whole degrees, 1 to 5 each, either direction
 tiny4lite-control gimbal position
 tiny4lite-control preset list | apply NAME | save NAME | delete NAME
 tiny4lite-control position list | go 1 | save 1 Desk | delete 1    # the camera's three saved positions
@@ -210,7 +216,9 @@ window, tab and state, then uses real pointer events to check that:
 * each window has the expected class and title;
 * dragging the joystick sends speeds in the right direction, never more than 30 updates a second, and
   always ends with a stop;
-* putting the camera to sleep asks for confirmation first.
+* putting the camera to sleep asks for confirmation first;
+* the 1° step buttons send one-degree absolute pan and tilt moves;
+* Developer tools opens and a diagnostic read works.
 
 `tests/cli.rs` (part of `cargo test`) runs the binary with no display and checks that every vendor command
 is reachable from the terminal, that every setting can be read and set, that dependencies and
