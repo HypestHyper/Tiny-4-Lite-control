@@ -661,19 +661,30 @@ pub(crate) fn read_initial_camera_state(device: &str) -> Result<InitialCameraSta
     })
 }
 
+fn initial_pose_payload(source: u32, pan: f32, tilt: f32, zoom: f32) -> Result<Vec<u8>, String> {
+    if !pan.is_finite() || !tilt.is_finite() || pan.abs() > 150.0 || !(-70.0..=90.0).contains(&tilt) {
+        return Err(format!("Initial pose is outside camera limits: pan -150..150°, tilt -70..90° (received {pan:+.1}° / {tilt:+.1}°)."));
+    }
+    if !zoom.is_finite() || !(1.0..=4.0).contains(&zoom) {
+        return Err(format!("Initial zoom must be 1.0–4.0× (received {zoom:.2}×)."));
+    }
+    let mut payload = Vec::with_capacity(24);
+    payload.extend_from_slice(&source.to_le_bytes());
+    for value in [pan, -tilt, 0.0f32, zoom, 0.0f32] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    Ok(payload)
+}
+
 pub(crate) fn set_initial_camera_state(device: &str) -> Result<InitialCameraState, String> {
     let (pan, tilt) = get_gimbal_position(device)?;
     let zoom = get_live_zoom_factor(device)?;
+    let pose = initial_pose_payload(3, pan as f32, tilt as f32, zoom)?;
     // Read and preserve the existing initial-state picture/action block. If it
     // cannot be read, abort before changing the boot pose.
     let actions = query_obsbot(device, 0x04, 0x3e84)?;
     if actions.len() != 40 {
         return Err(format!("Initial-state settings reply is {} bytes; expected 40. Nothing was changed.", actions.len()));
-    }
-    let mut pose = Vec::with_capacity(24);
-    pose.extend_from_slice(&3u32.to_le_bytes()); // source 3 = independent pose, not a preset slot
-    for value in [pan as f32, -tilt as f32, 0.0f32, zoom, 0.0f32] {
-        pose.extend_from_slice(&value.to_le_bytes());
     }
     send_camera_preset_command(device, 0x3ec4, &pose)?;
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1432,6 +1443,12 @@ pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: boo
     let (pan, tilt) = get_gimbal_position(device)?;
     let zoom = get_live_zoom_factor(device)?;
     let mut payload = index.to_le_bytes().to_vec();
+    if !pan.is_finite() || !tilt.is_finite() || pan.abs() > 150.0 || !(-70.0..=90.0).contains(&(tilt as f32)) {
+        return Err(format!("Current live pose is outside camera preset limits: pan {pan:+.1}°, tilt {tilt:+.1}°."));
+    }
+    if !(1.0..=4.0).contains(&zoom) {
+        return Err(format!("Current live zoom {zoom:.2}× is outside preset limits 1.0–4.0×."));
+    }
     for value in [pan as f32, -tilt as f32, 0.0f32, zoom, -1000.0f32] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
@@ -3084,6 +3101,34 @@ mod xu_protocol_tests {
         assert_eq!(led_brightness_payload(2).unwrap(), [0x1a, 0x01, 0x02]);
         assert_eq!(led_brightness_payload(3).unwrap(), [0x1a, 0x01, 0x03]);
         assert!(led_brightness_payload(4).is_err());
+    }
+
+    #[test]
+    fn framed_query_and_live_pose_decode_match_wire_layout() {
+        let frame = obsbot_query_frame(0x03, 0x0043, 0x1234);
+        assert_eq!(&frame[..12], &[
+            0xaa, 0x01, 0x34, 0x12, 0x0c, 0x00,
+            frame[6], frame[7], 0x0a, 0x03, 0x43, 0x00,
+        ]);
+        assert_eq!(&frame[6..8], &crc16_usb(&frame[..12]).to_le_bytes());
+        let mut reply = [0u8; 12];
+        reply[8..10].copy_from_slice(&(1250i16).to_le_bytes());
+        reply[10..12].copy_from_slice(&(-3400i16).to_le_bytes());
+        assert_eq!(decode_live_gimbal_position(&reply).unwrap(), (-34.0, -12.5));
+        assert!(decode_live_gimbal_position(&reply[..10]).is_err());
+    }
+
+    #[test]
+    fn initial_pose_payload_matches_startup_command_layout_and_limits() {
+        let payload = initial_pose_payload(3, 12.5, -8.0, 1.5).unwrap();
+        assert_eq!(payload.len(), 24);
+        assert_eq!(u32::from_le_bytes(payload[..4].try_into().unwrap()), 3);
+        let values: Vec<f32> = payload[4..].chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+        assert_eq!(values, vec![12.5, 8.0, 0.0, 1.5, 0.0]);
+        assert!(initial_pose_payload(3, 151.0, 0.0, 1.0).is_err());
+        assert!(initial_pose_payload(3, 0.0, -71.0, 1.0).is_err());
+        assert!(initial_pose_payload(3, 0.0, 0.0, 4.1).is_err());
     }
 
     #[test]
