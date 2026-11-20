@@ -60,9 +60,13 @@ A first test app should expose: - Recenter/home (only if a reliable
 method is verified). - Small relative pan/tilt buttons. - Absolute
 pan/tilt sliders. - Stop/cancel behavior if supported by the API.
 
-Do not assume a position query gives live physical feedback. The MCP
-Linux implementation documents gimbal position as cached/last-commanded
-rather than live. Display that distinction clearly.
+The app now has a read-only Camera Terminal PanTilt Absolute GET_CUR
+implementation (entity 1, selector 0x0D), based on confirmed Windows
+DirectShow live physical feedback. The Linux request and UI polling path
+are implemented, but direct Linux ioctl success and raw-unit conversion
+still require hardware validation. Do not substitute cached V4L2
+pan_absolute/tilt_absolute values for this read-back. See
+[reference 12](12-2026-11-19-directshow-pan-tilt-position-readback.md).
 
 ### 4.3 Zoom and field-of-view presets
 
@@ -160,11 +164,14 @@ evidence distinction.
 
 ### 4.7 Presets
 
-**Status:** Tiny 2 Lite preset operations are documented in the
-Domatix protocol notes dated 2026-10-20. Implement these directly in
-the app by sending the camera's vendor commands; no external preset
-service is required. Validate the read/list/recall path before adding
-mutating actions.
+**Current app:** Local application presets can capture and apply
+supported V4L2, selected OBSBOT, gesture, and video-mode settings.
+These are app-managed snapshots, not camera-native preset slots.
+
+**Camera-native presets:** The Tiny 2 Lite command family is documented
+in the Domatix protocol notes, but native slot create/delete/recall/read/
+rename/list/update operations are not implemented in the current app.
+Validate the read/list/recall path before adding native slot mutations.
 
 Operations/opcodes: - Create: `0x3944` - Delete: `0x3984` - Recall:
 `0x39C4` - Read pose: `0x3A44` - Rename: `0x3A84` - Read name:
@@ -214,9 +221,8 @@ has undefined effect in the V4L2 API.
 
 **Global / Face autofocus priority (separate vendor command):**
 
-- Global: captured payload `be 07 00 00`.
-- Face: captured payload `bf fb 01 00`.
-- These payloads replace the earlier unsupported `i32le(0/1)` assumption. The assignment is inferred from the paired transitions around the 15.85s and 25.17s checkpoints; later checkpoints are not cleanly correlated. Hardware confirmation remains pending.
+- Current app mapping: Global = `bf fb 01 00`; Face = `be 07 00 00`.
+- The earlier capture checkpoints were imperfectly correlated and the original mapping was reversed in a later correction. The user has tested both app options and reports that neither produces the expected focus behavior. Treat this feature as not working / unverified until a fresh action-correlated capture and visible behavior test establish the correct mapping.
 - Transport: framed V3 command on XU unit 2, selector `0x02`.
 - This is face-priority **autofocus**, not face-priority auto-exposure. Face-priority AE is a different selector `0x06` tag `0x03` setting and status byte `0x07`.
 - The app exposes Global / Face controls while autofocus is on and sends the capture-derived Tiny 2 Lite payloads above. The user has tested both options and reports that neither currently produces the expected focus behavior. Treat this path as **not working / unverified**. The payload-to-label assignment is inferred from imperfectly correlated checkpoints, and no reliable camera-side read-back is implemented. The UI's local selection or successful host-side submission is not proof that focus behavior changed.
@@ -426,35 +432,34 @@ Close / Standard / Far selector and remembers only the last successful
 local submission. A successful ioctl is transport evidence, not
 independent proof that the camera applied the setting.
 
-Microphone during sleep remains unimplemented pending an isolated mapping.
+**Microphone during sleep:** Not implemented. No isolated action-correlated mapping has been recovered. Keep this separate from the ordinary microphone-disable command.
 
-**Pop filter:** Protocol investigation is documented in [09-pop-filter-protocol-investigation.md](09-pop-filter-protocol-investigation.md). Three controlled On → Off → On captures identify XU unit 2 / selector `0x02`, 60-byte SET_CUR writes, and repeatable state-correlated fields: byte 17 On=`01` / Off=`00`; bytes 14–15 On=`ef 4f` / Off=`be 8f`. Byte 2 increments across adjacent commands, and bytes 6–7 repeat for the same counter values, but their generation rule is unknown. Bytes 20–59 vary across captures. GET_CUR has not provided reliable read-back. **Not implemented:** the complete payload cannot yet be constructed safely. Do not send a guessed or zero-filled command. The evidence file records the raw payloads, capture files, action-window method, TShark commands, and next experiment.
+**Pop filter:** An experimental fixed-payload prototype is present in the app. The protocol investigation remains incomplete: XU unit 2 / selector `0x02`, 60-byte SET_CUR writes, with byte 17 On=`01` / Off=`00` and bytes 14–15 On=`ef 4f` / Off=`be 8f`. Byte 2 behaves as a sequence counter; bytes 6–7 repeat for matching counter values, but their generation rule is unknown. The prototype uses captured session-specific payload data and is not a general payload builder. Its current source sets byte 32 to `01`, while the investigation's section 7 describes offsets 32–59 as zero. Resolve this source/evidence discrepancy against the raw fresh-session capture before changing the payload. No reliable GET_CUR read-back exists. The prototype still needs a focused ON/OFF hardware test; do not infer success from ioctl completion.
 
 ------------------------------------------------------------------------
 
-## 5. Features found in other projects but not yet confirmed for Tiny 2 Lite
+## 5. Remaining research leads and out-of-scope features
 
-These are useful research leads, not promises:
+Do not treat this list as a list of unimplemented controls. Confirmed
+Tiny 2 Lite mappings and current app implementation are described in
+the sections above and in `APP-IMPLEMENTATION-STATUS.md`.
 
--   LED blink/solid mode details beyond the captured tag 0x18 command.
--   Mirror mode.
--   Auto-sleep timeout.
--   HDR control details.
--   Face AE.
--   Additional AI framing/status states.
--   Video FPS settings.
--   Audio capture/recording and microphone controls.
--   Background replacement, blur, noise reduction, and all other
-    effects layered over the video are out of scope for the basic
-    hardware-control milestone.
--   Audio capture/recording and microphone controls are deferred until
-    the camera's basic hardware controls are complete.
--   Voice-command toggles and microphone pickup distance (proprietary
-    SDK app), virtual camera via `v4l2loopback`, and GPU filters are
-    outside the current scope.
+- Automatic sleep timeout: command exists, idle automation does not.
+- LED blink/solid mode and tag `0x18` semantics remain unresolved.
+- Additional AI framing/status states beyond the modes currently exposed.
+- Firmware-specific tracking-speed compatibility, especially older
+  firmware encodings.
+- Host-side audio capture/recording and routing.
+- Background replacement, video blur/effects, virtual camera via
+  `v4l2loopback`, and GPU filters are outside the current control-app
+  milestone.
+- Voice-command toggles and other proprietary SDK-only functions remain
+  outside scope.
 
-Keep these behind an **Experimental** or **Diagnostics** section until
-tested on the Lite.
+Microphone processing controls, mirror image, HDR, and video capture
+mode selection are not generic unconfirmed research leads: their
+specific evidence and validation status are recorded above and in the
+implementation-status document.
 
 ------------------------------------------------------------------------
 
