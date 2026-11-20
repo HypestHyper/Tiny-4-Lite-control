@@ -15,6 +15,7 @@
 |---|---|
 | 2026-11-20 device-specific V4L2 control inventory, full observed ranges/current values, USB/media identity, video formats, and experimentally confirmed exposure/focus/white-balance dependencies | [reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md](reference/13-2026-11-20-tiny-2-lite-v4l2-inventory-and-dependencies.md) |
 | Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
+| Exposure compensation: verified OBSBOT Center label mapping, standard UVC BLC requests, implementation and read-back behavior | [reference/14-2026-11-20-exposure-compensation-implementation.md](reference/14-2026-11-20-exposure-compensation-implementation.md) |
 | Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
 | Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
 | 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |
