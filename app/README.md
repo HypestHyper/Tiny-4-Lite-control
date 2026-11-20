@@ -20,6 +20,30 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
+## Background service
+
+`tiny4lite-control service run` needs no window and no display. It watches for the camera being plugged in and, once the camera has settled, puts the saved capture mode back. That is all it does by default.
+
+| Setting (`service set KEY VALUE`) | Default | What it does |
+|---|---|---|
+| `restore on` | off | Also puts the camera settings back: the preset named by `preset`, or the last values this app set |
+| `preset NAME` | none | Which preset a restore applies |
+| `gimbal on` | off | Lets a restore turn the gimbal to a saved position. Off, positions are left out |
+| `sleep on` | off | Puts an idle camera to sleep and wakes it when a program starts using it. The gimbal moves when the camera sleeps and wakes |
+| `sleep-after MINUTES` | 10 | How long it must be idle first |
+
+Idle means no other program has the camera open (a call, a recording, the preview) and the control window is not running. A camera that was already asleep, or that does not answer, is never touched. A program that keeps the camera open all the time (some desktop camera monitors do) means it is never idle. Idle sleep has not been tried on a real camera.
+
+Only one service runs at a time; `service status` shows it. Start it with your session using `service install`, which prints what to add, or writes it with `--write` for systemd and desktop autostart:
+
+```bash
+tiny4lite-control service install systemd --write
+tiny4lite-control service install hyprland        # prints: exec-once = ...
+tiny4lite-control service targets                 # systemd, xdg, hyprland, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
+```
+
+Window manager configurations are never edited for you. For the AppImage the unit points at the AppImage file itself. The `udev` target prints a rule that starts the systemd user service when the camera is plugged in.
+
 **Angles.** Pan and tilt are shown in whole degrees everywhere. The live position wobbles, sometimes lands between two degrees, and now and then gives one odd value, so the shown degree is the middle of the last five readings and only changes once that is 0.8° or more away from it; a real move (two readings in a row well away) is followed at once. Bumping the desk by a degree still shows.
 
 **Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.

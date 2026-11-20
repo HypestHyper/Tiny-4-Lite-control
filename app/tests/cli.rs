@@ -301,3 +301,73 @@ fn centre_needs_yes_and_sends_one_absolute_move() {
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.contains("--set-ctrl=pan_absolute=0,tilt_absolute=0"), "{commands}");
 }
+
+fn service_run(run: &Run, runtime: &std::path::Path, log: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(args)
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn the_service_restores_settings_but_never_turns_the_gimbal() {
+    let run = Run::new("service");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    // Off by default: a restore sends nothing but the saved capture mode.
+    let out = service_run(&run, &runtime, &log, &["service", "run", "--once"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("brightness"));
+    // Remember some settings, including a position, and turn restore on.
+    assert_eq!(service_run(&run, &runtime, &log, &["set", "brightness", "41"]).status.code(), Some(0));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "restore", "on"]).status.code(), Some(0));
+    std::fs::write(&log, "").unwrap();
+    let out = service_run(&run, &runtime, &log, &["service", "run", "--once"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let commands = std::fs::read_to_string(&log).unwrap();
+    assert!(commands.contains("--set-ctrl=brightness=41"), "{commands}");
+    assert!(!commands.contains("pan_absolute") && !commands.contains("tilt_absolute"), "the gimbal must not move:\n{commands}");
+    // Nothing is left behind.
+    assert!(!runtime.join("tiny4lite-control/service.lock").exists());
+}
+
+#[test]
+fn service_settings_are_checked_and_listed() {
+    let run = Run::new("service-config");
+    let (log, runtime) = (run.config.join("c.log"), run.config.join("runtime"));
+    let bad = service_run(&run, &runtime, &log, &["service", "set", "sleep-after", "0"]);
+    assert_eq!(bad.status.code(), Some(2));
+    let bad = service_run(&run, &runtime, &log, &["service", "set", "preset", "nonexistent"]);
+    assert_eq!(bad.status.code(), Some(1));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "sleep", "on"]).status.code(), Some(0));
+    let config = text(&service_run(&run, &runtime, &log, &["service", "config"]).stdout);
+    assert!(config.contains("sleep            on"), "{config}");
+    let json = text(&service_run(&run, &runtime, &log, &["service", "config", "--json"]).stdout);
+    assert!(json.contains("\"sleep\":true"), "{json}");
+}
+
+#[test]
+fn install_writes_a_systemd_unit_and_an_autostart_entry_only_when_asked() {
+    let run = Run::new("service-install");
+    let (log, runtime) = (run.config.join("i.log"), run.config.join("runtime"));
+    let shown = service_run(&run, &runtime, &log, &["service", "install", "systemd"]);
+    assert_eq!(shown.status.code(), Some(0));
+    assert!(text(&shown.stdout).contains("ExecStart="));
+    assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists(), "printing must not write");
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "install", "systemd", "--write"]).status.code(), Some(0));
+    let unit = std::fs::read_to_string(run.config.join("systemd/user/tiny4lite-control.service")).unwrap();
+    assert!(unit.contains("service run") && unit.contains("Restart=on-failure"), "{unit}");
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "install", "xdg", "--write"]).status.code(), Some(0));
+    assert!(run.config.join("autostart/tiny4lite-control-service.desktop").exists());
+    // A window manager's own config is never written for you.
+    let refused = service_run(&run, &runtime, &log, &["service", "install", "hyprland", "--write"]);
+    assert_ne!(refused.status.code(), Some(0));
+    assert!(text(&service_run(&run, &runtime, &log, &["service", "install", "niri"]).stdout).contains("spawn-at-startup"));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "uninstall", "systemd"]).status.code(), Some(0));
+    assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists());
+}

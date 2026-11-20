@@ -92,6 +92,11 @@ pub struct AppConfig {
 pub struct ServiceConfig {
     pub auto_sleep_enabled: bool,
     pub auto_sleep_timeout_minutes: u32,
+    /// The preset to restore when the camera is plugged in (with `apply_on_connect`). None restores
+    /// the last settings this app set.
+    pub connect_preset: Option<String>,
+    /// Let a restore turn the gimbal to a saved position. Off, positions are left out.
+    pub allow_gimbal_move: bool,
 }
 
 impl Default for ServiceConfig {
@@ -99,6 +104,8 @@ impl Default for ServiceConfig {
         Self {
             auto_sleep_enabled: false,
             auto_sleep_timeout_minutes: 10,
+            connect_preset: None,
+            allow_gimbal_move: false,
         }
     }
 }

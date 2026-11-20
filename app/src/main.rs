@@ -3,6 +3,7 @@ mod capture;
 mod cli;
 mod config;
 mod presets;
+mod service;
 mod ui;
 mod video;
 

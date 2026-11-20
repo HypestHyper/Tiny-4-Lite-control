@@ -1,0 +1,724 @@
+//! The background service: `tiny4lite-control service run`.
+//!
+//! It needs no display and no window. It watches for the camera being plugged in, puts the saved
+//! capture mode back, optionally restores the settings (and a named preset), and, only if you turn it
+//! on, puts an idle camera to sleep and wakes it when a program starts using it.
+//!
+//! Safe by default: with the default configuration it only restores the capture mode. It never moves
+//! the gimbal unless you allow it, and never sleeps the camera unless you turn that on.
+//!
+//! `install` writes or prints what each init system or window manager needs to start it.
+
+use crate::backend::{self, current_config, update_config_checked};
+use crate::config::CameraPreset;
+use crate::presets;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// How often the service looks at the camera.
+const TICK: Duration = Duration::from_secs(2);
+/// A new camera gets this long to settle before anything is sent to it.
+const SETTLE: Duration = Duration::from_secs(2);
+
+// ── Decisions ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Action {
+    Connected(String),
+    Restore,
+    Disconnected,
+    Sleep,
+    Wake,
+}
+
+/// What the service decides to do, from what it sees. It holds no hardware, so it is tested with
+/// made-up time.
+#[derive(Debug)]
+pub struct Brain {
+    pub auto_sleep: bool,
+    pub sleep_after: Duration,
+    device: Option<String>,
+    connected_at: Option<Instant>,
+    restored: bool,
+    idle_since: Option<Instant>,
+    we_slept: bool,
+}
+
+/// Everything the service looks at in one round.
+pub struct Sight<'a> {
+    pub camera: Option<&'a str>,
+    /// A program other than this service has the camera open (a call, a recording, the preview).
+    pub in_use: bool,
+    /// The control window of this app is running, so someone is at the controls.
+    pub window_open: bool,
+    /// What the camera reports, if it answered: true when asleep.
+    pub asleep: Option<bool>,
+}
+
+impl Brain {
+    pub fn new(auto_sleep: bool, sleep_after_minutes: u32) -> Brain {
+        Brain {
+            auto_sleep, sleep_after: Duration::from_secs(u64::from(sleep_after_minutes.max(1)) * 60),
+            device: None, connected_at: None, restored: false, idle_since: None, we_slept: false,
+        }
+    }
+
+    pub fn step(&mut self, now: Instant, sight: &Sight) -> Vec<Action> {
+        let mut actions = Vec::new();
+        match (self.device.as_deref(), sight.camera) {
+            (None, Some(new)) | (Some(_), Some(new)) if self.device.as_deref() != Some(new) => {
+                self.device = Some(new.to_string());
+                self.connected_at = Some(now);
+                self.restored = false;
+                self.idle_since = None;
+                self.we_slept = false;
+                actions.push(Action::Connected(new.to_string()));
+            }
+            (Some(_), None) => {
+                self.device = None;
+                self.connected_at = None;
+                self.idle_since = None;
+                self.we_slept = false;
+                actions.push(Action::Disconnected);
+                return actions;
+            }
+            _ => {}
+        }
+        if self.device.is_none() { return actions; }
+        if !self.restored && self.connected_at.is_some_and(|at| now.duration_since(at) >= SETTLE) {
+            self.restored = true;
+            actions.push(Action::Restore);
+        }
+        if self.auto_sleep && self.restored {
+            if sight.in_use {
+                self.idle_since = None;
+                if self.we_slept {
+                    self.we_slept = false;
+                    actions.push(Action::Wake);
+                }
+            } else if sight.window_open {
+                // Someone is at the controls: never sleep it from under them.
+                self.idle_since = None;
+            } else {
+                let since = *self.idle_since.get_or_insert(now);
+                if now.duration_since(since) >= self.sleep_after && !self.we_slept && sight.asleep == Some(false) {
+                    self.we_slept = true;
+                    self.idle_since = None;
+                    actions.push(Action::Sleep);
+                }
+            }
+        }
+        actions
+    }
+}
+
+// ── Files the service keeps ───────────────────────────────────────────────
+
+fn user_id() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+}
+
+/// Where the lock and the status file live: the runtime directory, which is private and cleared at logout.
+pub fn runtime_dir() -> PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        Some(dir) => PathBuf::from(dir).join("tiny4lite-control"),
+        None => std::env::temp_dir().join(format!("tiny4lite-control-{}", user_id())),
+    }
+}
+
+fn lock_path() -> PathBuf { runtime_dir().join("service.lock") }
+fn state_path() -> PathBuf { runtime_dir().join("service.json") }
+
+fn now_unix() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
+
+/// Is `pid` a running tiny4lite-control service?
+fn is_service_process(pid: u32) -> bool {
+    let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+    let words: Vec<&[u8]> = cmdline.split(|b| *b == 0).collect();
+    let text = |w: &[u8]| String::from_utf8_lossy(w).to_string();
+    words.iter().any(|w| text(w).contains("tiny4lite")) && words.iter().any(|w| text(w) == "service")
+        && words.iter().any(|w| text(w) == "run")
+}
+
+/// Only one service runs at a time. A lock left behind by a process that is gone is taken over.
+pub struct Lock { path: PathBuf }
+
+impl Lock {
+    pub fn acquire(path: &Path) -> Result<Lock, String> {
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        if let Some(pid) = std::fs::read_to_string(path).ok().and_then(|t| t.trim().parse::<u32>().ok()) {
+            if pid != std::process::id() && is_service_process(pid) {
+                return Err(format!("The service is already running (process {pid})."));
+            }
+        }
+        std::fs::write(path, std::process::id().to_string()).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+        Ok(Lock { path: path.to_path_buf() })
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if std::fs::read_to_string(&self.path).ok().and_then(|t| t.trim().parse::<u32>().ok()) == Some(std::process::id()) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Status {
+    pub pid: u32,
+    pub started: u64,
+    pub camera: Option<String>,
+    pub last_event: String,
+    pub last_event_at: u64,
+    pub restored: bool,
+    pub asleep_by_service: bool,
+}
+
+fn write_status(status: &Status) {
+    let path = state_path();
+    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+    let temporary = path.with_extension("json.tmp");
+    if let Ok(text) = serde_json::to_string_pretty(status) {
+        if std::fs::write(&temporary, text).is_ok() { let _ = std::fs::rename(&temporary, &path); }
+    }
+}
+
+// ── Looking around ────────────────────────────────────────────────────────
+
+/// The process ids that have `node` open, apart from this one and the helper programs it starts.
+fn openers(node: &str) -> Vec<u32> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else { return found };
+    let me = std::process::id();
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if pid == me { continue; }
+        // The helper that sends this service's own commands.
+        if std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "v4l2-ctl") { continue; }
+        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else { continue };
+        if fds.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|target| target == Path::new(node))) {
+            found.push(pid);
+        }
+    }
+    found
+}
+
+/// Is the control window of this app running?
+fn window_open() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
+    let me = std::process::id();
+    entries.flatten().any(|entry| {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { return false };
+        if pid == me { return false; }
+        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+        let words: Vec<String> = cmdline.split(|b| *b == 0).map(|w| String::from_utf8_lossy(w).to_string()).collect();
+        let ours = words.first().is_some_and(|w| w.contains("tiny4lite-control") || w.ends_with(".AppImage") && w.to_lowercase().contains("tiny"));
+        // A command line run (`list`, `set`, `service ...`) is not a window.
+        let command = words.get(1).map(String::as_str).unwrap_or("");
+        ours && (command.is_empty() || command.starts_with("--slim") || command.starts_with("--full") || command.starts_with("--preview"))
+    })
+}
+
+// ── Doing it ──────────────────────────────────────────────────────────────
+
+/// What a restore sends, as a preset: the named one, or the last values this app set, without any
+/// gimbal position unless that is allowed.
+pub fn restore_preset(config: &crate::config::AppConfig) -> Option<CameraPreset> {
+    if !config.apply_on_connect { return None; }
+    let mut preset = match config.service.connect_preset.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => config.presets.iter().find(|p| p.name.eq_ignore_ascii_case(name)).cloned()?,
+        None => {
+            let settings: BTreeMap<String, i64> = config.v4l2_controls.iter().map(|(k, v)| (format!("v4l2:{k}"), *v)).collect();
+            CameraPreset { name: "last settings".into(), settings }
+        }
+    };
+    if !config.service.allow_gimbal_move {
+        preset.settings.retain(|key, _| !matches!(key.as_str(), "v4l2:pan_absolute" | "v4l2:tilt_absolute"));
+    }
+    if preset.settings.is_empty() { None } else { Some(preset) }
+}
+
+fn log(message: &str) { eprintln!("[tiny4lite-control service] {message}"); }
+
+fn perform(action: &Action, device: &str, status: &mut Status) {
+    let note = match action {
+        Action::Connected(node) => format!("Camera found at {node}."),
+        Action::Disconnected => "Camera disconnected.".to_string(),
+        Action::Restore => {
+            let mut parts = Vec::new();
+            if let Some(message) = backend::apply_saved_video_mode(device) { parts.push(message); }
+            let config = current_config();
+            match restore_preset(&config) {
+                Some(preset) => match presets::apply(device, &preset) {
+                    Ok(done) => parts.push(done),
+                    Err(error) => parts.push(format!("Restore: {error}")),
+                },
+                None if config.apply_on_connect => parts.push("Restore is on, but there is nothing to restore.".into()),
+                None => {}
+            }
+            status.restored = true;
+            if parts.is_empty() { "Camera ready.".to_string() } else { parts.join(" ") }
+        }
+        Action::Sleep => match backend::set_sleep_mode(device, true) {
+            Ok(()) => { status.asleep_by_service = true; "The camera was idle, so it was put to sleep.".to_string() }
+            Err(error) => format!("Could not put the camera to sleep: {error}"),
+        },
+        Action::Wake => match backend::set_sleep_mode(device, false) {
+            Ok(()) => { status.asleep_by_service = false; "A program started using the camera, so it was woken.".to_string() }
+            Err(error) => format!("Could not wake the camera: {error}"),
+        },
+    };
+    log(&note);
+    status.last_event = note;
+    status.last_event_at = now_unix();
+}
+
+fn camera_asleep(device: &str) -> Option<bool> {
+    backend::xu_status(device).ok().and_then(|s| match s[0x02] { 0 => Some(false), 1 => Some(true), _ => None })
+}
+
+/// Run until stopped. With `once`, stop after the camera has been found and restored.
+pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
+    let _lock = match Lock::acquire(&lock_path()) {
+        Ok(lock) => lock,
+        Err(error) => { eprintln!("{error}"); return crate::cli::FAILED; }
+    };
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let stop = stop.clone();
+        let _ = ctrlc::set_handler(move || stop.store(true, std::sync::atomic::Ordering::Relaxed));
+    }
+    let config = current_config();
+    let mut brain = Brain::new(config.service.auto_sleep_enabled, config.service.auto_sleep_timeout_minutes);
+    let mut status = Status { pid: std::process::id(), started: now_unix(), last_event: "Started.".into(), last_event_at: now_unix(), ..Status::default() };
+    log(&format!("Started. Restore on connect: {}. Idle sleep: {}.",
+        if config.apply_on_connect { "on" } else { "off" },
+        if config.service.auto_sleep_enabled { format!("after {} min", config.service.auto_sleep_timeout_minutes) } else { "off".into() }));
+    write_status(&status);
+    let mut restored_once = false;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        let camera = device_override.clone().filter(|d| Path::new(d).exists() || backend::ui_test_mode())
+            .or_else(|| backend::discover_tiny4lite().into_iter().next());
+        let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode() && !openers(c).is_empty());
+        let window = brain.auto_sleep && !backend::ui_test_mode() && window_open();
+        let asleep = if brain.auto_sleep { camera.as_deref().and_then(camera_asleep) } else { None };
+        let sight = Sight { camera: camera.as_deref(), in_use, window_open: window, asleep };
+        for action in brain.step(Instant::now(), &sight) {
+            if let Some(device) = camera.as_deref() {
+                let restoring = action == Action::Restore;
+                perform(&action, device, &mut status);
+                if restoring { restored_once = true; }
+            } else {
+                perform(&action, "", &mut status);
+            }
+            status.camera = camera.clone();
+            write_status(&status);
+        }
+        status.camera = camera;
+        write_status(&status);
+        if once && restored_once { break; }
+        std::thread::sleep(if once { Duration::from_millis(250) } else { TICK });
+    }
+    let _ = std::fs::remove_file(state_path());
+    log("Stopped.");
+    crate::cli::OK
+}
+
+// ── Commands ──────────────────────────────────────────────────────────────
+
+/// What the `service` command line asks for.
+pub struct Request<'a> {
+    pub words: &'a [String],
+    pub json: bool,
+    pub write: bool,
+    pub once: bool,
+    pub device: Option<String>,
+}
+
+pub fn run(request: &Request) -> i32 {
+    let word = |i: usize| request.words.get(i).map(String::as_str);
+    match word(0) {
+        Some("run") => run_service(request.once, request.device.clone()),
+        Some("status") => status_command(request.json),
+        Some("config") => { print_config(request.json); crate::cli::OK }
+        Some("set") => set_command(word(1), word(2)),
+        Some("targets") => { for (name, what) in TARGETS { println!("{name:<10} {what}"); } crate::cli::OK }
+        Some("install") => install_command(word(1), request.write),
+        Some("uninstall") => uninstall_command(word(1)),
+        _ => { eprintln!("service needs one of: run, status, config, set, install, uninstall, targets.\nTry: tiny4lite-control help service"); crate::cli::USAGE }
+    }
+}
+
+fn status_command(json: bool) -> i32 {
+    let text = std::fs::read_to_string(state_path()).ok();
+    let status: Option<Status> = text.as_deref().and_then(|t| serde_json::from_str(t).ok());
+    let running = status.as_ref().is_some_and(|s| is_service_process(s.pid));
+    if json {
+        println!("{}", serde_json::json!({ "running": running, "status": status }));
+    } else {
+        match (&status, running) {
+            (Some(s), true) => {
+                println!("Running (process {}), up {} s.", s.pid, now_unix().saturating_sub(s.started));
+                println!("Camera:     {}", s.camera.as_deref().unwrap_or("not connected"));
+                println!("Last event: {} ({} s ago)", s.last_event, now_unix().saturating_sub(s.last_event_at));
+            }
+            _ => println!("Not running. Start it with: tiny4lite-control service run\nOr have your session start it: tiny4lite-control service install"),
+        }
+    }
+    if running { crate::cli::OK } else { crate::cli::FAILED }
+}
+
+fn print_config(json: bool) {
+    let c = current_config();
+    if json {
+        println!("{}", serde_json::json!({
+            "restore": c.apply_on_connect, "preset": c.service.connect_preset, "gimbal": c.service.allow_gimbal_move,
+            "sleep": c.service.auto_sleep_enabled, "sleep_after_minutes": c.service.auto_sleep_timeout_minutes,
+        }));
+        return;
+    }
+    let on = |b: bool| if b { "on" } else { "off" };
+    println!("restore          {}   Put the camera settings back when it is plugged in", on(c.apply_on_connect));
+    println!("preset           {}   Restore this preset; with none, the last settings this app set", c.service.connect_preset.as_deref().unwrap_or("none"));
+    println!("gimbal           {}   Let a restore turn the gimbal to a saved position", on(c.service.allow_gimbal_move));
+    println!("sleep            {}   Put an idle camera to sleep, and wake it when a program uses it", on(c.service.auto_sleep_enabled));
+    println!("sleep-after      {} min", c.service.auto_sleep_timeout_minutes);
+}
+
+fn set_command(key: Option<&str>, value: Option<&str>) -> i32 {
+    let (Some(key), Some(value)) = (key, value) else {
+        eprintln!("service set KEY VALUE, where KEY is one of: restore, preset, gimbal, sleep, sleep-after");
+        return crate::cli::USAGE;
+    };
+    let flag = |v: &str| match v.to_lowercase().as_str() { "on" | "yes" | "true" | "1" => Some(true), "off" | "no" | "false" | "0" => Some(false), _ => None };
+    let result = match key {
+        "restore" | "gimbal" | "sleep" => match flag(value) {
+            Some(b) => update_config_checked(|c| match key {
+                "restore" => c.apply_on_connect = b,
+                "gimbal" => c.service.allow_gimbal_move = b,
+                _ => c.service.auto_sleep_enabled = b,
+            }),
+            None => { eprintln!("{key} takes on or off."); return crate::cli::USAGE; }
+        },
+        "preset" => {
+            let name = if value.eq_ignore_ascii_case("none") { None } else { Some(value.to_string()) };
+            if let Some(name) = &name {
+                if !current_config().presets.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+                    eprintln!("There is no preset called `{name}`. Presets: {}", current_config().presets.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "));
+                    return crate::cli::FAILED;
+                }
+            }
+            update_config_checked(|c| c.service.connect_preset = name.clone())
+        }
+        "sleep-after" => match value.parse::<u32>() {
+            Ok(m) if (1..=1440).contains(&m) => update_config_checked(|c| c.service.auto_sleep_timeout_minutes = m),
+            _ => { eprintln!("sleep-after takes a number of minutes from 1 to 1440."); return crate::cli::USAGE; }
+        },
+        other => { eprintln!("Unknown service setting `{other}`. Use restore, preset, gimbal, sleep or sleep-after."); return crate::cli::USAGE; }
+    };
+    match result {
+        Ok(()) => { println!("Saved. A running service reads it when it next starts: systemctl --user restart tiny4lite-control (or restart your session)."); crate::cli::OK }
+        Err(error) => { eprintln!("Could not save: {error}"); crate::cli::FAILED }
+    }
+}
+
+// ── Starting it with your session ─────────────────────────────────────────
+
+pub const TARGETS: &[(&str, &str)] = &[
+    ("systemd", "A systemd user service (most distributions: Fedora, Arch, Debian, Ubuntu, openSUSE, NixOS). Writes with --write."),
+    ("xdg", "A desktop autostart entry (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt and anything that follows the XDG spec). Writes with --write."),
+    ("hyprland", "A line for hyprland.conf"),
+    ("niri", "A line for niri's config.kdl"),
+    ("sway", "A line for sway's config"),
+    ("i3", "A line for i3's config"),
+    ("river", "A line for river's init script"),
+    ("mango", "A line for MangoWC (mango) config.conf"),
+    ("labwc", "A line for labwc's autostart file"),
+    ("openbox", "A line for openbox's autostart file"),
+    ("bspwm", "A line for bspwmrc"),
+    ("shell", "Any autostart script, .xinitrc or .xprofile (dwm, awesome, qtile, herbstluftwm and so on)"),
+    ("openrc", "An OpenRC service script, for Alpine, Gentoo and Artix without systemd"),
+    ("runit", "A runit user service, for Void"),
+    ("s6", "An s6 service run script"),
+    ("dinit", "A dinit user service, for Chimera and Artix"),
+    ("cron", "A cron @reboot entry, where nothing else is available"),
+    ("udev", "A udev rule that starts the systemd user service when the camera is plugged in"),
+];
+
+/// The program to start. An AppImage's own file, not its temporary mount.
+pub fn program_path() -> String {
+    if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()) { return appimage.to_string_lossy().to_string(); }
+    std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| "tiny4lite-control".into())
+}
+
+/// Quote for a shell or a config line: plain words stay plain.
+fn quoted(path: &str) -> String {
+    if path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+@%:,=".contains(c)) { path.to_string() }
+    else { format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\"")) }
+}
+
+fn config_home() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"))
+}
+
+fn systemd_unit(program: &str) -> String {
+    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nNice=10\n\n[Install]\nWantedBy=default.target\n", quoted(program))
+}
+
+fn desktop_entry(program: &str) -> String {
+    format!("[Desktop Entry]\nType=Application\nName=Tiny 2 Lite Control service\nComment=Restores camera settings and watches for the camera\nExec={} service run\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n", quoted(program).replace('"', "\"").replace("%", "%%"))
+}
+
+/// The text for a target, and where it goes.
+pub fn snippet(target: &str, program: &str) -> Option<(String, String)> {
+    let p = quoted(program);
+    let line = |s: String, where_: &str| Some((s, where_.to_string()));
+    match target {
+        "systemd" => line(systemd_unit(program), "~/.config/systemd/user/tiny4lite-control.service, then: systemctl --user daemon-reload && systemctl --user enable --now tiny4lite-control.service"),
+        "xdg" => line(desktop_entry(program), "~/.config/autostart/tiny4lite-control-service.desktop"),
+        "hyprland" => line(format!("exec-once = {p} service run\n"), "~/.config/hypr/hyprland.conf"),
+        "niri" => line(format!("spawn-at-startup \"{}\" \"service\" \"run\"\n", program.replace('\\', "\\\\").replace('"', "\\\"")), "~/.config/niri/config.kdl"),
+        "sway" => line(format!("exec {p} service run\n"), "~/.config/sway/config"),
+        "i3" => line(format!("exec --no-startup-id {p} service run\n"), "~/.config/i3/config"),
+        "river" => line(format!("riverctl spawn \"{} service run\"\n", p.replace('"', "\\\"")), "~/.config/river/init"),
+        "mango" => line(format!("exec-once={p} service run\n"), "~/.config/mango/config.conf (check your MangoWC version's autostart syntax)"),
+        "labwc" | "openbox" => line(format!("{p} service run &\n"), if target == "labwc" { "~/.config/labwc/autostart" } else { "~/.config/openbox/autostart" }),
+        "bspwm" => line(format!("{p} service run &\n"), "~/.config/bspwm/bspwmrc"),
+        "shell" => line(format!("{p} service run &\n"), "your autostart script, ~/.xinitrc or ~/.xprofile"),
+        "openrc" => line(format!("#!/sbin/openrc-run\ndescription=\"Tiny 2 Lite Control background service\"\ncommand={p}\ncommand_args=\"service run\"\ncommand_user=\"YOUR_USER\"\ncommand_background=true\npidfile=\"/run/${{RC_SVCNAME}}.pid\"\nexport XDG_RUNTIME_DIR=\"/run/user/$(id -u YOUR_USER)\"\n\ndepend() {{\n\tneed localmount\n}}\n"),
+            "/etc/init.d/tiny4lite-control, then: chmod +x it, replace YOUR_USER, rc-update add tiny4lite-control default, rc-service tiny4lite-control start"),
+        "runit" => line(format!("#!/bin/sh\nexec 2>&1\nexec {p} service run\n"), "~/.config/sv/tiny4lite-control/run (chmod +x), then link it into your user service directory"),
+        "s6" => line(format!("#!/bin/execlineb -P\n{p} service run\n"), "your s6 service directory, as tiny4lite-control/run"),
+        "dinit" => line(format!("type = process\ncommand = {p} service run\nrestart = true\n"), "~/.config/dinit.d/tiny4lite-control, then: dinitctl enable tiny4lite-control"),
+        "cron" => line(format!("@reboot {p} service run\n"), "crontab -e"),
+        "udev" => line("ACTION==\"add\", SUBSYSTEM==\"usb\", ATTR{idVendor}==\"3564\", ATTR{idProduct}==\"fef9\", TAG+=\"systemd\", ENV{SYSTEMD_USER_WANTS}=\"tiny4lite-control.service\"\n".to_string(),
+            "/etc/udev/rules.d/90-tiny4lite-control.rules (needs root), then: udevadm control --reload. Use it with the systemd target above"),
+        _ => None,
+    }
+}
+
+fn install_path(target: &str) -> Option<PathBuf> {
+    match target {
+        "systemd" => Some(config_home().join("systemd/user/tiny4lite-control.service")),
+        "xdg" => Some(config_home().join("autostart/tiny4lite-control-service.desktop")),
+        _ => None,
+    }
+}
+
+/// The best target for this machine.
+fn detect_target() -> &'static str {
+    if Path::new("/run/systemd/system").exists() { "systemd" } else { "xdg" }
+}
+
+fn install_command(target: Option<&str>, write: bool) -> i32 {
+    let target = target.unwrap_or_else(|| detect_target());
+    let program = program_path();
+    let Some((text, place)) = snippet(target, &program) else {
+        eprintln!("Unknown target `{target}`. Run `tiny4lite-control service targets` for the list.");
+        return crate::cli::USAGE;
+    };
+    if write {
+        let Some(path) = install_path(target) else {
+            eprintln!("`{target}` is not written for you, because it belongs in your own configuration. Add this to {place}:\n\n{text}");
+            return crate::cli::USAGE;
+        };
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        return match std::fs::write(&path, &text) {
+            Ok(()) => {
+                println!("Wrote {}", path.display());
+                if target == "systemd" { println!("Now start it: systemctl --user daemon-reload && systemctl --user enable --now tiny4lite-control.service"); }
+                else { println!("It starts the next time you log in."); }
+                crate::cli::OK
+            }
+            Err(error) => { eprintln!("Could not write {}: {error}", path.display()); crate::cli::FAILED }
+        };
+    }
+    println!("# {target}: put this in {place}\n");
+    print!("{text}");
+    if matches!(target, "systemd" | "xdg") { println!("\n# Or let this program write it: tiny4lite-control service install {target} --write"); }
+    crate::cli::OK
+}
+
+fn uninstall_command(target: Option<&str>) -> i32 {
+    let target = target.unwrap_or_else(|| detect_target());
+    let Some(path) = install_path(target) else {
+        eprintln!("Only the systemd and xdg targets are written by this program; remove the other lines yourself.");
+        return crate::cli::USAGE;
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => {
+            println!("Removed {}", path.display());
+            if target == "systemd" { println!("Then: systemctl --user disable --now tiny4lite-control.service && systemctl --user daemon-reload"); }
+            crate::cli::OK
+        }
+        Err(error) => { eprintln!("Could not remove {}: {error}", path.display()); crate::cli::FAILED }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sight<'a>(camera: Option<&'a str>, in_use: bool, window_open: bool, asleep: Option<bool>) -> Sight<'a> {
+        Sight { camera, in_use, window_open, asleep }
+    }
+
+    #[test]
+    fn a_new_camera_is_restored_after_it_settles_and_only_once() {
+        let mut brain = Brain::new(false, 10);
+        let t0 = Instant::now();
+        assert_eq!(brain.step(t0, &sight(None, false, false, None)), vec![]);
+        assert_eq!(brain.step(t0, &sight(Some("/dev/video1"), false, false, None)), vec![Action::Connected("/dev/video1".into())]);
+        assert_eq!(brain.step(t0 + Duration::from_secs(1), &sight(Some("/dev/video1"), false, false, None)), vec![]);
+        assert_eq!(brain.step(t0 + Duration::from_secs(3), &sight(Some("/dev/video1"), false, false, None)), vec![Action::Restore]);
+        assert_eq!(brain.step(t0 + Duration::from_secs(5), &sight(Some("/dev/video1"), false, false, None)), vec![]);
+        // Unplugged and plugged back in: restored again.
+        assert_eq!(brain.step(t0 + Duration::from_secs(6), &sight(None, false, false, None)), vec![Action::Disconnected]);
+        assert_eq!(brain.step(t0 + Duration::from_secs(10), &sight(Some("/dev/video2"), false, false, None)), vec![Action::Connected("/dev/video2".into())]);
+        assert_eq!(brain.step(t0 + Duration::from_secs(13), &sight(Some("/dev/video2"), false, false, None)), vec![Action::Restore]);
+    }
+
+    fn settled(brain: &mut Brain, t0: Instant) {
+        brain.step(t0, &sight(Some("/dev/video1"), false, false, Some(false)));
+        brain.step(t0 + Duration::from_secs(3), &sight(Some("/dev/video1"), false, false, Some(false)));
+    }
+
+    #[test]
+    fn it_never_sleeps_the_camera_unless_turned_on() {
+        let mut brain = Brain::new(false, 1);
+        let t0 = Instant::now();
+        settled(&mut brain, t0);
+        for minutes in 1..=60 {
+            assert!(!brain.step(t0 + Duration::from_secs(60 * minutes), &sight(Some("/dev/video1"), false, false, Some(false))).contains(&Action::Sleep));
+        }
+    }
+
+    #[test]
+    fn an_idle_camera_sleeps_after_the_time_and_wakes_when_used() {
+        let mut brain = Brain::new(true, 10);
+        let t0 = Instant::now();
+        settled(&mut brain, t0);
+        let at = |m: u64| t0 + Duration::from_secs(10 + 60 * m);
+        assert_eq!(brain.step(at(0), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(9), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(10), &sight(Some("/dev/video1"), false, false, Some(false))), vec![Action::Sleep]);
+        // Asleep: nothing more until something uses it.
+        assert_eq!(brain.step(at(30), &sight(Some("/dev/video1"), false, false, Some(true))), vec![]);
+        assert_eq!(brain.step(at(31), &sight(Some("/dev/video1"), true, false, Some(true))), vec![Action::Wake]);
+        // Used and then idle again: another full wait before sleeping.
+        assert_eq!(brain.step(at(32), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(41), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(42), &sight(Some("/dev/video1"), false, false, Some(false))), vec![Action::Sleep]);
+    }
+
+    #[test]
+    fn use_or_an_open_window_resets_the_idle_clock_and_a_sleeping_camera_is_left_alone() {
+        let mut brain = Brain::new(true, 5);
+        let t0 = Instant::now();
+        settled(&mut brain, t0);
+        let at = |m: u64| t0 + Duration::from_secs(10 + 60 * m);
+        brain.step(at(0), &sight(Some("/dev/video1"), false, false, Some(false)));
+        // Someone at the window at minute 4 restarts the wait.
+        brain.step(at(4), &sight(Some("/dev/video1"), false, true, Some(false)));
+        assert_eq!(brain.step(at(8), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(13), &sight(Some("/dev/video1"), false, false, Some(false))), vec![Action::Sleep]);
+        // A camera someone else put to sleep is never woken by the service, whatever uses it.
+        let mut brain = Brain::new(true, 5);
+        settled(&mut brain, t0);
+        assert_eq!(brain.step(at(1), &sight(Some("/dev/video1"), true, false, Some(true))), vec![]);
+        assert_eq!(brain.step(at(30), &sight(Some("/dev/video1"), false, false, Some(true))), vec![]);
+    }
+
+    #[test]
+    fn an_unanswered_camera_is_never_put_to_sleep() {
+        let mut brain = Brain::new(true, 1);
+        let t0 = Instant::now();
+        settled(&mut brain, t0);
+        assert_eq!(brain.step(t0 + Duration::from_secs(3600), &sight(Some("/dev/video1"), false, false, None)), vec![]);
+    }
+
+    #[test]
+    fn a_restore_never_turns_the_gimbal_unless_allowed() {
+        let mut config = crate::config::AppConfig::default();
+        config.apply_on_connect = true;
+        config.v4l2_controls.insert("brightness".into(), 40);
+        config.v4l2_controls.insert("pan_absolute".into(), 3600);
+        let preset = restore_preset(&config).unwrap();
+        assert!(preset.settings.contains_key("v4l2:brightness"));
+        assert!(!preset.settings.contains_key("v4l2:pan_absolute"));
+        config.service.allow_gimbal_move = true;
+        assert!(restore_preset(&config).unwrap().settings.contains_key("v4l2:pan_absolute"));
+        // Off means nothing is restored.
+        config.apply_on_connect = false;
+        assert!(restore_preset(&config).is_none());
+    }
+
+    #[test]
+    fn a_named_preset_is_restored_without_its_position_by_default() {
+        let mut config = crate::config::AppConfig::default();
+        config.apply_on_connect = true;
+        config.service.connect_preset = Some("desk".into());
+        let mut settings = BTreeMap::new();
+        settings.insert("v4l2:contrast".to_string(), 55);
+        settings.insert("v4l2:tilt_absolute".to_string(), -3600);
+        config.presets.push(CameraPreset { name: "Desk".into(), settings });
+        let preset = restore_preset(&config).unwrap();
+        assert_eq!(preset.settings.len(), 1);
+        // A name that no longer exists restores nothing, rather than something else.
+        config.service.connect_preset = Some("gone".into());
+        assert!(restore_preset(&config).is_none());
+    }
+
+    #[test]
+    fn only_one_service_runs_and_a_dead_lock_is_taken_over() {
+        let dir = std::env::temp_dir().join(format!("t4-lock-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("service.lock");
+        // A lock left by a process that does not exist.
+        std::fs::write(&path, "999999999").unwrap();
+        let lock = Lock::acquire(&path).expect("a dead lock is taken over");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), std::process::id().to_string());
+        drop(lock);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn every_target_has_a_snippet_that_starts_the_service_with_the_program() {
+        for (name, _) in TARGETS {
+            let (text, place) = snippet(name, "/opt/Tiny 2/tiny4lite-control").unwrap_or_else(|| panic!("no snippet for {name}"));
+            assert!(!place.is_empty() && !text.is_empty());
+            if *name != "udev" {
+                assert!(text.contains("service") && text.contains("run"), "{name}: {text}");
+                assert!(text.contains("Tiny 2"), "{name} dropped the path: {text}");
+            }
+        }
+        assert!(snippet("nonsense", "x").is_none());
+    }
+
+    #[test]
+    fn a_path_with_spaces_is_quoted_for_each_syntax() {
+        let (hypr, _) = snippet("hyprland", "/a b/tiny").unwrap();
+        assert_eq!(hypr, "exec-once = \"/a b/tiny\" service run\n");
+        let (niri, _) = snippet("niri", "/a b/tiny").unwrap();
+        assert_eq!(niri, "spawn-at-startup \"/a b/tiny\" \"service\" \"run\"\n");
+        let (unit, _) = snippet("systemd", "/a b/tiny").unwrap();
+        assert!(unit.contains("ExecStart=\"/a b/tiny\" service run\n"));
+        let (plain, _) = snippet("sway", "/usr/bin/tiny4lite-control").unwrap();
+        assert_eq!(plain, "exec /usr/bin/tiny4lite-control service run\n");
+    }
+
+    #[test]
+    fn the_status_file_round_trips() {
+        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false };
+        let text = serde_json::to_string(&status).unwrap();
+        assert_eq!(serde_json::from_str::<Status>(&text).unwrap(), status);
+    }
+}

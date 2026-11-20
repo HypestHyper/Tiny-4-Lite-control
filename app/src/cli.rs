@@ -19,7 +19,7 @@ pub const NEEDS_YES: i32 = 4;
 pub const NO_CAMERA: i32 = 5;
 
 const COMMANDS: &[&str] = &[
-    "list", "get", "set", "toggle", "reset", "info", "deps", "status", "gimbal", "preset", "position",
+    "list", "get", "set", "toggle", "reset", "info", "deps", "service", "status", "gimbal", "preset", "position",
     "startup", "capture", "completions", "help", "__complete",
 ];
 
@@ -98,6 +98,13 @@ fn dispatch(args: &[String]) -> i32 {
         "completions" => completions(rest.first().map(String::as_str)),
         "__complete" => complete(rest),
         "deps" => { print!("{}", registry::dependency_map()); OK }
+        "service" => {
+            let flag_on = |name: &str| options.flags.iter().any(|(n, _)| n == name);
+            // A flag written before the word it precedes swallows it as a value; give it back.
+            let mut words = options.positional.clone();
+            for (n, v) in &options.flags { if matches!(n.as_str(), "--write" | "--once") { if let Some(v) = v { words.push(v.clone()); } } }
+            crate::service::run(&crate::service::Request { words: &words, json: options.json, write: flag_on("--write"), once: flag_on("--once"), device: options.device.clone() })
+        }
         "list" => with_camera(&options, |device, snapshot| list(&options, device, snapshot)),
         "get" => with_camera(&options, |_, snapshot| get(&options, snapshot)),
         "info" => with_camera(&options, |_, snapshot| info(&options, snapshot)),
@@ -739,6 +746,11 @@ Settings (every setting the windows show):
   reset NAME                 Return a slider to its default
   info NAME                  Explain a setting: values, range, what it needs
   deps                       Print the dependency map (what blocks what) as Markdown
+  service run [--once]       The background service: restores the camera when it is plugged in (needs no window)
+  service status | config    Is it running; what it is set to do
+  service set KEY VALUE      restore on|off, preset NAME|none, gimbal on|off, sleep on|off, sleep-after MINUTES
+  service install [TARGET] [--write]   Start it with your session: systemd, xdg, hyprland, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
+  service targets | uninstall          List the targets; remove what --write made
 
 Other things the windows do:
   status                     Power, exposure, focus, tracking and gimbal position

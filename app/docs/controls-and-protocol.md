@@ -241,11 +241,7 @@ last successfully submitted commands.
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
 The settings module is implemented and loaded at application startup.
-The dedicated in-process camera service that will consume its service
-policy, own device monitoring, and implement optional idle sleep/wake
-behaviour is not implemented yet. The service should receive a config
-snapshot at startup and reload policy only after an explicit settings
-change, rather than independently guessing defaults.
+The background service (`src/service.rs`) reads this policy when it starts and does not reload it while running; restart it after `service set`. `apply_on_connect` is the restore switch.
 
 ## Diagnostics and USB capture
 
@@ -333,9 +329,10 @@ revision as build-verified.
 - Sleep/wake physically move the gimbal and remain explicit actions.
 - No camera movement or sleep action runs automatically at startup.
 - There is no separately installed background daemon or automatic
-  sleep/wake service. Persistent TOML configuration is implemented;
-  the in-process camera service and optional restore-on-connect behaviour
-  are still future work.
+  sleep/wake service. Persistent TOML configuration is implemented. The
+  background service (`tiny4lite-control service run`) restores the capture
+  mode, optionally the settings, and optionally sleeps an idle camera; it is
+  described in the README and has not been run against a real camera.
 - Global / Face autofocus-priority setter and camera-side GET read-back
   are hardware-verified on 2026-11-20 and implemented in the backend and
   Controls test UI. Face = `bf fb 01 00`; Global = `be 07 00 00`.

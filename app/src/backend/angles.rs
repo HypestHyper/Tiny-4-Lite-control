@@ -97,6 +97,7 @@ const WINDOW: usize = 5;
 const MOVE_DEGREES: f64 = 3.0;
 
 impl Steady {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new() -> Steady { Steady::default() }
 
     /// Feed one reading; get the degree to show.
