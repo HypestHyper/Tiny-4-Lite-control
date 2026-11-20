@@ -238,27 +238,54 @@ only in the XU auto-exposure path and silently no-ops when the V4L2
 exposure route is used. Treat Face AE as experimental, not a reliable
 basic feature.
 
-**2026-11-18 Tiny 2 Lite Linux capture: Auto Exposure Face / Global**
+**2026-11-20 Tiny 2 Lite Linux capture: Auto Exposure Face / Global with read-back**
 
-The controlled capture contains five 60-byte `UVC_SET_CUR` writes to
-XU unit 2, selector `0x06`, with these payload prefixes:
+**Status:** Protocol mapping and camera-side read-back are established
+from a controlled OBSBOT Center capture with repeated deliberate
+Face / Global transitions. This is separate from the framed
+`CAM_SET_FACE_FOCUS` autofocus-priority command.
 
-| Frame | Payload | Correlated selection |
-|---:|---|---|
-| 80075 | `03 01 00` | Face |
-| 146705 | `03 01 01` | Global |
-| 219369 | `03 01 00` | Face |
-| 297559 | `03 01 01` | Global |
-| 300515 | `03 01 00` | Face |
+Transport details:
 
-The remaining 57 bytes are zero. Repeated transitions support the
-mapping **Face = 0** and **Global = 1** in the third payload byte.
-The final checkpoint was labelled Global, but the final actual write
-was Face; preserve this mismatch as a checkpoint discrepancy. The app
-implements the setting only while V4L2 `auto_exposure` is Auto and
-keeps it separate from the framed `CAM_SET_FACE_FOCUS` autofocus
-priority command. No reliable GET_CUR read-back mapping has been
-established, so the app remembers only the last successful local write.
+| Property | Verified value |
+|---|---|
+| UVC Extension Unit | Unit 2 |
+| Selector | `0x06` |
+| SET request | `SET_CUR` (`0x01`) |
+| GET request | `GET_CUR` (`0x81`) |
+| Transfer length | 60 bytes |
+| GET_LEN | `GET_LEN` (`0x85`) returns `3c 00` (60 bytes) |
+| SET tag | bytes 0–1: `03 01` |
+| Face SET value | byte 2: `00` |
+| Global SET value | byte 2: `01` |
+| Face GET value | byte 7: `00` |
+| Global GET value | byte 7: `01` |
+
+Every SET is a complete 60-byte buffer. The first three bytes are
+`03 01 00` for Face and `03 01 01` for Global; bytes 3–59 are zero
+in the controlled writes. The 60-byte GET_CUR response is otherwise
+stable across the observed changes. Its authoritative state is at
+zero-based response offset 7, not offset 2.
+
+The capture includes repeated Face → Global → Face → Global
+transitions. Each subsequent GET_CUR response tracks the selected
+state: byte 7 is `00` for Face and `01` for Global. This is direct
+camera read-back evidence, not merely successful USB transfer
+completion.
+
+**Implementation:** The test app sends the full 60-byte payload,
+then reads the full 60-byte selector `0x06` status block and decodes
+byte 7. Initial UI state comes from camera read-back, with the saved
+local value used only if the camera query is unavailable. After a
+change, the UI and persisted setting follow the value actually
+reported by the camera. If the read-back differs from the request,
+the UI displays the camera-reported state rather than pretending the
+requested state was applied. The control remains available only while
+V4L2 `auto_exposure` is Auto.
+
+The protocol implementation is documented as hardware-read-back
+verified. End-to-end validation of the integrated app on the physical
+camera is still required.
 
 **2026-11-18 Tiny 2 Lite Linux capture: exposure compensation**
 
