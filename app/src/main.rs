@@ -458,10 +458,8 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
             if selector == 0x06 && data.len() >= 0x25 {
                 data[0x10] = 1;
                 data[0x21] = 1;
-            } else if selector == 0x02 && data.len() >= 28 {
-                data[..6].copy_from_slice(&[0x04, 0x0a, 0x44, 0x3a, 0x18, 0x00]);
-                data[20..24].copy_from_slice(&(0.0f32).to_le_bytes());
-                data[24..28].copy_from_slice(&(0.0f32).to_le_bytes());
+            } else if selector == 0x0d && !data.is_empty() {
+                data[0] = 0x02;
             } else if selector == 0x08 {
                 let model = b"OBSBOT Tiny 2 Lite";
                 let count = model.len().min(data.len());
