@@ -198,7 +198,7 @@ pub(crate) fn append_camera_native(
     name_row.add_css_class("adaptive-row");
     let name = gtk::Entry::new();
     name.set_placeholder_text(Some("Camera preset name"));
-    name.set_text("Initial state");
+    name.set_text("Preset 1");
     name.set_hexpand(true);
     let save = gtk::Button::with_label("Save current");
     save.add_css_class("suggested-action");
@@ -242,8 +242,8 @@ pub(crate) fn append_camera_native(
     let status_save = status.clone();
     save.connect_clicked(move |_| {
         let preset_name = name_save.text().trim().to_string();
-        if preset_name.is_empty() || !preset_name.is_ascii() || preset_name.len() > 40 {
-            status_save.set_text("Use a preset name containing 1–40 ASCII bytes.");
+        if preset_name.is_empty() || !preset_name.is_ascii() || preset_name.len() > 32 {
+            status_save.set_text("Use a preset name containing 1–32 printable ASCII characters.");
             return;
         }
         let entries = match crate::read_camera_presets(&device_save) {
