@@ -1370,8 +1370,6 @@ mod xu_protocol_tests {
         assert_eq!(XU_AUDIO_MICROPHONE_DISABLED_OFFSET, 2);
         assert_eq!(microphone_disabled_wire_value(true), 0x00);
         assert_eq!(microphone_disabled_wire_value(false), 0x01);
-
-        let mut status = [0u8; 60];
     }
 
     #[test]

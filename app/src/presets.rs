@@ -104,6 +104,11 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
 
 /// Apply settings in dependency order: automatic/manual modes first, ordinary
 /// controls second, gimbal positions last, then vendor XU settings.
+/// Applying this preset turns the gimbal, because it stores absolute pan/tilt.
+pub fn moves_gimbal(preset: &config::CameraPreset) -> bool {
+    preset.settings.contains_key("v4l2:pan_absolute") || preset.settings.contains_key("v4l2:tilt_absolute")
+}
+
 pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, String> {
     let mut controls: Vec<(String, i64)> = preset.settings.iter()
         .filter_map(|(key, value)| key.strip_prefix("v4l2:").map(|name| (name.to_string(), *value)))
@@ -153,7 +158,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 (None, _) => Err(format!("Unknown gesture setting '{name}'.")),
                 _ => Err(format!("Invalid value for gesture '{name}'.")),
             }
-        } else if key.starts_with("video:") {
+        } else if key.starts_with("video:") || key.starts_with("v4l2:") {
+            // Video modes are handled below and standard controls were applied above.
             continue;
         } else {
             Err(format!("Unsupported preset setting '{key}'."))

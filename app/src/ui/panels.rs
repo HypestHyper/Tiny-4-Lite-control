@@ -221,7 +221,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
 
 fn app_presets_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Presets", "tune",
-        "Save the current picture and tracking settings under a name, and bring them back later. Gimbal movement is never part of a preset.");
+        "Save the current picture, tracking and gimbal position under a name, and bring them back later. Applying a preset turns the gimbal to its saved position.");
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(Some("Preset name, for example Desk"));
     entry.set_hexpand(true);
@@ -265,14 +265,24 @@ fn app_presets_card(store: &Store) -> gtk::Box {
                 let (store_apply, preset_apply) = (store.clone(), preset.clone());
                 apply.connect_clicked(move |_| {
                     let (store, preset) = (store_apply.clone(), preset_apply.clone());
-                    let name = preset.name.clone();
-                    store_apply.call(None, move |d| presets::apply(d, &preset), move |r| {
-                        match r {
-                            Ok(message) => store.toast(&if message.is_empty() { format!("Applied {name}") } else { message }),
-                            Err(e) => store.error(&format!("Some settings in {name} were not applied: {e}")),
-                        }
-                        store.refresh_soon();
-                    });
+                    let run = move || {
+                        let (store, preset) = (store.clone(), preset.clone());
+                        let name = preset.name.clone();
+                        store.clone().call(None, move |d| presets::apply(d, &preset), move |r| {
+                            match r {
+                                Ok(message) => store.toast(&if message.is_empty() { format!("Applied {name}") } else { message }),
+                                Err(e) => store.error(&format!("Some settings in {name} were not applied: {e}")),
+                            }
+                            store.refresh_soon();
+                        });
+                    };
+                    // A preset with a saved position turns the gimbal, so ask first.
+                    if presets::moves_gimbal(&preset_apply) {
+                        store_apply.confirm("open_with", &format!("Apply {}?", preset_apply.name),
+                            "This preset includes a gimbal position, so the camera will turn. Clear the space around it first.", "Apply preset", run);
+                    } else {
+                        run();
+                    }
                 });
                 let (store_delete, render_delete) = (store.clone(), render.clone());
                 let name = preset.name.clone();

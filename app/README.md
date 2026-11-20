@@ -50,6 +50,52 @@ sway: `for_window [app_id="io.github.hypesthyper.Tiny4LiteControl.Preview"] floa
 GTK cannot ask for "always on top" itself, so use your compositor's pin or sticky rule for the preview.
 The header window buttons can be hidden under Device → Appearance if your compositor draws its own.
 
+## Command line
+
+Every setting the windows show can also be read and changed from a terminal, with no display needed.
+The commands are generated from the same catalogue as the windows, so a setting added there appears
+here too, with completion and JSON output.
+
+```sh
+tiny4lite-control list                      # every setting, grouped, with its value
+tiny4lite-control list white-balance        # one group
+tiny4lite-control get exposure-mode         # just the value, for scripts
+tiny4lite-control set exposure-mode manual
+tiny4lite-control set shutter-speed 1/60    # units as shown: 1/60, 5600K, +1.5 (EV), 2.5 (zoom ratio)
+tiny4lite-control toggle autofocus
+tiny4lite-control set tracking-mode upper-body
+tiny4lite-control reset zoom                # back to the camera's default
+tiny4lite-control info shutter-speed        # what it does, its range, what it needs
+tiny4lite-control status
+tiny4lite-control gimbal move --pan 30 --seconds 2    # percent of full speed; always stops
+tiny4lite-control gimbal position
+tiny4lite-control preset list | apply NAME | save NAME | delete NAME
+tiny4lite-control position list | go 1 | save 1 Desk | delete 1    # the camera's three saved positions
+tiny4lite-control startup show | set
+tiny4lite-control capture list | get | set 1920x1080 MJPG 30
+tiny4lite-control list --json               # machine-readable; also works on get, info, status
+```
+
+Names are the labels from the windows (`shutter-speed`, `autofocus`, `led-brightness`); the older
+driver-style names (`exposure-time-absolute`) and full ids (`v4l2:auto_exposure`) still work. Choices
+ignore case, spaces and hyphens. `--device /dev/videoN` (or `TINY4LITE_DEVICE`) picks a camera.
+
+**Dependencies apply here too.** `set red-balance 1000` while Auto white balance is on exits with 3 and
+says what to change; `--force` sends it anyway. Anything that physically moves the camera or changes
+what it stores (`set camera-power asleep`, `position go`, `position delete`, `startup set`, applying a
+preset that includes a gimbal position) needs `--yes`; without it the command explains and exits 4.
+
+Exit codes: 0 done, 1 failed, 2 wrong usage, 3 unavailable because of another setting, 4 needs
+`--yes`, 5 no camera found.
+
+Shell completion (settings, groups, values and preset names):
+
+```sh
+tiny4lite-control completions bash > ~/.local/share/bash-completion/completions/tiny4lite-control
+tiny4lite-control completions zsh  > ~/.zfunc/_tiny4lite-control
+tiny4lite-control completions fish > ~/.config/fish/completions/tiny4lite-control.fish
+```
+
 ## How it is organised
 
 ```
@@ -67,6 +113,8 @@ src/ui/           GTK 4 only; knows nothing about individual settings.
   joystick.rs       The gimbal pad.
   preview.rs        One capture stream shared by every place the preview is shown.
   full.rs slim.rs popup.rs app.rs   The windows and start-up.
+src/cli.rs        The command line, built from the same registry.
+tests/cli.rs      Runs the real binary against the synthetic camera.
 ```
 
 **Camera work never runs on the UI thread.** Jobs go to the worker in order. A keyed job replaces one
@@ -140,6 +188,10 @@ window, tab and state, then uses real pointer events to check that:
 * dragging the joystick sends speeds in the right direction, never more than 30 updates a second, and
   always ends with a stop;
 * putting the camera to sleep asks for confirmation first.
+
+`tests/cli.rs` (part of `cargo test`) runs the binary with no display and checks that every vendor command
+is reachable from the terminal, that every setting can be read and set, that dependencies and
+confirmations produce the right exit codes, and that `gimbal move` always ends with a stop.
 
 Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manual|aperture`,
 `_PAGE=camera|tracking|audio|presets|device|customise`, `_THEME`, `_SCALE`, `_WIDTH`, `_HEIGHT`,
