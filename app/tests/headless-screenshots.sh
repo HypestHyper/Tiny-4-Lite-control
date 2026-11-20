@@ -94,8 +94,9 @@ check_class io.github.hypesthyper.Tiny4LiteControl.Preview "Tiny 2 Lite Control 
 echo "ok: window classes and titles"
 
 # ── Joystick: drag, hold, release ──
-start joystick
-CENTRE_X=235; CENTRE_Y=507
+# The pad sits below the gimbal model; at this window size its centre is (235, 660).
+TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick
+CENTRE_X=235; CENTRE_Y=660
 xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
 sleep 0.2
 xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y - 50)); sleep 0.35
