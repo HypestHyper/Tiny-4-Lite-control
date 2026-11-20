@@ -222,11 +222,16 @@ change, rather than independently guessing defaults.
 The Diagnostics page provides read-only XU reads for selectors `0x02`
 and `0x06`, plus the model/stream name from selector `0x08` and USB
 descriptor identity. USB `bcdDevice` is labelled as the device-release
-field, not as installed firmware. The Controls page separately polls
-standard Camera Terminal PanTilt Absolute GET_CUR (entity 1, selector
-`0x0D`) for physical position; Linux hardware validation remains pending.
-Candidate float values from vendor selector `0x02` remain a separate,
-unverified research lead.
+field, not as installed firmware. The Controls page currently polls
+selector `0x02` GET_CUR as a candidate live-position source: it accepts
+the two observed response signatures and decodes float32 pan/tilt at
+offsets 20/24. The UI initializes immediately and refreshes every 250 ms,
+but Linux live-position behavior remains unverified because the
+2026-11-19 movement capture contained selector `0x02` SET_CUR records,
+not GET_CUR. The earlier standard Camera Terminal selector `0x0D`
+path is documented in reference 12 but is not the active implementation.
+The separate “set initial state” command remains unimplemented until its
+host-to-camera request is isolated from the capture.
 
 The Capture page:
 
