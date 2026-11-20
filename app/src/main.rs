@@ -1542,21 +1542,46 @@ fn set_hdr_enabled(device: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-// Tiny 2 Lite Auto Exposure priority, captured on selector 0x06 (60-byte SET_CUR).
-// This is separate from CAM_SET_FACE_FOCUS / autofocus priority.
-fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 3] {
-    [0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]
+// Tiny 2 Lite Face / Global Auto Exposure priority.
+// XU unit 2, selector 0x06, 60-byte SET_CUR and GET_CUR. Controlled
+// 2026-11-20 captures established the write value at byte 2 and the
+// authoritative read-back value at byte 7. This is NOT autofocus priority.
+const XU_AUTO_EXPOSURE_PRIORITY_OFFSET: usize = 7;
+
+fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 60] {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]);
+    data
 }
 
-fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<(), String> {
-    let payload = auto_exposure_mode_payload(face_priority);
-    let mut data = [0u8; 60];
-    data[..payload.len()].copy_from_slice(&payload);
+fn auto_exposure_mode_from_status(status: &[u8; 60]) -> Option<bool> {
+    match status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] {
+        0x00 => Some(true),  // Face
+        0x01 => Some(false), // Global
+        _ => None,
+    }
+}
+
+fn get_auto_exposure_mode(device: &str) -> Result<bool, String> {
+    let status = xu_status(device)?;
+    auto_exposure_mode_from_status(&status).ok_or_else(|| format!(
+        "Camera returned unsupported Auto Exposure priority value 0x{:02x} at status byte 0x{:02x}.",
+        status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET], XU_AUTO_EXPOSURE_PRIORITY_OFFSET
+    ))
+}
+
+fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<bool, String> {
+    let mut data = auto_exposure_mode_payload(face_priority);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+
+    // Do not treat a successful ioctl or the requested value as proof of
+    // device state. Read the complete status block and trust byte 7.
+    let actual_face_priority = get_auto_exposure_mode(device)
+        .map_err(|error| format!("SET_CUR was submitted, but Auto Exposure priority read-back failed: {error}"))?;
     update_config(|config| config.auto_exposure_mode = Some(
-        if face_priority { "face" } else { "global" }.into()
+        if actual_face_priority { "face" } else { "global" }.into()
     ));
-    Ok(())
+    Ok(actual_face_priority)
 }
 
 fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &gtk::Label, auto_exposure_enabled: bool) {
@@ -1578,21 +1603,22 @@ fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &g
     face.add_css_class("flat");
     selector.set_sensitive(auto_exposure_enabled);
 
+    // Hardware read-back is authoritative. The saved preference is only a
+    // fallback for devices/firmware where the selector cannot be queried.
+    let camera_face_priority = get_auto_exposure_mode(device).ok();
     let saved_mode = current_config().auto_exposure_mode;
-    match saved_mode.as_deref() {
-        Some("global") => global.set_active(true),
-        Some("face") => face.set_active(true),
-        _ => {}
-    }
+    let initial_face_priority = camera_face_priority.or_else(|| match saved_mode.as_deref() {
+        Some("face") => Some(true),
+        Some("global") => Some(false),
+        _ => None,
+    });
+    global.set_active(initial_face_priority == Some(false));
+    face.set_active(initial_face_priority == Some(true));
     selector.append(&global);
     selector.append(&face);
     layout.append(&selector);
 
-    let current_face = Rc::new(Cell::new(match saved_mode.as_deref() {
-        Some("face") => Some(true),
-        Some("global") => Some(false),
-        _ => None,
-    }));
+    let current_face = Rc::new(Cell::new(initial_face_priority));
     for (button, face_priority) in [(global.clone(), false), (face.clone(), true)] {
         let dev = device.to_string();
         let status_label = status.clone();
@@ -1603,25 +1629,39 @@ fn add_auto_exposure_mode_control(container: &gtk::Box, device: &str, status: &g
             if !selected.is_active() { return; }
             let previous = current.get();
             match set_auto_exposure_mode(&dev, face_priority) {
-                Ok(()) => {
-                    current.set(Some(face_priority));
-                    status_label.set_text(if face_priority {
-                        "Face-priority Auto Exposure command submitted. Verify the camera's exposure behavior."
+                Ok(actual_face_priority) => {
+                    current.set(Some(actual_face_priority));
+                    global_restore.set_active(!actual_face_priority);
+                    face_restore.set_active(actual_face_priority);
+                    if actual_face_priority == face_priority {
+                        status_label.set_text(if actual_face_priority {
+                            "Auto Exposure priority read-back confirms Face."
+                        } else {
+                            "Auto Exposure priority read-back confirms Global."
+                        });
                     } else {
-                        "Global Auto Exposure command submitted. Verify the camera's exposure behavior."
-                    });
+                        status_label.set_text(if actual_face_priority {
+                            "Camera reports Face priority; it did not retain the requested Global setting."
+                        } else {
+                            "Camera reports Global priority; it did not retain the requested Face setting."
+                        });
+                    }
                 }
                 Err(error) => {
                     global_restore.set_active(previous == Some(false));
                     face_restore.set_active(previous == Some(true));
-                    status_label.set_text(&format!("Could not change Auto Exposure priority: {error}"));
+                    status_label.set_text(&format!("Could not verify Auto Exposure priority change: {error}"));
                 }
             }
         });
     }
 
     let note_text = if auto_exposure_enabled {
-        "Face and Global control Auto Exposure priority, not autofocus. The camera has no confirmed read-back for this setting; the selection is the last successfully submitted command."
+        if camera_face_priority.is_some() {
+            "Face / Global controls Auto Exposure priority, not autofocus. Initial selection and every change are confirmed from selector 0x06 GET_CUR status byte 7."
+        } else {
+            "Face / Global controls Auto Exposure priority, not autofocus. Camera read-back is currently unavailable; the saved local selection is shown as a fallback."
+        }
     } else {
         "Unavailable: Exposure mode is not Auto. Set Exposure mode to Auto to enable Face / Global exposure priority."
     };
@@ -3009,18 +3049,27 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn auto_exposure_priority_payload_matches_linux_capture() {
-        assert_eq!(auto_exposure_mode_payload(true), [0x03, 0x01, 0x00]);
-        assert_eq!(auto_exposure_mode_payload(false), [0x03, 0x01, 0x01]);
-
-        let mut face = [0u8; 60];
-        face[..3].copy_from_slice(&auto_exposure_mode_payload(true));
-        let mut global = [0u8; 60];
-        global[..3].copy_from_slice(&auto_exposure_mode_payload(false));
-        assert_eq!(&face[..4], &[0x03, 0x01, 0x00, 0x00]);
-        assert_eq!(&global[..4], &[0x03, 0x01, 0x01, 0x00]);
+    fn auto_exposure_priority_payloads_match_2026_11_20_capture() {
+        let face = auto_exposure_mode_payload(true);
+        let global = auto_exposure_mode_payload(false);
+        assert_eq!(face.len(), 60);
+        assert_eq!(global.len(), 60);
+        assert_eq!(&face[..3], &[0x03, 0x01, 0x00]);
+        assert_eq!(&global[..3], &[0x03, 0x01, 0x01]);
         assert!(face[3..].iter().all(|byte| *byte == 0));
         assert!(global[3..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn auto_exposure_priority_readback_uses_response_byte_seven() {
+        let mut status = [0u8; 60];
+        status[2] = 0x01; // SET_CUR value is not the GET_CUR read-back field.
+        status[7] = 0x00;
+        assert_eq!(auto_exposure_mode_from_status(&status), Some(true));
+        status[7] = 0x01;
+        assert_eq!(auto_exposure_mode_from_status(&status), Some(false));
+        status[7] = 0x02;
+        assert_eq!(auto_exposure_mode_from_status(&status), None);
     }
 
     #[test]
