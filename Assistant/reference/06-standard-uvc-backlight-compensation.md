@@ -141,9 +141,19 @@ A Windows USB capture of the OBSBOT Center Exposure Compensation slider recorded
 
 The 18 captured writes occurred while stepping through the displayed slider labels from -3 to +3. This strongly indicates that OBSBOT Center uses the standard UVC Backlight Compensation control for that slider.
 
-However, the capture alone does **not** prove the exact one-to-one mapping between each displayed fractional label and each integer BLC value, nor does it establish that the slider's visual exposure effect is equivalent to a conventional exposure-time control. Keep the UI label and conversion mapping provisional until each position is deliberately correlated with a captured value and, ideally, observed image behavior.
+### Direct cross-check: +2.3 = BLC 16
 
-Do not implement the slider as a guessed arithmetic conversion based only on the endpoints. The confirmed primitive is BLC integer 0–18 with direct USB readback.
+The mapping was subsequently confirmed on the Linux test host using the camera itself:
+
+1. The camera was sent a direct UVC `SET_CUR` request for BLC value `16` (`10 00`).
+2. A subsequent UVC `GET_CUR` returned `10 00`, decoded as `16`.
+3. OBSBOT Center was opened and its Exposure Compensation slider displayed `+2.3`.
+
+This establishes the specific mapping **OBSBOT Center `+2.3` ↔ UVC BLC integer `16`** on the tested Tiny 2 Lite. The test used a direct USB write and hardware readback, not a V4L2 cached value.
+
+The original Windows capture and this cross-check together support the slider's use of the standard UVC BLC control. The exact mapping of every other fractional label has not yet been individually verified. This also does not establish that the slider is equivalent to a conventional exposure-time control.
+
+Do not infer every remaining label's mapping solely from this one confirmed point or the capture endpoints. The confirmed primitive is BLC integer 0–18 with direct USB readback.
 
 ## Implementation guidance
 
@@ -160,4 +170,5 @@ Do not implement the slider as a guessed arithmetic conversion based only on the
 - **High:** UVC entity/interface/selector and exact SET_CUR/GET_CUR request fields.
 - **High:** direct hardware write and matching two-byte GET_CUR readback for 0, 15, 16, and 18 on the tested Tiny 2 Lite.
 - **High:** Windows OBSBOT Center capture sent BLC SET_CUR payloads 1 through 18 while the slider was stepped.
-- **Not yet fully verified:** exact label-to-integer mapping for all 18 slider positions and whether the same behavior applies across firmware versions.
+- **High:** OBSBOT Center `+2.3` corresponds to BLC integer `16`, confirmed by direct SET_CUR, matching GET_CUR readback, and the app's displayed slider value on the tested camera.
+- **Not yet fully verified:** exact label-to-integer mapping for every other slider position and whether the same behavior applies across firmware versions.
