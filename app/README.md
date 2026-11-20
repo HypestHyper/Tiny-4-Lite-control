@@ -20,6 +20,8 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
+**Angles.** Pan and tilt are shown in whole degrees everywhere. The live position from the camera wobbles and sometimes lands between two degrees, so the shown degree only changes once the reading is 0.8° or more away from it; bumping the desk by a degree still shows. The camera's own position is read, not the last command sent.
+
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
 real pan and tilt, with the numbers on top. It is drawn straight on from the front and a little above, like a product photo: the lens and the front of the base
 face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward

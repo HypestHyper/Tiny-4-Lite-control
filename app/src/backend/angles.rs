@@ -29,12 +29,24 @@ pub fn from_live(pitch_hundredths: i16, yaw_hundredths: i16) -> (f64, f64) {
     (f64::from(yaw_hundredths) / 100.0, -f64::from(pitch_hundredths) / 100.0)
 }
 
-/// An angle for people to read: a sign, one decimal and no "-0.0".
+/// An angle for people to read: whole degrees with a sign, and no "-0".
 pub fn format(degrees: impl Into<f64>) -> String {
-    let degrees: f64 = degrees.into();
-    let rounded = (degrees * 10.0).round() / 10.0;
+    let rounded = degrees.into().round();
     let rounded = if rounded == 0.0 { 0.0 } else { rounded };
-    format!("{rounded:+.1}°")
+    format!("{rounded:+.0}°")
+}
+
+/// The live position wobbles a little, and the camera sometimes reports a value between two
+/// degrees. A shown angle only changes once the reading is this far from it.
+pub const SETTLE_DEGREES: f64 = 0.8;
+
+/// The whole degree to show for a reading, given the one shown now: it keeps the shown degree until
+/// the reading is `SETTLE_DEGREES` or more away, then jumps to the nearest whole degree.
+pub fn settle(shown: Option<f64>, reading: f64) -> f64 {
+    match shown {
+        Some(current) if (reading - current).abs() + 1e-9 < SETTLE_DEGREES => current,
+        _ => { let nearest = reading.round(); if nearest == 0.0 { 0.0 } else { nearest } }
+    }
 }
 
 #[cfg(test)]
@@ -60,9 +72,39 @@ mod tests {
 
     #[test]
     fn one_way_to_write_an_angle() {
-        assert_eq!(format(0.0), "+0.0°");
-        assert_eq!(format(-0.04), "+0.0°");
-        assert_eq!(format(12.34), "+12.3°");
-        assert_eq!(format(-5.0), "-5.0°");
+        assert_eq!(format(0.0), "+0°");
+        assert_eq!(format(-0.4), "+0°");
+        assert_eq!(format(12.34), "+12°");
+        assert_eq!(format(12.6), "+13°");
+        assert_eq!(format(-5.0), "-5°");
+    }
+
+    #[test]
+    fn a_wobbling_reading_does_not_change_the_shown_degree() {
+        // Settling at 5° and wobbling between 4.3 and 5.7 never moves it.
+        let mut shown = Some(5.0);
+        for reading in [5.0, 5.5, 4.6, 5.7, 4.3, 5.2, 4.9] {
+            shown = Some(settle(shown, reading));
+            assert_eq!(shown, Some(5.0), "reading {reading}");
+        }
+        // A real move of 0.8° or more does change it, to the nearest degree.
+        assert_eq!(settle(Some(5.0), 5.8), 6.0);
+        assert_eq!(settle(Some(5.0), 4.2), 4.0);
+        assert_eq!(settle(Some(5.0), 11.4), 11.0);
+        // The first reading is just rounded, and zero is never negative.
+        assert_eq!(settle(None, 7.6), 8.0);
+        assert!(settle(None, -0.3).is_sign_positive());
+    }
+
+    #[test]
+    fn it_is_stable_when_the_gimbal_is_bumped_back_and_forth() {
+        // Bumped 1° one way and back: shown goes 5 -> 6 -> 5, and nothing flickers in between.
+        let mut shown = Some(5.0);
+        let mut seen = Vec::new();
+        for reading in [5.0, 5.4, 5.9, 6.0, 6.3, 5.7, 5.2, 4.9] {
+            shown = Some(settle(shown, reading));
+            seen.push(shown.unwrap());
+        }
+        assert_eq!(seen, vec![5.0, 5.0, 6.0, 6.0, 6.0, 6.0, 5.0, 5.0]);
     }
 }
