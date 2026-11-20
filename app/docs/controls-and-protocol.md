@@ -356,3 +356,11 @@ revision as build-verified.
 - [Feature inventory](../Assistant/reference/02-feature-inventory.md)
 - [Project index](../Assistant/INDEX.md)
 - [Agent and hardware-safety rules](../Assistant/AGENTS.md)
+
+## Centre
+
+The Centre button on the gimbal card, and `tiny4lite-control gimbal centre --yes`, set `pan_absolute`
+and `tilt_absolute` to 0 in one V4L2 command. The camera turns, so the window asks first and the command
+line needs `--yes`. Zero is the middle of the V4L2 ranges (pan ±468000, tilt ±324000, in arcseconds) and
+the readings from a real camera showed 0 and 0 as the starting point for a +1° step. No research note
+verifies that this is the physical centre or the camera's own "home", so treat it as "pan 0, tilt 0".

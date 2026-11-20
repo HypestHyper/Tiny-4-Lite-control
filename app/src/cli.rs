@@ -513,6 +513,13 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             }
             Err(error) => fail(&format!("Could not read the gimbal position: {error}")),
         },
+        Some("centre") | Some("center") => {
+            if !options.yes {
+                eprintln!("This turns the camera to pan 0°, tilt 0°.\nClear the space around it, then run the command again with --yes.");
+                return FAILED;
+            }
+            match backend::centre_gimbal(device) { Ok(()) => { println!("Centring the camera (pan 0°, tilt 0°)"); OK } Err(error) => fail(&format!("Could not centre the camera: {error}")) }
+        }
         Some("stop") => stop_gimbal(device),
         Some("step") => {
             let degrees = |name: &str| options.flag(name).map(|v| v.parse::<i64>().map_err(|_| format!("{name} needs a whole number of degrees, for example 1 or -2."))).transpose();
@@ -738,6 +745,7 @@ Settings (every setting the windows show):
 Other things the windows do:
   status                     Power, exposure, focus, tracking and gimbal position
   gimbal position|stop       Read the gimbal position, or stop it
+  gimbal centre --yes            Turn to pan 0°, tilt 0° (the camera moves, so it needs --yes)
   gimbal step --pan N --tilt N   Turn by N whole degrees (1 to 5 each, negative for the other way)
   gimbal move --pan N --tilt N [--seconds S]
                              Turn at N% of full speed (-100 to 100) for S seconds (default 1, up to 10)
@@ -821,7 +829,7 @@ _tiny4lite_control() {{
             elif [ "$cmd" = set ] && [ "$COMP_CWORD" -eq 3 ]; then COMPREPLY=($(compgen -W "$(tiny4lite-control __complete values "$prev" 2>/dev/null)" -- "$cur")); fi ;;
         list) COMPREPLY=($(compgen -W "$(tiny4lite-control __complete groups 2>/dev/null) --json" -- "$cur")) ;;
         preset) if [ "$COMP_CWORD" -eq 2 ]; then COMPREPLY=($(compgen -W "list apply save delete" -- "$cur")); else COMPREPLY=($(compgen -W "$(tiny4lite-control __complete presets 2>/dev/null)" -- "$cur")); fi ;;
-        gimbal) COMPREPLY=($(compgen -W "position stop move step --pan --tilt --seconds" -- "$cur")) ;;
+        gimbal) COMPREPLY=($(compgen -W "position stop move step centre --pan --tilt --seconds" -- "$cur")) ;;
         position) COMPREPLY=($(compgen -W "list go save delete --yes" -- "$cur")) ;;
         startup) COMPREPLY=($(compgen -W "show set --yes" -- "$cur")) ;;
         capture) COMPREPLY=($(compgen -W "list get set" -- "$cur")) ;;
@@ -841,7 +849,7 @@ _tiny4lite_control() {{
             elif [[ "$words[2]" == set && CURRENT == 4 ]]; then compadd -- ${{(f)"$(tiny4lite-control __complete values "$words[3]" 2>/dev/null)"}}; fi ;;
         list) compadd -- ${{(f)"$(tiny4lite-control __complete groups 2>/dev/null)"}} --json ;;
         preset) if (( CURRENT == 3 )); then compadd list apply save delete; else compadd -- ${{(f)"$(tiny4lite-control __complete presets 2>/dev/null)"}}; fi ;;
-        gimbal) compadd position stop move step --pan --tilt --seconds ;;
+        gimbal) compadd position stop move step centre --pan --tilt --seconds ;;
         position) compadd list go save delete --yes ;;
         startup) compadd show set --yes ;;
         capture) compadd list get set ;;
@@ -858,7 +866,7 @@ complete -c tiny4lite-control -n '__fish_seen_subcommand_from set; and test (cou
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from list' -a '(tiny4lite-control __complete groups 2>/dev/null) --json'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from preset; and test (count (commandline -opc)) -eq 2' -a 'list apply save delete'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from preset; and test (count (commandline -opc)) -ge 3' -a '(tiny4lite-control __complete presets 2>/dev/null)'
-complete -c tiny4lite-control -n '__fish_seen_subcommand_from gimbal' -a 'position stop move step'
+complete -c tiny4lite-control -n '__fish_seen_subcommand_from gimbal' -a 'position stop move step centre'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from position' -a 'list go save delete'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from startup' -a 'show set'
 complete -c tiny4lite-control -n '__fish_seen_subcommand_from capture' -a 'list get set'

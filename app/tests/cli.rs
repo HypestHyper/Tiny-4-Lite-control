@@ -280,3 +280,24 @@ fn camera_positions_and_start_up_position_flow() {
     let shown = text(&run.run(&["startup", "show"]).stdout);
     assert!(!shown.contains("-0.0"), "negative zero in {shown}");
 }
+
+#[test]
+fn centre_needs_yes_and_sends_one_absolute_move() {
+    let run = Run::new("centre");
+    let log = run.config.join("commands.log");
+    let go = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(args)
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    let refused = go(&["gimbal", "centre"]);
+    assert!(!refused.status.success());
+    assert!(!log.exists() || !std::fs::read_to_string(&log).unwrap().contains("pan_absolute"), "a refused centre must send nothing");
+    let out = go(&["gimbal", "centre", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let commands = std::fs::read_to_string(&log).unwrap();
+    assert!(commands.contains("--set-ctrl=pan_absolute=0,tilt_absolute=0"), "{commands}");
+}

@@ -208,6 +208,26 @@ impl Joystick {
                 buttons.borrow_mut().push(button);
             }
         }
+        // Centre: pan 0, tilt 0. It turns the camera, so it asks first.
+        let centre = widgets::icon_button("center_focus_strong", "Centre: turn the camera to pan 0°, tilt 0°", true);
+        let this = self.clone();
+        centre.connect_clicked(move |_| {
+            let store = this.0.store.clone();
+            let again = this.clone();
+            store.confirm("open_with", "Centre the camera?",
+                "The camera will turn to pan 0° and tilt 0°. Clear the space around it first.", "Centre", move || {
+                    let again = again.clone();
+                    again.0.store.clone().call(None, |d| backend::centre_gimbal(d), move |result| {
+                        match result {
+                            Ok(()) => again.0.store.toast("Centring the camera"),
+                            Err(error) => again.0.store.error(&format!("Could not centre the camera: {error}")),
+                        }
+                        again.poll_now();
+                    });
+                });
+        });
+        row.append(&centre);
+        buttons.borrow_mut().push(centre);
         // Only usable when the driver offers working absolute pan and tilt.
         let weak: Vec<_> = buttons.borrow().iter().map(|b| b.downgrade()).collect();
         self.0.store.subscribe(move |snapshot| {

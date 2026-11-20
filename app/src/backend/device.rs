@@ -499,6 +499,11 @@ pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, m
     set_control(device, control, target)?;
     Ok(target as f64 / PANTILT_RAW_UNITS_PER_DEGREE)
 }
+/// Turn the camera to pan 0, tilt 0 (the middle of the V4L2 pan and tilt ranges). One command, so
+/// both axes start together. The camera physically turns, so callers ask the user first.
+pub(crate) fn centre_gimbal(device: &str) -> Result<(), String> {
+    run_v4l2(device, "--set-ctrl=pan_absolute=0,tilt_absolute=0").map(|_| ())
+}
 pub(crate) const PAN_DISPLAY_LIMIT_DEGREES: f64 = 130.0;
 pub(crate) const TILT_DISPLAY_LIMIT_DEGREES: f64 = 90.0;
 
