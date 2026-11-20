@@ -115,12 +115,32 @@ impl PreviewHub {
         change: impl FnOnce(&str) -> T + Send + 'static,
         done: impl FnOnce(T) + 'static,
     ) {
-        self.stop();
+        // The stream has to be really gone before the format changes, and the camera needs a moment
+        // after it: starting and stopping streams in quick succession can make it drop off the bus.
+        // So the stream is ended on the camera thread, in front of the change itself.
+        let child = self.take_stream();
+        self.each_view(|v| v.show_message("Changing the video mode…", "videocam"));
         let hub = self.clone();
-        self.0.store.call(None, change, move |value| {
+        self.0.store.call(None, move |device| {
+            if let Some(mut child) = child {
+                let _ = child.kill();
+                let _ = child.wait();
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            change(device)
+        }, move |value| {
             done(value);
-            hub.update_demand();
+            // Let the camera settle before the preview asks it for frames again.
+            glib::timeout_add_local_once(Duration::from_millis(700), move || hub.update_demand());
         });
+    }
+
+    /// Stop the stream from being shown and hand back the process that makes it, to be ended by the caller.
+    fn take_stream(&self) -> Option<Child> {
+        let hub = &self.0;
+        hub.generation.set(hub.generation.get().wrapping_add(1));
+        hub.running.set(false);
+        hub.child.borrow_mut().take()
     }
 
     fn start(&self) {

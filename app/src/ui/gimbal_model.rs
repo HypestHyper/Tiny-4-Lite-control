@@ -1,9 +1,9 @@
 //! A wireframe camera on a two-axis gimbal that follows the camera's live pan and tilt.
 //!
 //! The camera is drawn straight on from the front, a little above, like a product photo: the lens
-//! and the front of the base face you. Click it to see it from behind instead. Positive pan turns
-//! the camera to ITS right (your left, from the front) and positive tilt looks up; the readouts
-//! beside it show the real numbers. It is only a drawing of the angles the camera
+//! and the front of the base face you. Drag the base to turn the model all the way
+//! round; double-click to face the front again. Positive tilt looks up; the readouts beside it show
+//! the real numbers, and `PAN_SIGN` says which way positive pan turns the drawing. It is only a drawing of the angles the camera
 //! reports: it never sends anything to the camera.
 
 use super::store::Store;
@@ -41,18 +41,22 @@ fn pan_by(v: V3, degrees: f64) -> V3 {
 /// The view looks straight on, a little from above. From the front the camera's right is on your left.
 const VIEW_PITCH: f64 = 8.0;
 
-/// Turn the world about the vertical so the front (or the back) faces the viewer.
-fn view_yaw(behind: bool) -> f64 { if behind { 0.0 } else { 180.0 } }
+/// The view turned about the vertical, in degrees: 180° looks at the front of the camera at rest, 0° at its back.
+pub const FRONT_YAW: f64 = 180.0;
+
+/// The camera's pan reading as drawn. Positive pan moved the real camera the other way round from
+/// the drawing (checked by the user on a real camera), so the drawing turns by the opposite angle.
+pub const PAN_SIGN: f64 = -1.0;
 
 /// The direction from the scene towards the viewer, in world coordinates.
-fn toward_viewer(behind: bool) -> V3 {
+fn toward_viewer(yaw: f64) -> V3 {
     let (s, c) = VIEW_PITCH.to_radians().sin_cos();
-    pan_by((0.0, s, c), view_yaw(behind))
+    pan_by((0.0, s, c), yaw)
 }
 
 /// World point to screen offset (right, down) in units of the model, with a little perspective.
-pub fn project(p: V3, behind: bool) -> (f64, f64) {
-    let (x, y, z) = pan_by(p, -view_yaw(behind));
+pub fn project(p: V3, yaw: f64) -> (f64, f64) {
+    let (x, y, z) = pan_by(p, -yaw);
     // Tilt the whole scene towards the viewer by the view pitch.
     let (s, c) = VIEW_PITCH.to_radians().sin_cos();
     let (y, z) = (y * c - z * s, y * s + z * c);
@@ -233,7 +237,8 @@ fn slab(outline: &[(f64, f64)], steps: usize, front: impl Fn((f64, f64)) -> V3, 
 }
 
 /// All the lines of the model for a pan and tilt, in drawing units (see `shape::UNIT`).
-fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
+fn model(pan: f64, tilt: f64, zoom: f64, yaw: f64) -> Vec<Line> {
+    let pan = PAN_SIGN * pan;
     use shape::*;
     let mut lines = Vec::new();
 
@@ -362,7 +367,7 @@ fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
         out.push(Line { a: to_units(pan_place(line.a)), b: to_units(pan_place(line.b)), kind: line.kind });
     }
     // Leave out the details on a side that faces away, so the far side does not show through.
-    let viewer = toward_viewer(behind);
+    let viewer = toward_viewer(yaw);
     let facing = |normal: V3| normal.0 * viewer.0 + normal.1 * viewer.1 + normal.2 * viewer.2 > 0.02;
     let head_front = forward(pan, tilt);
     let visible = |kind: Kind| match kind {
@@ -374,6 +379,26 @@ fn model(pan: f64, tilt: f64, zoom: f64, behind: bool) -> Vec<Line> {
     };
     out.retain(|line| visible(line.kind));
     out
+}
+
+/// The lower part of the widget (below this fraction of its height) turns the model when dragged.
+const BASE_REGION: f64 = 0.55;
+/// How far the view turns for each pixel dragged: a full turn takes about 450 px.
+const DEGREES_PER_PIXEL: f64 = 0.8;
+/// Letting go this close to a main direction (front, a side, back) settles exactly on it.
+const SNAP_DEGREES: f64 = 4.0;
+
+/// A view angle as 0 to under 360 degrees; anything that is not a number becomes the front.
+pub fn normalise_yaw(yaw: f64) -> f64 {
+    if !yaw.is_finite() { return FRONT_YAW; }
+    yaw.rem_euclid(360.0)
+}
+
+/// Settle on front, back or a side when close to one.
+pub fn snap_yaw(yaw: f64) -> f64 {
+    let yaw = normalise_yaw(yaw);
+    let nearest = (yaw / 90.0).round() * 90.0;
+    if (yaw - nearest).abs() <= SNAP_DEGREES { normalise_yaw(nearest) } else { yaw }
 }
 
 /// Move `current` towards `target` by a time step, without overshoot (it is measured data).
@@ -393,7 +418,9 @@ struct State {
     zoom_target: Cell<f64>,
     zoom_shown: Cell<f64>,
     animating: Cell<bool>,
-    behind: Cell<bool>,
+    /// The view turned about the vertical, in degrees. Dragging the base turns it.
+    yaw: Cell<f64>,
+    drag_from: Cell<Option<f64>>,
     last_frame: Cell<i64>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
 }
@@ -412,22 +439,51 @@ impl GimbalModel {
         area.update_property(&[gtk::accessible::Property::Label("Gimbal model showing where the camera points")]);
         let state = Rc::new(State {
             area: area.clone(), target: Cell::new(None), shown: Cell::new((0.0, 0.0)), zoom_target: Cell::new(0.0), zoom_shown: Cell::new(0.0),
-            animating: Cell::new(false), behind: Cell::new(current_config().model_view_behind), last_frame: Cell::new(0), tick: RefCell::default(),
+            animating: Cell::new(false), yaw: Cell::new(normalise_yaw(current_config().model_view_yaw)), drag_from: Cell::new(None), last_frame: Cell::new(0), tick: RefCell::default(),
         });
         let model = GimbalModel(state);
         let drawer = model.clone();
         area.set_draw_func(move |_, cr, width, height| drawer.draw(cr, width, height));
-        // Click to look from the other side.
-        area.set_cursor_from_name(Some("pointer"));
-        area.set_tooltip_text(Some("Click to flip between the front view and the view from behind"));
-        let click = gtk::GestureClick::new();
-        let flipper = Rc::downgrade(&model.0);
-        click.connect_released(move |_, _, _, _| {
-            let Some(state) = flipper.upgrade() else { return };
-            let behind = !state.behind.get();
-            state.behind.set(behind);
-            update_config(|c| c.model_view_behind = behind);
+        // Drag the lower part (the base and the floor ring) to turn the model; double-click to face front.
+        area.set_cursor_from_name(Some("grab"));
+        area.set_tooltip_text(Some("Drag the base to turn the model. Double-click to face the front."));
+        let drag = gtk::GestureDrag::new();
+        let begun = Rc::downgrade(&model.0);
+        drag.connect_drag_begin(move |gesture, _, y| {
+            let Some(state) = begun.upgrade() else { return };
+            if y >= f64::from(state.area.height()) * BASE_REGION {
+                state.drag_from.set(Some(state.yaw.get()));
+            } else {
+                state.drag_from.set(None);
+                gesture.set_state(gtk::EventSequenceState::Denied);
+            }
+        });
+        let moved = Rc::downgrade(&model.0);
+        drag.connect_drag_update(move |_, dx, _| {
+            let Some(state) = moved.upgrade() else { return };
+            let Some(from) = state.drag_from.get() else { return };
+            state.yaw.set(normalise_yaw(from + dx * DEGREES_PER_PIXEL));
             state.area.queue_draw();
+        });
+        let ended = Rc::downgrade(&model.0);
+        drag.connect_drag_end(move |_, _, _| {
+            let Some(state) = ended.upgrade() else { return };
+            if state.drag_from.take().is_none() { return; }
+            let yaw = snap_yaw(state.yaw.get());
+            state.yaw.set(yaw);
+            update_config(|c| c.model_view_yaw = yaw);
+            state.area.queue_draw();
+        });
+        area.add_controller(drag);
+        let click = gtk::GestureClick::new();
+        let reset = Rc::downgrade(&model.0);
+        click.connect_pressed(move |_, presses, _, _| {
+            let Some(state) = reset.upgrade() else { return };
+            if presses == 2 {
+                state.yaw.set(FRONT_YAW);
+                update_config(|c| c.model_view_yaw = FRONT_YAW);
+                state.area.queue_draw();
+            }
         });
         area.add_controller(click);
         let weak = Rc::downgrade(&model.0);
@@ -516,8 +572,8 @@ impl GimbalModel {
             cr.set_line_join(gtk::cairo::LineJoin::Round);
             // Without a reading the model sits dim at centre instead of pretending.
             let fade = if known { 1.0 } else { 0.35 };
-            let behind = state.behind.get();
-            let lines = model(pan, tilt, state.zoom_shown.get(), behind);
+            let yaw = state.yaw.get();
+            let lines = model(pan, tilt, state.zoom_shown.get(), yaw);
             // One stroke per style: the model has over a thousand short lines.
             let styles: [&[Kind]; 6] = [
                 &[Kind::Base], &[Kind::Detail, Kind::HeadFront, Kind::HeadBack, Kind::BaseFront, Kind::BaseBack],
@@ -529,8 +585,8 @@ impl GimbalModel {
                 cr.set_source_rgba(r, g, b, alpha * fade);
                 cr.set_line_width(width);
                 for line in lines.iter().filter(|l| kinds.contains(&l.kind)) {
-                    let (ax, ay) = project(line.a, behind);
-                    let (bx, by) = project(line.b, behind);
+                    let (ax, ay) = project(line.a, yaw);
+                    let (bx, by) = project(line.b, yaw);
                     cr.move_to(cx + ax * scale, cy + ay * scale);
                     cr.line_to(cx + bx * scale, cy + by * scale);
                 }
@@ -563,11 +619,11 @@ mod tests {
     fn the_drawn_lens_direction_matches_the_pan_and_tilt_maths() {
         // The model's aim ray starts at the lens and ends along `forward`.
         for (pan, tilt) in [(0.0, 0.0), (40.0, 15.0), (-75.0, -20.0), (130.0, 90.0)] {
-            let lines = model(pan, tilt, 0.0, false);
+            let lines = model(pan, tilt, 0.0, FRONT_YAW);
             let ray = lines.iter().filter(|l| l.kind == Kind::Aim).next().expect("an aim line");
             let d = (ray.b.0 - ray.a.0, ray.b.1 - ray.a.1, ray.b.2 - ray.a.2);
             let length = (d.0 * d.0 + d.1 * d.1 + d.2 * d.2).sqrt();
-            let f = forward(pan, tilt);
+            let f = forward(PAN_SIGN * pan, tilt);
             assert!(close((d.0 / length, d.1 / length, d.2 / length), f), "pan {pan} tilt {tilt}: {d:?} vs {f:?}");
         }
     }
@@ -577,6 +633,45 @@ mod tests {
         assert_eq!(PAN_RANGE, (-140.0, 140.0));
         assert_eq!(PAN_LIMIT, 150.0);
         assert_eq!(TILT_LIMIT, 90.0);
+    }
+
+    #[test]
+    fn the_view_turns_all_the_way_round_and_settles_on_the_main_directions() {
+        assert_eq!(normalise_yaw(-90.0), 270.0);
+        assert_eq!(normalise_yaw(725.0), 5.0);
+        assert_eq!(normalise_yaw(f64::NAN), FRONT_YAW);
+        assert_eq!(snap_yaw(183.0), 180.0);
+        assert_eq!(snap_yaw(357.0), 0.0);
+        assert_eq!(snap_yaw(92.0), 90.0);
+        // Between the main directions it stays where it was left.
+        assert_eq!(snap_yaw(135.0), 135.0);
+        assert_eq!(snap_yaw(200.0), 200.0);
+    }
+
+    #[test]
+    fn every_view_angle_draws_a_light_frame_without_the_far_side_showing_through() {
+        let mut counts = Vec::new();
+        for yaw in (0..360).step_by(15) {
+            let lines = model(20.0, 10.0, 0.0, f64::from(yaw));
+            let back = lines.iter().filter(|l| l.kind == Kind::BaseBack).count();
+            let front = lines.iter().filter(|l| l.kind == Kind::BaseFront).count();
+            // The base shows its front or its back, never both.
+            assert!(front == 0 || back == 0, "yaw {yaw}: {front} front and {back} back marks");
+            counts.push(lines.len());
+        }
+        // Rotation is just a different projection, and hiding the far side only makes it lighter.
+        assert!(*counts.iter().max().unwrap() < 2000, "{counts:?}");
+    }
+
+    #[test]
+    fn positive_pan_turns_the_lens_the_way_the_real_camera_does() {
+        // Seen from the front, a positive pan now swings the lens towards the viewer's right.
+        let aim = |pan: f64| {
+            let lines = model(pan, 0.0, 0.0, FRONT_YAW);
+            let ray = lines.iter().find(|l| l.kind == Kind::Aim).unwrap();
+            project(ray.b, FRONT_YAW).0 - project(ray.a, FRONT_YAW).0
+        };
+        assert!(aim(40.0) > 0.0 && aim(-40.0) < 0.0);
     }
 
     #[test]
@@ -594,9 +689,9 @@ mod tests {
 
     #[test]
     fn projection_keeps_the_scene_inside_a_sensible_box() {
-        for line in model(0.0, 0.0, 0.0, false) {
+        for line in model(0.0, 0.0, 0.0, FRONT_YAW) {
             for point in [line.a, line.b] {
-                let (x, y) = project(point, false);
+                let (x, y) = project(point, FRONT_YAW);
                 assert!(x.abs() < 3.0 && y.abs() < 3.0, "{point:?} -> {x}, {y}");
             }
         }
@@ -616,7 +711,7 @@ mod shape_tests {
     /// size OBSBOT publishes: 48.37 wide, 46.46 deep and 64.2 high, in millimetres.
     #[test]
     fn the_camera_body_has_the_published_size() {
-        let body: Vec<Line> = model(0.0, 0.0, 0.0, false).into_iter().filter(|l| !matches!(l.kind, Kind::Aim | Kind::Limit | Kind::Base)
+        let body: Vec<Line> = model(0.0, 0.0, 0.0, FRONT_YAW).into_iter().filter(|l| !matches!(l.kind, Kind::Aim | Kind::Limit | Kind::Base)
             || (l.kind == Kind::Base && l.a.0.hypot(l.a.2) * shape::UNIT < shape::FLOOR_RING - 1.0)).collect();
         let mm = |units: f64| units * shape::UNIT;
         let (x0, x1) = extent(&body, |v| v.0);
@@ -649,13 +744,13 @@ mod shape_tests {
 
     #[test]
     fn zooming_narrows_the_cone() {
-        let reach = |zoom: f64| model(0.0, 0.0, zoom, false).iter().filter(|l| l.kind == Kind::Aim).map(|l| l.b.0.abs()).fold(0.0, f64::max);
+        let reach = |zoom: f64| model(0.0, 0.0, zoom, FRONT_YAW).iter().filter(|l| l.kind == Kind::Aim).map(|l| l.b.0.abs()).fold(0.0, f64::max);
         assert!(reach(15.0) < reach(0.0) && reach(100.0) < reach(15.0));
     }
 
     #[test]
     fn the_view_cone_uses_the_published_horizontal_field_of_view() {
-        let lines = model(0.0, 0.0, 0.0, false);
+        let lines = model(0.0, 0.0, 0.0, FRONT_YAW);
         let aims: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
         // Ray, four edges from the lens, four edges of the far rectangle.
         assert_eq!(aims.len(), 9);

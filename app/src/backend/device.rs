@@ -207,12 +207,46 @@ pub(crate) fn run_v4l2(device: &str, option: &str) -> Result<String, String> {
         sim::apply_set_ctrl(option);
         return Ok(mock_v4l2_output(option));
     }
-    let output = Command::new("v4l2-ctl").arg("-d").arg(device).arg(option).output()
+    let (success, stdout, stderr) = run_with_timeout(
+        Command::new("v4l2-ctl").arg("-d").arg(device).arg(option), v4l2_timeout(option))?;
+    if !success { return Err(stderr.trim().to_string()); }
+    Ok(stdout.trim().to_string())
+}
+
+/// How long a `v4l2-ctl` call may take. Changing the capture mode can make the camera renegotiate
+/// with the USB host, which takes a while; everything else is quick.
+pub(crate) fn v4l2_timeout(option: &str) -> std::time::Duration {
+    let slow = option.starts_with("--set-fmt-video") || option.starts_with("--set-parm");
+    std::time::Duration::from_secs(if slow { 15 } else { 6 })
+}
+
+/// Run a command and give up on it after `limit`: a camera that stops answering must not leave the
+/// caller (and everything queued behind it) waiting for ever. Returns (succeeded, stdout, stderr).
+pub(crate) fn run_with_timeout(command: &mut Command, limit: std::time::Duration) -> Result<(bool, String, String), String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
         .map_err(|e| format!("Could not run v4l2-ctl: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    // Read both pipes on their own threads so a full pipe can never stop the command finishing.
+    let mut out = child.stdout.take();
+    let mut err = child.stderr.take();
+    let out_thread = std::thread::spawn(move || { let mut s = String::new(); if let Some(o) = out.as_mut() { let _ = o.read_to_string(&mut s); } s });
+    let err_thread = std::thread::spawn(move || { let mut s = String::new(); if let Some(o) = err.as_mut() { let _ = o.read_to_string(&mut s); } s });
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if started.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!("The camera did not answer within {} seconds, so the command was stopped. If the picture is frozen, unplug and replug the camera.", limit.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(15)),
+            Err(e) => break Err(format!("Could not wait for v4l2-ctl: {e}")),
+        }
+    };
+    let (stdout, stderr) = (out_thread.join().unwrap_or_default(), err_thread.join().unwrap_or_default());
+    status.map(|s| (s.success(), stdout, stderr))
 }
 
 pub(crate) fn get_control(device: &str, name: &str) -> Result<i64, String> {
@@ -1823,5 +1857,36 @@ mod sim_gimbal_tests {
         // Other options are ignored.
         sim::apply_set_ctrl("--get-ctrl=pan_absolute");
         assert_eq!(sim::position(), later);
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_command_that_never_answers_is_stopped() {
+        let started = Instant::now();
+        let result = run_with_timeout(Command::new("sleep").arg("30"), Duration::from_millis(300));
+        assert!(result.unwrap_err().contains("did not answer"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_normal_command_returns_its_output_and_status() {
+        let (ok, out, _) = run_with_timeout(Command::new("echo").arg("hello"), Duration::from_secs(5)).unwrap();
+        assert!(ok && out.trim() == "hello");
+        let (ok, _, _) = run_with_timeout(&mut Command::new("false"), Duration::from_secs(5)).unwrap();
+        assert!(!ok);
+        // Lots of output never blocks it.
+        let (ok, out, _) = run_with_timeout(Command::new("sh").args(["-c", "yes x | head -c 300000"]), Duration::from_secs(5)).unwrap();
+        assert!(ok && out.len() >= 300_000);
+    }
+
+    #[test]
+    fn changing_the_capture_mode_is_given_longer_than_a_control() {
+        assert!(v4l2_timeout("--set-fmt-video=width=1280,height=720,pixelformat=MJPG") > v4l2_timeout("--set-ctrl=brightness=1"));
+        assert!(v4l2_timeout("--set-parm=30.000") > v4l2_timeout("--get-ctrl=pan_absolute"));
     }
 }

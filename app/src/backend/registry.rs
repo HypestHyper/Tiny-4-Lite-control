@@ -657,8 +657,15 @@ fn build() -> Vec<Setting> {
 
         // ── Light ──
         Setting::custom("obsbot:led_brightness", Lighting, "LED brightness",
-            "Off, or one of three brightness levels.",
-            ticked(0.0, 3.0, 1.0, Fmt::Level, vec![(0.0, "Off"), (1.0, "1"), (2.0, "2"), (3.0, "3")]),
+            "The light on the front. Off, or one of three levels.",
+            Kind::Choice(vec![
+                Opt { value: 0, label: "Off", hint: "No light at all", confirm: Some(Confirm {
+                    title: "Turn the camera light off?",
+                    body: "With the light off, nobody near the camera can tell when it is on. Leave it on if other people could be in view or earshot.",
+                    action: "Turn off",
+                }) },
+                opt(1, "1", "Dimmest"), opt(2, "2", "Medium"), opt(3, "3", "Brightest"),
+            ]),
             |s| from_camera(s.byte(0x21).map(|b| Value::Int(i64::from(b.min(3)))))
                 .or_else(|| if s.status.is_none() { from_saved(number(s.config.led_brightness)) } else { None }),
             |d, v| sent(set_led_brightness(d, v.as_i64().clamp(0, 3) as u8))),

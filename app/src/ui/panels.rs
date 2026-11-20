@@ -400,11 +400,16 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
         grid.attach(drop, 1, row as i32, 1, 1);
     }
     body.append(&grid);
-    body.append(&widgets::text("Changing this briefly pauses the preview.", &["small", "faint"]));
+    let status = widgets::text("Changing this briefly pauses the preview.", &["small", "faint"]);
+    body.append(&status);
 
     struct Model { caps: Vec<video::VideoCapability>, current: Option<video::VideoMode> }
     let model: Rc<RefCell<Model>> = Rc::new(RefCell::new(Model { caps: Vec::new(), current: None }));
     let suppress = Rc::new(Cell::new(false));
+    // True while a change is being applied, so a second one cannot start on top of it.
+    let busy = Rc::new(Cell::new(false));
+    // Each choice restarts a short wait, so picking a size and then a rate applies once.
+    let latest_choice = Rc::new(Cell::new(0_u32));
 
     let fill: Rc<dyn Fn()> = {
         let (model, formats, sizes, rates, suppress) = (model.clone(), formats.clone(), sizes.clone(), rates.clone(), suppress.clone());
@@ -453,10 +458,10 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
 
     // Choosing a format or size changes what the next dropdowns offer.
     let apply: Rc<dyn Fn()> = {
-        let (store, hub, model, formats, sizes, rates, suppress, load) =
-            (store.clone(), hub.clone(), model.clone(), formats.clone(), sizes.clone(), rates.clone(), suppress.clone(), load.clone());
+        let (store, hub, model, formats, sizes, rates, suppress, load, status, busy) =
+            (store.clone(), hub.clone(), model.clone(), formats.clone(), sizes.clone(), rates.clone(), suppress.clone(), load.clone(), status.clone(), busy.clone());
         Rc::new(move || {
-            if suppress.get() { return; }
+            if suppress.get() || busy.get() { return; }
             let selected = |drop: &gtk::DropDown| drop.selected_item().and_then(|o| o.downcast::<gtk::StringObject>().ok()).map(|s| s.string().to_string());
             let (Some(format), Some(size), Some(rate)) = (selected(&formats), selected(&sizes), selected(&rates)) else { return };
             let mut parts = size.split(" × ");
@@ -466,12 +471,20 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
             if model.borrow().current.as_ref() == Some(&mode) { return; }
             let previous = model.borrow().current.clone();
             let (store2, load2, mode_for_job) = (store.clone(), load.clone(), mode.clone());
+            // Show that something is happening, and take the lists out of play until it is over.
+            busy.set(true);
+            for drop in [&formats, &sizes, &rates] { drop.set_sensitive(false); }
+            status.set_text("Applying… the picture pauses for a moment.");
+            let (formats_done, sizes_done, rates_done, status_done, busy_done) = (formats.clone(), sizes.clone(), rates.clone(), status.clone(), busy.clone());
             hub.while_stopped(move |d| {
                 match video::set_mode(d, &mode_for_job) {
                     Ok(()) => Ok(()),
                     Err(e) => { if let Some(p) = previous { let _ = video::set_mode(d, &p); } Err(e) }
                 }
             }, move |r| {
+                busy_done.set(false);
+                for drop in [&formats_done, &sizes_done, &rates_done] { drop.set_sensitive(true); }
+                status_done.set_text("Changing this briefly pauses the preview.");
                 match r {
                     Ok(()) => {
                         let saved = config::VideoModeConfig { width: mode.width, height: mode.height, pixel_format: mode.pixel_format.clone(), frame_rate_milli: mode.frame_rate_milli };
@@ -485,7 +498,7 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
         })
     };
     for (drop, rebuild_first) in [(&formats, true), (&sizes, true), (&rates, false)] {
-        let (apply, model, fill, suppress, formats, sizes) = (apply.clone(), model.clone(), fill.clone(), suppress.clone(), formats.clone(), sizes.clone());
+        let (apply, model, fill, suppress, formats, sizes, latest_choice) = (apply.clone(), model.clone(), fill.clone(), suppress.clone(), formats.clone(), sizes.clone(), latest_choice.clone());
         drop.connect_selected_notify(move |_| {
             if suppress.get() { return; }
             if rebuild_first {
@@ -512,7 +525,12 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
                 model.borrow_mut().current = before;
                 let _ = after;
             }
-            apply();
+            let choice = latest_choice.get().wrapping_add(1);
+            latest_choice.set(choice);
+            let (apply, latest_choice) = (apply.clone(), latest_choice.clone());
+            glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                if latest_choice.get() == choice { apply(); }
+            });
         });
     }
     card
