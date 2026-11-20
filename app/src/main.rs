@@ -456,6 +456,7 @@ fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<
         if request == UVC_GET_CUR {
             data.fill(0);
             if selector == 0x06 && data.len() >= 0x25 {
+                data[0x10] = 1;
                 data[0x21] = 1;
             } else if selector == 0x08 {
                 let model = b"OBSBOT Tiny 2 Lite";
@@ -664,12 +665,21 @@ fn xu_status(device: &str) -> Result<[u8; 60], String> {
 }
 
 const XU_AUDIO_NOISE_REDUCTION_OFFSET: usize = 8;
+const XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET: usize = 16;
 const XU_AUDIO_AUTO_GAIN_OFFSET: usize = 25;
 const XU_AUDIO_MICROPHONE_DISABLED_OFFSET: usize = 2;
 const XU_AUDIO_RADIO_DISTANCE_OFFSET: usize = 2;
 
 fn microphone_disabled_wire_value(disabled: bool) -> u8 {
     if disabled { 0 } else { 1 }
+}
+
+fn microphone_during_sleep_state(status: &[u8; 60]) -> Option<bool> {
+    match status[XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET] {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
 }
 
 
@@ -696,6 +706,12 @@ fn set_xu_status_byte(device: &str, offset: usize, value: u8) -> Result<(), Stri
     let current = xu_status(device)?;
     let mut data = patch_xu_status_byte(current, offset, value)?;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+fn set_microphone_during_sleep(device: &str, enabled: bool) -> Result<(), String> {
+    set_xu_status_byte(device, XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET, u8::from(enabled))?;
+    update_config(|config| config.audio_microphone_during_sleep = Some(enabled));
+    Ok(())
 }
 
 fn set_microphone_disabled(device: &str, disabled: bool) -> Result<(), String> {
@@ -880,6 +896,50 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
     microphone_disabled_row.append(&microphone_disabled);
     layout.append(&microphone_disabled_row);
 
+    // This is independent from the "Disable microphone" command above.
+    // The captured GET_CUR configuration block exposes this setting at byte 16.
+    let sleep_mic_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    sleep_mic_row.add_css_class("adaptive-row");
+    let sleep_mic_label = gtk::Label::new(Some("Microphone during sleep"));
+    sleep_mic_label.set_xalign(0.0);
+    sleep_mic_label.set_hexpand(true);
+    let sleep_mic = gtk::Switch::new();
+    sleep_mic.set_valign(gtk::Align::Center);
+    let camera_sleep_mic = xu_status(device).ok().and_then(|data| microphone_during_sleep_state(&data));
+    let initial_sleep_mic = camera_sleep_mic.or(current_config().audio_microphone_during_sleep);
+    if let Some(enabled) = initial_sleep_mic {
+        sleep_mic.set_active(enabled);
+        sleep_mic.set_tooltip_text(Some(if camera_sleep_mic.is_some() {
+            "On/Off confirmed by the camera's selector 0x06 GET_CUR status block."
+        } else {
+            "Camera read-back unavailable; showing the last successfully submitted local setting."
+        }));
+    } else {
+        sleep_mic.set_sensitive(false);
+        sleep_mic.set_tooltip_text(Some("Initial state unavailable: selector 0x06 byte 16 could not be read."));
+    }
+    let sleep_mic_device = device.to_string();
+    let sleep_mic_status = status.clone();
+    sleep_mic.connect_state_set(move |_, enabled| {
+        match set_microphone_during_sleep(&sleep_mic_device, enabled) {
+            Ok(()) => {
+                sleep_mic_status.set_text(if enabled {
+                    "Microphone during sleep enabled."
+                } else {
+                    "Microphone during sleep disabled."
+                });
+                gtk::glib::Propagation::Proceed
+            }
+            Err(error) => {
+                sleep_mic_status.set_text(&format!("Could not change microphone-during-sleep setting: {error}"));
+                gtk::glib::Propagation::Stop
+            }
+        }
+    });
+    sleep_mic_row.append(&sleep_mic_label);
+    sleep_mic_row.append(&sleep_mic);
+    layout.append(&sleep_mic_row);
+
     let auto_gain_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     auto_gain_row.add_css_class("adaptive-row");
     let auto_gain_label = gtk::Label::new(Some("Auto gain"));
@@ -1051,7 +1111,7 @@ fn add_audio_controls(container: &gtk::Box, device: &str, status: &gtk::Label) {
 
 
     let note = gtk::Label::new(Some(
-        "Auto gain and noise reduction patch verified bytes in the current 60-byte block. Radio distance uses a captured fixed command. Pop filter replays captured 60-byte ON/OFF payloads. Pop filter remains experimental pending physical validation."
+        "Microphone during sleep is a separate selector 0x06 status-block setting (byte 16). Disable microphone is a separate fixed command. Auto gain and noise reduction patch their own status bytes. Pop filter remains experimental pending physical validation."
     ));
     note.set_wrap(true);
     note.set_xalign(0.0);
@@ -2599,6 +2659,17 @@ mod xu_protocol_tests {
         assert_eq!(&global[..4], &[0x03, 0x01, 0x01, 0x00]);
         assert!(face[3..].iter().all(|byte| *byte == 0));
         assert!(global[3..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn microphone_during_sleep_status_mapping_uses_byte_16() {
+        let mut status = [0u8; 60];
+        status[XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET] = 0;
+        assert_eq!(microphone_during_sleep_state(&status), Some(false));
+        status[XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET] = 1;
+        assert_eq!(microphone_during_sleep_state(&status), Some(true));
+        status[XU_AUDIO_MICROPHONE_DURING_SLEEP_OFFSET] = 2;
+        assert_eq!(microphone_during_sleep_state(&status), None);
     }
 
     #[test]
