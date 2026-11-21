@@ -356,7 +356,7 @@ revision as build-verified.
 
 ## Centre
 
-The Centre button on the gimbal card, and `tiny4lite-control gimbal centre --yes`, send pan 0 and tilt 0
+The Centre button on the gimbal card, and `tiny4lite-control gimbal centre`, send pan 0 and tilt 0
 in one V4L2 command (`pan_absolute=0,tilt_absolute=0`). The user confirmed on a real camera that this is
 the physical centre. The camera turns, so the window asks first and the command line needs `--yes`.
 

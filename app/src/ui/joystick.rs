@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// The joystick pad's side in the full window, in pixels. It does not grow or shrink with the window.
+const PAD_SIZE: i32 = 168;
 const KEY: &str = "gimbal-speed";
 const POSITION_KEY: &str = "gimbal-position";
 const SEND_INTERVAL: Duration = Duration::from_millis(40);
@@ -72,6 +74,9 @@ struct State {
     /// The pointer button is down on the pad. Losing focus then does not end the drag: the button
     /// still decides.
     pointer_down: Cell<bool>,
+    /// The setting rows in the card. A row stops following the camera once its handle is dropped, so
+    /// they are kept here.
+    rows: RefCell<Vec<widgets::SettingRow>>,
     /// Until when to read the position often, after a command that moves the camera by itself.
     boost_until: Cell<Option<Instant>>,
     /// When the direction of the pan or tilt speed last changed.
@@ -150,7 +155,7 @@ impl Joystick {
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
             last_position: Cell::new(None), last_position_at: Cell::new(None), ramped: Cell::new((0.0, 0.0)),
-            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), boost_until: Cell::new(None), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
+            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), rows: RefCell::default(), boost_until: Cell::new(None), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
         let joystick = Joystick(state);
@@ -171,15 +176,17 @@ impl Joystick {
         if compact { column.add_css_class("compact"); }
 
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let title = widgets::line("Gimbal", &["heading"]);
+        let title = widgets::line(if compact { "Gimbal" } else { "Camera controls" }, &["heading"]);
         title.set_hexpand(true);
         head.append(&title);
         // The zoom sits in the heading, where nothing is drawn behind it.
-        let zoom_caption = widgets::line("Zoom", &["small", "dim"]);
-        zoom_caption.set_valign(gtk::Align::Center);
-        state.zoom_value.set_valign(gtk::Align::Center);
-        head.append(&zoom_caption);
-        head.append(&state.zoom_value);
+        if compact {
+            let zoom_caption = widgets::line("Zoom", &["small", "dim"]);
+            zoom_caption.set_valign(gtk::Align::Center);
+            state.zoom_value.set_valign(gtk::Align::Center);
+            head.append(&zoom_caption);
+            head.append(&state.zoom_value);
+        }
         head.append(&widgets::info_button("Gimbal joystick", &[
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
@@ -226,10 +233,41 @@ impl Joystick {
             column.append(&both);
         } else {
             column.append(&stage);
-            column.append(&state.pad);
+            // The pad has one size, whatever the window does, with the quick presets either side of it.
+            state.pad.set_content_width(PAD_SIZE);
+            state.pad.set_content_height(PAD_SIZE);
+            state.pad.set_hexpand(false);
+            state.pad.set_vexpand(false);
+            state.pad.set_halign(gtk::Align::Center);
+            state.pad.set_valign(gtk::Align::Center);
+            let buttons = self.quick_preset_buttons();
+            let side = |first: usize| {
+                let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+                column.set_valign(gtk::Align::Center);
+                column.append(&buttons[first]);
+                column.append(&buttons[first + 1]);
+                column
+            };
+            let pad_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+            pad_row.set_halign(gtk::Align::Center);
+            pad_row.append(&side(0));
+            pad_row.append(&state.pad);
+            pad_row.append(&side(2));
+            column.append(&pad_row);
         }
 
         column.append(&self.step_row(compact));
+
+        // Zoom and the three field-of-view buttons, with the controls that turn the camera.
+        if !compact {
+            for id in ["v4l2:zoom_absolute", "obsbot:fov"] {
+                if let Some(setting) = backend::registry::find(id) {
+                    let row = widgets::SettingRow::new(&state.store, setting, widgets::Density::Slim);
+                    column.append(row.widget());
+                    state.rows.borrow_mut().push(row);
+                }
+            }
+        }
 
         let speed = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         speed.append(&widgets::line("Speed", &["setting-label"]));
@@ -266,6 +304,58 @@ impl Joystick {
         column
     }
 
+    /// Four buttons that apply the first four presets saved on the Presets tab. They are squares with an
+    /// outline, so they are not mistaken for the pan and tilt steps.
+    fn quick_preset_buttons(&self) -> Vec<gtk::Button> {
+        let store = self.0.store.clone();
+        let buttons: Vec<gtk::Button> = (1..=4).map(|n| {
+            let button = gtk::Button::with_label(&n.to_string());
+            button.add_css_class("preset");
+            widgets::label_accessible(&button, &format!("Preset {n}"));
+            button
+        }).collect();
+        let refresh = {
+            let buttons = buttons.clone();
+            move || {
+                let presets = current_config().presets;
+                for (index, button) in buttons.iter().enumerate() {
+                    match presets.get(index) {
+                        Some(preset) => {
+                            button.set_sensitive(true);
+                            button.set_tooltip_text(Some(&format!("Apply the preset “{}”", preset.name)));
+                        }
+                        None => {
+                            button.set_sensitive(false);
+                            button.set_tooltip_text(Some("Empty. Save a preset on the Presets tab and it shows up here."));
+                        }
+                    }
+                }
+            }
+        };
+        refresh();
+        // The list changes on the Presets tab; looking again whenever the camera is read is enough.
+        let again = refresh.clone();
+        store.subscribe(move |_| { again(); true });
+        for (index, button) in buttons.iter().enumerate() {
+            let (store, joystick) = (store.clone(), self.clone());
+            button.connect_clicked(move |_| {
+                let Some(preset) = current_config().presets.get(index).cloned() else { return };
+                let name = preset.name.clone();
+                let done = store.clone();
+                let again = joystick.clone();
+                store.call_now(move |d| crate::presets::apply(d, &preset), move |result| {
+                    match result {
+                        Ok(_) => done.toast(&format!("Applied {name}")),
+                        Err(error) => done.error(&format!("{name}: {error}")),
+                    }
+                    again.boost_polling();
+                    done.refresh_soon();
+                });
+            });
+        }
+        buttons
+    }
+
     /// Wake and Sleep: two plain buttons that each send their command, whatever the camera says it is
     /// doing. The state the camera reports is shown beside the title.
     fn power_row(&self) -> gtk::Box {
@@ -278,7 +368,7 @@ impl Joystick {
         head.append(&title);
         head.append(&state);
         head.append(&widgets::info_button("Camera power", &[
-            "Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around it first.".into(),
+            "Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position.".into(),
             "The camera can take a moment to report its new state.".into(),
         ]));
         row.append(&head);
@@ -312,13 +402,7 @@ impl Joystick {
         let wake_send = send.clone();
         wake.connect_clicked(move |_| wake_send(s.clone(), false));
         let s = store.clone();
-        sleep.connect_clicked(move |_| {
-            let send = send.clone();
-            let s = s.clone();
-            s.clone().confirm("bedtime", "Put the camera to sleep?",
-                "The gimbal will move to its resting position. Clear the space around the camera first.", "Sleep",
-                move || send(s.clone(), true));
-        });
+        sleep.connect_clicked(move |_| send(s.clone(), true));
 
         // The state the camera reports, beside the title; nothing while it has not said.
         store.subscribe({

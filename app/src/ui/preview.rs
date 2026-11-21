@@ -37,7 +37,9 @@ struct ViewInner {
     placeholder_text: gtk::Label,
     /// Shown with an error, to try the stream again.
     retry: gtk::Button,
-    frame: gtk::AspectFrame,
+    /// Width over height of the picture the camera sends, and whether the view's height follows its width.
+    ratio: Cell<f32>,
+    locked: Cell<bool>,
     chip: gtk::Label,
     root: gtk::Overlay,
 }
@@ -341,21 +343,35 @@ impl PreviewView {
         let root = gtk::Overlay::new();
         root.add_css_class("preview-surface");
         root.set_overflow(gtk::Overflow::Hidden);
-        // The picture keeps the camera's shape (16:9 until the stream says otherwise), so the frame
-        // hugs it and there are no black bars. The frame's height follows its width.
-        let frame = gtk::AspectFrame::new(0.5, 0.5, 16.0 / 9.0, false);
-        frame.set_child(Some(&picture));
-        root.set_child(Some(&frame));
+        root.set_child(Some(&picture));
+        // Measures the view, so a locked one can take the height its width and the camera's shape give.
+        let sensor = gtk::DrawingArea::new();
+        sensor.set_can_target(false);
+        sensor.set_hexpand(true);
+        sensor.set_vexpand(true);
+        root.add_overlay(&sensor);
         root.add_overlay(&placeholder);
         root.add_overlay(&chip);
         root.set_size_request(240, 135);
 
-        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone(), frame: frame.clone() });
-        if let Some(mode) = hub.0.mode.borrow().as_ref() { frame.set_ratio(mode.width as f32 / mode.height.max(1) as f32); }
+        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone(), ratio: Cell::new(16.0 / 9.0), locked: Cell::new(false) });
+        if let Some(mode) = hub.0.mode.borrow().as_ref() { inner.ratio.set(mode.width as f32 / mode.height.max(1) as f32); }
         {
             let weak = Rc::downgrade(&inner);
             hub.on_mode(move |mode| {
-                if let Some(view) = weak.upgrade() { view.frame.set_ratio(mode.width as f32 / mode.height.max(1) as f32); }
+                if let Some(view) = weak.upgrade() {
+                    view.ratio.set(mode.width as f32 / mode.height.max(1) as f32);
+                    view.root.queue_resize();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&inner);
+            sensor.connect_resize(move |_, width, height| {
+                let Some(view) = weak.upgrade() else { return };
+                if !view.locked.get() || width <= 0 { return; }
+                let wanted = (width as f32 / view.ratio.get()).round() as i32;
+                if (height - wanted).abs() > 1 { view.root.set_size_request(240, wanted.max(60)); }
             });
         }
         let restart_hub = hub.clone();
@@ -374,6 +390,10 @@ impl PreviewView {
     }
 
     pub fn widget(&self) -> &gtk::Overlay { &self.inner.root }
+
+    /// Make the view exactly as tall as its width and the camera's shape say, so the picture fills it
+    /// with no black bars. The width is whatever the layout gives it.
+    pub fn lock_aspect(&self) { self.inner.locked.set(true); self.inner.root.queue_resize(); }
 
     /// Put a control on top of the picture, in the top-right corner row.
     pub fn add_control(&self, overlay_row: &gtk::Box) {

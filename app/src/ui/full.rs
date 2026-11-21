@@ -21,18 +21,15 @@ enum Page { Tab(Tab), Presets }
 #[cfg(test)]
 pub(crate) fn page_icons() -> Vec<&'static str> { PAGES.iter().map(|p| p.2).collect() }
 
-const PAGES: [(Page, &str, &str); 5] = [
+const PAGES: [(Page, &str, &str); 3] = [
     (Page::Tab(Tab::Camera), "Camera", "photo_camera"),
-    (Page::Tab(Tab::Tracking), "Tracking", "person_search"),
-    (Page::Tab(Tab::Audio), "Audio", "mic"),
     (Page::Presets, "Presets", "bookmarks"),
     (Page::Tab(Tab::Device), "Device", "tune"),
 ];
 
 fn page_name(page: Page) -> &'static str {
     match page {
-        Page::Tab(Tab::Camera) => "camera", Page::Tab(Tab::Tracking) => "tracking", Page::Tab(Tab::Audio) => "audio",
-        Page::Tab(Tab::Device) => "device", Page::Presets => "presets",
+        Page::Tab(Tab::Camera) => "camera", Page::Tab(Tab::Device) => "device", Page::Presets => "presets",
     }
 }
 
@@ -107,6 +104,7 @@ impl FullWindow {
 
         // ── Stage (left) ──
         let hub_view = PreviewView::new(&ctx.hub);
+        hub_view.lock_aspect();
         let joystick = Joystick::new(&store);
         let stage = gtk::Box::new(gtk::Orientation::Vertical, 16);
         stage.set_size_request(320, -1);
@@ -190,6 +188,7 @@ impl FullWindow {
         stack.set_transition_duration(180);
         stack.set_vexpand(true);
         let mut masonries = Vec::new();
+        let page_scrollers: Rc<RefCell<Vec<gtk::ScrolledWindow>>> = Rc::default();
         for (page, _, _) in PAGES {
             match page {
                 Page::Tab(tab) => {
@@ -197,6 +196,7 @@ impl FullWindow {
                     if tab == Tab::Device {
                         // Extra cards that are not registry settings.
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
+                        built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
                         built.masonry.add(&panels::developer_card(&store), 4);
                     }
@@ -213,13 +213,19 @@ impl FullWindow {
                         });
                     }
                     masonries.push(built.masonry.clone());
+                    page_scrollers.borrow_mut().push(built.root.clone());
                     stack.add_named(&built.root, Some(page_name(page)));
                 }
-                Page::Presets => { stack.add_named(&panels::presets_page(&store), Some(page_name(page))); }
+                Page::Presets => {
+                    let presets = panels::presets_page(&store);
+                    page_scrollers.borrow_mut().push(presets.clone());
+                    stack.add_named(&presets, Some(page_name(page)));
+                }
             }
         }
         let search_holder = gtk::ScrolledWindow::new();
         search_holder.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        page_scrollers.borrow_mut().push(search_holder.clone());
         stack.add_named(&search_holder, Some("search"));
 
         let search = gtk::SearchEntry::new();
@@ -322,7 +328,10 @@ impl FullWindow {
             if open { toggle_entry.grab_focus(); } else { toggle_entry.set_text(""); }
         });
 
-        // ── Layout: side by side, or stacked when narrow ──
+        // ── Layout ──
+        // Wide: the preview and camera controls on the left, the tabs and their content on the right, with a
+        // divider between. Stacked: one page that scrolls as a whole, with the preview and controls on top,
+        // the tabs under them and the content under those.
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         paned.set_wide_handle(false);
         paned.set_resize_start_child(false);
@@ -337,8 +346,20 @@ impl FullWindow {
         let stacked = Rc::new(Cell::new(false));
         paned.set_position(if current_config().split_position >= 320 { current_config().split_position } else { 420 });
 
+        let outer_box = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        outer_box.set_margin_start(20);
+        outer_box.set_margin_end(14);
+        outer_box.set_margin_bottom(20);
+        let outer_scroll = gtk::ScrolledWindow::new();
+        outer_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        outer_scroll.set_child(Some(&outer_box));
+        let layout_stack = gtk::Stack::new();
+        layout_stack.add_named(&paned, Some("wide"));
+        layout_stack.add_named(&outer_scroll, Some("stacked"));
+        layout_stack.set_visible_child_name("wide");
+
         let dialogs = Dialogs::new();
-        dialogs.overlay().set_child(Some(&paned));
+        dialogs.overlay().set_child(Some(&layout_stack));
         dialogs.install();
         let toaster = Toaster::new();
         dialogs.overlay().add_overlay(toaster.widget());
@@ -347,74 +368,98 @@ impl FullWindow {
         window.set_child(Some(dialogs.overlay()));
 
 
-        // Adapt to the window size: three layouts. Wide has the stage beside the settings. Narrow puts it
-        // above, with the preview and the gimbal side by side. Tiny puts everything in one column.
+        // Adapt to the window. The layout follows the room the right-hand panel has, not the window: with the
+        // left panel made narrower, the window can get narrower before the page has to stack.
+        const RIGHT_MIN: i32 = 470;
+        const RIGHT_BACK: i32 = 510;
+        const MARGINS: i32 = 34;
         let layout = Rc::new(Cell::new(0_u8));
+        let last_width = Rc::new(Cell::new(0_i32));
+        let apply_layout = {
+            let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, outer_box, layout_stack, stack, scrollers, popped) =
+                (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), outer_box.clone(), layout_stack.clone(), stack.clone(), page_scrollers.clone(), popped.clone());
+            Rc::new(move |mode: u8, width: i32, first: bool| {
+                let now_stacked = mode != 0;
+                if first || now_stacked != stacked.get() {
+                    if now_stacked {
+                        paned.set_start_child(None::<&gtk::Widget>);
+                        paned.set_end_child(None::<&gtk::Widget>);
+                        stage_scroller.set_child(None::<&gtk::Widget>);
+                        if stage.parent().is_none() { outer_box.append(&stage); }
+                        if right.parent().is_none() { outer_box.append(&right); }
+                        layout_stack.set_visible_child_name("stacked");
+                    } else {
+                        for widget in [stage.upcast_ref::<gtk::Widget>(), right.upcast_ref()] {
+                            if widget.parent().as_ref() == Some(outer_box.upcast_ref()) { outer_box.remove(widget); }
+                        }
+                        stage_scroller.set_child(Some(&stage));
+                        paned.set_start_child(Some(&stage_scroller));
+                        paned.set_end_child(Some(&right));
+                        let saved = current_config().split_position;
+                        paned.set_position(if saved >= 320 { saved } else { 420 });
+                        layout_stack.set_visible_child_name("wide");
+                    }
+                    stacked.set(now_stacked);
+                    // Stacked, the page scrolls as one; wide, each tab scrolls inside its own space.
+                    for scroller in scrollers.borrow().iter() {
+                        if now_stacked {
+                            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+                            scroller.set_propagate_natural_height(true);
+                            scroller.set_vexpand(false);
+                        } else {
+                            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                            scroller.set_propagate_natural_height(false);
+                            scroller.set_vexpand(true);
+                        }
+                    }
+                    stack.set_vexpand(!now_stacked);
+                    right.set_vexpand(!now_stacked);
+                }
+                popped.set_vexpand(false);
+                preview_card.set_vexpand(false);
+                preview_card.set_valign(gtk::Align::Start);
+                if mode == 0 {
+                    stage.set_orientation(gtk::Orientation::Vertical);
+                    stage.set_size_request(320, -1);
+                    stage.set_halign(gtk::Align::Fill);
+                    preview_card.set_hexpand(false);
+                    gimbal_card.set_hexpand(false);
+                    gimbal_card.set_vexpand(true);
+                } else {
+                    // One column, centred and not wider than the picture needs to be.
+                    stage.set_orientation(gtk::Orientation::Vertical);
+                    stage.set_size_request((width - MARGINS).clamp(300, 560), -1);
+                    stage.set_halign(gtk::Align::Center);
+                    preview_card.set_hexpand(true);
+                    gimbal_card.set_hexpand(true);
+                    gimbal_card.set_vexpand(false);
+                }
+            })
+        };
         let relayout = {
-            let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, layout, ctx, title, chip, window) =
-                (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), layout.clone(), ctx.clone(), title.clone(), chip.clone(), window.clone());
-            let popped = popped.clone();
+            let (paned, stacked, layout, last_width, ctx, title, chip, apply_layout) =
+                (paned.clone(), stacked.clone(), layout.clone(), last_width.clone(), ctx.clone(), title.clone(), chip.clone(), apply_layout.clone());
             Rc::new(move |width: i32| {
+                last_width.set(width);
                 ctx.style.report_width(width);
                 // The header gives up its words before its buttons.
                 title.set_visible(width >= 540);
                 chip.set_compact(width < 720);
+                // What the right-hand panel would have: the window less the left panel and the margins.
+                let split = if stacked.get() {
+                    let saved = current_config().split_position;
+                    if saved >= 320 { saved } else { 420 }
+                } else { paned.position().max(320) };
+                let right_width = width - split - MARGINS;
                 let was = layout.get();
+                let go_stacked = if was == 0 { right_width < RIGHT_MIN } else { right_width < RIGHT_BACK };
                 // A little slack each way, so a window sitting on a threshold does not flicker.
-                let next = if width < if was == 2 { 740 } else { 700 } { 2 }
-                    else if width < if was == 0 { 820 } else { 880 } { 1 } else { 0 };
-                if next == was && paned.start_child().is_some() { return; }
+                let next = if go_stacked { 1 } else { 0 };
+                let first = false;
+                // The stacked column follows the window width, so it is set again on every resize.
+                if next == was && next == 0 && !first { return; }
                 layout.set(next);
-                stacked.set(next != 0);
-                paned.set_start_child(None::<&gtk::Widget>);
-                paned.set_end_child(None::<&gtk::Widget>);
-                match next {
-                    0 => {
-                        stage.set_orientation(gtk::Orientation::Vertical);
-                        stage.set_size_request(320, -1);
-                        stage_scroller.set_size_request(-1, -1);
-                        gimbal_card.set_size_request(-1, -1);
-                        preview_card.set_hexpand(false);
-                        preview_card.set_vexpand(false);
-                        preview_card.set_valign(gtk::Align::Start);
-                        popped.set_vexpand(false);
-                        preview_card.set_size_request(-1, -1);
-                        paned.set_orientation(gtk::Orientation::Horizontal);
-                        let saved = current_config().split_position;
-                        paned.set_position(if saved >= 320 { saved } else { 420 });
-                    }
-                    1 => {
-                        stage.set_orientation(gtk::Orientation::Horizontal);
-                        stage.set_size_request(-1, -1);
-                        stage_scroller.set_size_request(-1, 120);
-                        gimbal_card.set_size_request(250, -1);
-                        // The preview keeps its own shape instead of stretching to the height of the gimbal.
-                        preview_card.set_hexpand(true);
-                        preview_card.set_vexpand(false);
-                        preview_card.set_valign(gtk::Align::Start);
-                        popped.set_vexpand(false);
-                        preview_card.set_size_request(120, 200);
-                        paned.set_orientation(gtk::Orientation::Vertical);
-                        // Half the window, so the gimbal card fits beside the preview.
-                        paned.set_position((f64::from(window.height().max(480)) * 0.5).clamp(300.0, 470.0) as i32);
-                    }
-                    _ => {
-                        stage.set_orientation(gtk::Orientation::Vertical);
-                        stage.set_size_request(-1, -1);
-                        stage_scroller.set_size_request(-1, 120);
-                        gimbal_card.set_size_request(-1, -1);
-                        preview_card.set_hexpand(true);
-                        preview_card.set_vexpand(false);
-                        preview_card.set_valign(gtk::Align::Start);
-                        popped.set_vexpand(false);
-                        preview_card.set_size_request(-1, 150);
-                        paned.set_orientation(gtk::Orientation::Vertical);
-                        paned.set_position((f64::from(window.height().max(480)) * 0.45).clamp(260.0, 440.0) as i32);
-                    }
-                }
-                paned.set_start_child(Some(&stage_scroller));
-                paned.set_end_child(Some(&right));
-                let _ = &right;
+                apply_layout(next, width, first);
             })
         };
 
@@ -437,7 +482,7 @@ impl FullWindow {
             move |_, width, _| {
                 // Tabs shrink to icons when the column is tight.
                 for (_, button) in state.tabs.borrow().iter() {
-                    if let Some(label) = button.child().and_then(|c| c.last_child()) { label.set_visible(width >= 640); }
+                    if let Some(label) = button.child().and_then(|c| c.last_child()) { label.set_visible(width >= 420); }
                 }
                 // One column of cards at every width: the stage on the left already uses the width.
                 let want_two = false;
@@ -448,12 +493,19 @@ impl FullWindow {
             }
         });
 
-        // Remember the split the user chose.
+        // Remember the split the user chose, and never let the right-hand panel get squeezed below what
+        // it needs: the divider stops there, and a still narrower window stacks the page instead.
         paned.connect_position_notify({
-            let stacked = stacked.clone();
+            let (stacked, last_width) = (stacked.clone(), last_width.clone());
             move |paned| {
                 if stacked.get() || paned.orientation() != gtk::Orientation::Horizontal { return; }
                 let position = paned.position();
+                let width = last_width.get();
+                let furthest = width - MARGINS - RIGHT_MIN;
+                if width > 0 && furthest >= 320 && position > furthest {
+                    paned.set_position(furthest);
+                    return;
+                }
                 if position >= 320 { glib::idle_add_local_once(move || update_config(|c| c.split_position = position)); }
             }
         });

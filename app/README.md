@@ -131,7 +131,7 @@ tiny4lite-control status
 tiny4lite-control gimbal move --pan 30 --seconds 2    # percent of full speed; always stops
 tiny4lite-control gimbal step --pan 1 --tilt -1        # whole degrees, 1 to 5 each, either direction
 tiny4lite-control deps                                   # what blocks what, as Markdown (also in docs/dependencies.md)
-tiny4lite-control gimbal centre --yes                   # turn to the physical centre, pan 0° tilt 0° (the camera moves, so --yes is required)
+tiny4lite-control gimbal centre                         # turn to the physical centre, pan 0° tilt 0°
 tiny4lite-control gimbal position
 tiny4lite-control preset list | apply NAME | save NAME | delete NAME
 tiny4lite-control position list | go 1 | save 1 Desk | delete 1    # the camera's three saved positions

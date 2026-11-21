@@ -64,7 +64,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 scenario full-auto
 scenario full-manual TINY4LITE_UI_TEST_STATE=manual
 scenario full-aperture TINY4LITE_UI_TEST_STATE=aperture
-for page in tracking audio presets device; do scenario "page-$page" TINY4LITE_UI_TEST_PAGE=$page; done
+for page in presets device; do scenario "page-$page" TINY4LITE_UI_TEST_PAGE=$page; done
 scenario full-light TINY4LITE_UI_TEST_THEME=light
 scenario full-wide TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
 scenario full-wide-manual TINY4LITE_UI_TEST_STATE=manual TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
@@ -95,9 +95,9 @@ check_class io.github.hypesthyper.Tiny4LiteControl.Preview "Tiny 2 Lite Control 
 echo "ok: window classes and titles"
 
 # ── Joystick: drag, hold, release ──
-# The pad sits below the gimbal model; at this window size its centre is (235, 594).
+# The pad sits below the gimbal model; at this window size its centre is (235, 662).
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick
-CENTRE_X=235; CENTRE_Y=594
+CENTRE_X=235; CENTRE_Y=662
 xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
 sleep 0.2
 xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y - 50)); sleep 0.35
@@ -145,8 +145,8 @@ echo "ok: the joystick follows the mirror"
 
 # ── 1° step buttons send small signed moves ──
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start step
-xdotool mousemove --window "$WINDOW" 283 723 click 1; sleep 0.5      # Pan +1°
-xdotool mousemove --window "$WINDOW" 210 764 click 1; sleep 0.5      # Tilt -1°
+xdotool mousemove --window "$WINDOW" 283 776 click 1; sleep 0.5      # Pan +1°
+xdotool mousemove --window "$WINDOW" 210 818 click 1; sleep 0.5      # Tilt -1°
 shot step-buttons
 stop_app
 grep -q -- '--set-ctrl=pan_absolute=3600' "$OUT/step.commands.log" || fail "Pan +1° did not send a one-degree pan step"
@@ -163,13 +163,10 @@ shot devtools-read-status
 stop_app
 echo "ok: developer tools"
 
-# ── Sleep needs confirmation, and cancelling sends nothing ──
-TINY4LITE_UI_TEST_PAGE=device start sleep-confirm
-xdotool mousemove --window "$WINDOW" 971 436 click 1; sleep 0.8
-shot sleep-confirm
-xdotool key Escape; sleep 0.4
-shot sleep-cancelled
+# The light going off asks first, found through the search box.
+TINY4LITE_UI_TEST_SEARCH=led start led-confirm
+shot led-results
 stop_app
-echo "ok: confirmation dialog captured"
+echo "ok: search finds the light setting"
 
 echo "Screenshots and logs are in $OUT"

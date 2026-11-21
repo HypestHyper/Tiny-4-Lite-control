@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 // ── Layout ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum Tab { Camera, Tracking, Audio, Device }
+pub enum Tab { Camera, Device }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Group {
@@ -47,15 +47,13 @@ impl Group {
     }
     pub fn tab(self) -> Tab {
         match self {
-            Group::Exposure | Group::WhiteBalance | Group::Focus | Group::Zoom | Group::Picture | Group::Other => Tab::Camera,
-            Group::Tracking | Group::Gestures => Tab::Tracking,
-            Group::Microphone => Tab::Audio,
-            Group::Lighting | Group::Power => Tab::Device,
+            Group::Tracking | Group::Exposure | Group::WhiteBalance | Group::Focus | Group::Zoom | Group::Picture | Group::Other => Tab::Camera,
+            Group::Gestures | Group::Microphone | Group::Lighting | Group::Power => Tab::Device,
         }
     }
     pub const ALL: [Group; 11] = [
-        Group::Exposure, Group::WhiteBalance, Group::Focus, Group::Zoom, Group::Picture,
-        Group::Tracking, Group::Gestures, Group::Microphone, Group::Lighting, Group::Power, Group::Other,
+        Group::Tracking, Group::Exposure, Group::WhiteBalance, Group::Focus, Group::Zoom, Group::Picture,
+        Group::Gestures, Group::Microphone, Group::Lighting, Group::Power, Group::Other,
     ];
 }
 
@@ -622,7 +620,7 @@ fn build() -> Vec<Setting> {
                 // set_ai_mode only succeeds when the camera's status matches the request exactly.
                 set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
-            .info("How the camera frames the person it follows. Tracking moves the gimbal by itself, so clear the space around the camera first. Target selection is a separate hand-gesture setting."),
+            .info("How the camera frames the person it follows. Tracking moves the gimbal by itself. Target selection is a separate hand-gesture setting."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows movement.",
             Kind::Choice(vec![opt(0, "Standard", "Smooth and steady"), opt(1, "Sport", "Faster, for quick movement")]),
@@ -718,18 +716,14 @@ fn build() -> Vec<Setting> {
             "Put the camera to sleep, or wake it.",
             Kind::Choice(vec![
                 opt(0, "Wake", ""),
-                Opt { value: 1, label: "Sleep", hint: "", confirm: Some(Confirm {
-                    title: "Put the camera to sleep?",
-                    body: "The gimbal will move to its resting position. Clear the space around the camera first.",
-                    action: "Sleep",
-                }) },
+                opt(1, "Sleep", ""),
             ]),
             // The camera reports whether it is asleep in byte 2 of its status block (confirmed on the
             // user's camera), and that is what lights Wake or Sleep.
             |s| from_camera(s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None })),
             |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
-            .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around the camera first."),
+            .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position."),
     ]
 }
 

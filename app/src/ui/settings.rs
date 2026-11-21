@@ -107,7 +107,8 @@ pub struct TabPage {
 
 pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
     let masonry = Masonry::new();
-    for group in Group::ALL.iter().copied().filter(|g| g.tab() == tab) {
+    // Zoom and field of view live in the Camera controls card beside the preview, not in a tab.
+    for group in Group::ALL.iter().copied().filter(|g| g.tab() == tab && *g != Group::Zoom) {
         let settings = settings_in(group);
         if settings.is_empty() { continue; }
         let (card, weight) = group_card(store, group, &settings, Density::Full, keep);

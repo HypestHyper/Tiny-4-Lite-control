@@ -43,7 +43,6 @@ pub fn presets_page(store: &Store) -> gtk::ScrolledWindow {
     column.set_margin_bottom(20);
     column.append(&camera_memory_card(store));
     column.append(&app_presets_card(store));
-    column.append(&startup_pose_card(store));
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
@@ -137,14 +136,12 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
         let store_go = store.clone();
         let slots_go = slots.clone();
         slot.go.connect_clicked(move |_| {
-            let label = slots_go[index].name.text().to_string();
+            let _ = &slots_go;
             let store = store_go.clone();
-            store_go.confirm("open_with", "Move the camera?", &format!("The gimbal will turn to position {} {}. Clear the space around the camera first.", index + 1, if label.is_empty() { String::new() } else { format!("({label})") }), "Move camera", move || {
-                let store2 = store.clone();
-                store.call(None, move |d| backend::recall_camera_preset(d, slot_number), move |r| match r {
-                    Ok(()) => store2.toast(&format!("Moving to position {}", slot_number + 1)),
-                    Err(e) => store2.error(&format!("Could not move to position {}: {e}", slot_number + 1)),
-                });
+            let store2 = store.clone();
+            store.call_now(move |d| backend::recall_camera_preset(d, slot_number), move |r| match r {
+                Ok(()) => store2.toast(&format!("Moving to position {}", slot_number + 1)),
+                Err(e) => store2.error(&format!("Could not move to position {}: {e}", slot_number + 1)),
             });
         });
 
@@ -208,7 +205,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
     refresh.connect_clicked(move |_| reload_click());
     actions.append(&refresh);
     actions.append(&widgets::info_button("Camera memory", &[
-        "Saving stores where the camera is pointing and its zoom. Moving to a position turns the gimbal, so the app asks first.".into(),
+        "Saving stores where the camera is pointing and its zoom. Moving to a position turns the gimbal.".into(),
         "Press Enter in a name field to rename a position.".into(),
     ]));
     body.append(&actions);
@@ -221,7 +218,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
 
 fn app_presets_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Presets", "tune",
-        "Save the current picture, tracking and gimbal position under a name, and bring them back later. Applying a preset turns the gimbal to its saved position.");
+        "Save the current picture, tracking and gimbal position under a name, and bring them back later.");
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(Some("Preset name, for example Desk"));
     entry.set_hexpand(true);
@@ -276,13 +273,8 @@ fn app_presets_card(store: &Store) -> gtk::Box {
                             store.refresh_soon();
                         });
                     };
-                    // A preset with a saved position turns the gimbal, so ask first.
-                    if presets::moves_gimbal(&preset_apply) {
-                        store_apply.confirm("open_with", &format!("Apply {}?", preset_apply.name),
-                            "This preset includes a gimbal position, so the camera will turn. Clear the space around it first.", "Apply preset", run);
-                    } else {
-                        run();
-                    }
+                    let _ = (&store_apply, &preset_apply);
+                    run();
                 });
                 let (store_delete, render_delete) = (store.clone(), render.clone());
                 let name = preset.name.clone();
@@ -328,7 +320,7 @@ fn app_presets_card(store: &Store) -> gtk::Box {
     card
 }
 
-fn startup_pose_card(store: &Store) -> gtk::Box {
+pub fn startup_pose_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Start-up position", "power",
         "Where the camera points each time it powers on.");
     let current = widgets::text("Reading…", &["body"]);

@@ -169,13 +169,20 @@ fn group_slug(group: Group) -> String {
     group.title().to_lowercase().replace(' ', "-").replace("zoom-and-field-of-view", "zoom")
 }
 
-/// The window tab a group sits on, as a command-line word (`camera`, `tracking`, `audio`, `device`).
+/// The window tab a group sits on, as a command-line word (`camera` or `device`).
 fn tab_slug(group: Group) -> &'static str {
     match group.tab() {
         registry::Tab::Camera => "camera",
-        registry::Tab::Tracking => "tracking",
-        registry::Tab::Audio => "audio",
         registry::Tab::Device => "device",
+    }
+}
+
+/// Words from the older tabs that still name their groups: `tracking` and `audio`.
+fn old_tab_matches(word: &str, group: Group) -> bool {
+    match word {
+        "tracking" => matches!(group, Group::Tracking | Group::Gestures),
+        "audio" => group == Group::Microphone,
+        _ => false,
     }
 }
 
@@ -334,7 +341,7 @@ fn setting_json(setting: &Setting, snapshot: &Snapshot) -> Json {
 fn list(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
     let filter = options.positional.first().map(|g| normalise(g));
     let settings: Vec<&Setting> = all_settings(snapshot).into_iter()
-        .filter(|s| filter.as_ref().is_none_or(|f| normalise(&group_slug(s.group)) == *f || tab_slug(s.group) == f.as_str()))
+        .filter(|s| filter.as_ref().is_none_or(|f| normalise(&group_slug(s.group)) == *f || tab_slug(s.group) == f.as_str() || old_tab_matches(f.as_str(), s.group)))
         .collect();
     if let Some(wanted) = &filter {
         if settings.is_empty() {
@@ -523,10 +530,6 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             Err(error) => fail(&format!("Could not read the gimbal position: {error}")),
         },
         Some("centre") | Some("center") => {
-            if !options.yes {
-                eprintln!("This turns the camera to pan 0°, tilt 0°.\nClear the space around it, then run the command again with --yes.");
-                return FAILED;
-            }
             match backend::centre_gimbal(device) { Ok(()) => { println!("Centring the camera (pan 0°, tilt 0°)"); OK } Err(error) => fail(&format!("Could not centre the camera: {error}")) }
         }
         Some("stop") => stop_gimbal(device),
@@ -606,10 +609,6 @@ fn preset(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             OK
         }
         (Some("apply"), Some(name)) => match current_config().presets.iter().find(|p| p.name.eq_ignore_ascii_case(name)) {
-            Some(found) if presets::moves_gimbal(found) && !options.yes => {
-                eprintln!("This preset includes a gimbal position, so the camera will turn.\nClear the space around it, then run the command again with --yes.");
-                NEEDS_YES
-            }
             Some(found) => match presets::apply(device, found) {
                 Ok(message) => { println!("{}", if message.is_empty() { format!("Applied {}", found.name) } else { message }); OK }
                 Err(error) => fail(&format!("Some settings in {} were not applied: {error}", found.name)),
@@ -658,7 +657,6 @@ fn position(options: &Options, device: &str) -> i32 {
         },
         Some("go") => {
             let slot = match slot_number(options.positional.get(1)) { Ok(s) => s, Err(e) => return usage_error(&e) };
-            if let Some(code) = confirm(&format!("This turns the gimbal to position {}. Clear the space around the camera first.", slot + 1)) { return code; }
             match backend::recall_camera_preset(device, slot) { Ok(()) => { println!("Moving to position {}", slot + 1); OK } Err(e) => fail(&format!("Could not move: {e}")) }
         }
         Some("save") => {
@@ -763,11 +761,11 @@ Settings (every setting the windows show):
 Other things the windows do:
   status                     Power, exposure, focus, tracking and gimbal position
   gimbal position|stop       Read the gimbal position, or stop it
-  gimbal centre --yes            Turn to pan 0°, tilt 0° (the camera moves, so it needs --yes)
+  gimbal centre                  Turn to the centre, pan 0°, tilt 0°
   gimbal step --pan N --tilt N   Turn by N whole degrees (1 to 5 each, negative for the other way)
   gimbal move --pan N --tilt N [--seconds S]
                              Turn at N% of full speed (-100 to 100) for S seconds (default 1, up to 10)
-  preset list|apply|save|delete NAME     Presets kept by this app (a preset with a saved position turns the gimbal: apply needs --yes)
+  preset list|apply|save|delete NAME     Presets kept by this app (a preset with a saved position turns the gimbal)
   position list|go N|save N NAME|delete N    The camera's three saved positions
   startup show|set           Where the camera points when it powers on
   capture list|get|set SIZE FORMAT FPS      Format, size and frame rate sent to apps
@@ -808,7 +806,7 @@ fn complete(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("settings") => { for s in settings { println!("{}", alias(s)); } }
         Some("groups") => {
-            for tab in ["camera", "tracking", "audio", "device"] { println!("{tab}"); }
+            for tab in ["camera", "device"] { println!("{tab}"); }
             for g in Group::ALL { println!("{}", group_slug(g)); }
         }
         Some("values") => if let Some(setting) = args.get(1).and_then(|n| resolve_any(&settings, n)) {

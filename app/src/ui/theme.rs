@@ -300,6 +300,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.danger:hover { background: @t_error_hover; color: #ffffff; }
 .t4 button.round { padding: 0; border-radius: §20§; }
 .t4 button.round:active { border-radius: §12§; }
+.t4 button.preset { min-width: §38§; min-height: §38§; padding: 0; border-radius: §10§; background: transparent; border: 2px solid @t_outline; font-weight: 700; color: @t_on_surface; }
+.t4 button.preset:hover { background: alpha(@t_primary, 0.14); }
+.t4 button.preset:disabled { opacity: 0.4; }
 .t4 button.round.small { min-height: §32§; min-width: §32§; padding: 0; border-radius: §16§; }
 .t4 button.round.small:active { border-radius: §8§; }
 .t4 button.flat-icon { background: transparent; color: @t_on_surface_variant; }

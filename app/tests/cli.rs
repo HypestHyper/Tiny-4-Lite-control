@@ -128,13 +128,16 @@ fn bad_input_exits_2_and_says_what_is_valid() {
 }
 
 #[test]
-fn sleeping_the_camera_needs_yes() {
+fn only_the_light_going_off_asks_first() {
     let run = Run::new("sleep");
+    // Sleep moves the gimbal, and asks for nothing: it is a command like any other.
     let out = run.run(&["set", "camera-power", "sleep"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // Turning the camera light off is the one setting that still asks, because nobody nearby can then
+    // tell when the camera is on.
+    let out = run.run(&["set", "led-brightness", "off"]);
     assert_eq!(out.status.code(), Some(4));
     assert!(text(&out.stderr).contains("--yes"));
-    let out = run.run(&["set", "camera-power", "sleep", "--yes"]);
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
 
 #[test]
@@ -183,12 +186,10 @@ fn presets_positions_startup_and_capture_commands_run() {
     assert_eq!(run.run(&["preset", "save", "Desk"]).status.code(), Some(0));
     assert!(text(&run.run(&["preset", "list"]).stdout).contains("Desk"));
     // The synthetic camera has absolute pan/tilt, so this preset turns the gimbal and asks first.
-    assert_eq!(run.run(&["preset", "apply", "desk"]).status.code(), Some(4));
-    let applied = run.run(&["preset", "apply", "desk", "--yes"]);
+    let applied = run.run(&["preset", "apply", "desk"]);
     assert_eq!(applied.status.code(), Some(0), "{}", text(&applied.stderr));
     assert_eq!(run.run(&["preset", "delete", "Desk"]).status.code(), Some(0));
     assert_eq!(run.run(&["preset", "apply", "Desk"]).status.code(), Some(1));
-    assert_eq!(run.run(&["position", "go", "1"]).status.code(), Some(4));
     assert_eq!(run.run(&["position", "delete", "2"]).status.code(), Some(4));
     assert_eq!(run.run(&["startup", "set"]).status.code(), Some(4));
     assert_eq!(run.run(&["startup", "show"]).status.code(), Some(0));
@@ -270,11 +271,8 @@ fn camera_positions_and_start_up_position_flow() {
     assert_eq!(run.run(&["position", "save", "1", "Desk"]).status.code(), Some(0));
     assert_eq!(run.run(&["position", "save", "4", "Nope"]).status.code(), Some(2));
     assert_eq!(run.run(&["position", "save", "1", "Bad \u{00e9}"]).status.code(), Some(1), "names must be plain ASCII");
-    // Moving or deleting needs --yes; the message explains why.
-    let go = run.run(&["position", "go", "1"]);
-    assert_eq!(go.status.code(), Some(4));
-    assert!(text(&go.stderr).contains("Clear the space"));
-    assert_eq!(run.run(&["position", "go", "1", "--yes"]).status.code(), Some(0));
+    // Moving the gimbal asks for nothing; deleting a position still needs --yes.
+    assert_eq!(run.run(&["position", "go", "1"]).status.code(), Some(0));
     assert_eq!(run.run(&["position", "delete", "1"]).status.code(), Some(4));
     assert_eq!(run.run(&["position", "delete", "1", "--yes"]).status.code(), Some(0));
     assert_eq!(run.run(&["startup", "set", "--yes"]).status.code(), Some(0));
@@ -283,7 +281,7 @@ fn camera_positions_and_start_up_position_flow() {
 }
 
 #[test]
-fn centre_needs_yes_and_sends_one_absolute_move() {
+fn centre_sends_one_absolute_move() {
     let run = Run::new("centre");
     let log = run.config.join("commands.log");
     let go = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
@@ -294,10 +292,7 @@ fn centre_needs_yes_and_sends_one_absolute_move() {
         .env_remove("DISPLAY")
         .output()
         .unwrap();
-    let refused = go(&["gimbal", "centre"]);
-    assert!(!refused.status.success());
-    assert!(!log.exists() || !std::fs::read_to_string(&log).unwrap().contains("pan_absolute"), "a refused centre must send nothing");
-    let out = go(&["gimbal", "centre", "--yes"]);
+    let out = go(&["gimbal", "centre"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.contains("--set-ctrl=pan_absolute=0,tilt_absolute=0"), "{commands}");
