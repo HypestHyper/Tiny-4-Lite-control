@@ -139,6 +139,11 @@ impl FullWindow {
         pop.add_css_class("on-stage");
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
+        // The pause button shows the state it was left in.
+        if !ctx.hub.is_enabled() {
+            if let Some(glyph) = pause.child().and_then(|c| c.downcast::<gtk::Label>().ok()) { widgets::set_icon(&glyph, "play_arrow"); }
+            pause.set_tooltip_text(Some("Resume the preview"));
+        }
         controls_row.append(&pause);
         controls_row.append(&pop);
         hub_view.add_control(&controls_row);

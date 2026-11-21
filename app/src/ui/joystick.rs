@@ -43,6 +43,7 @@ struct State {
     pad: gtk::DrawingArea,
     pan_value: gtk::Label,
     tilt_value: gtk::Label,
+    zoom_value: gtk::Label,
     hint: gtk::Label,
     /// Stick position, -1..1 on both axes, +y is up.
     stick: Cell<(f64, f64)>,
@@ -125,12 +126,13 @@ impl Joystick {
 
         let pan_value = widgets::line("—", &["readout", "tnum"]);
         let tilt_value = widgets::line("—", &["readout", "tnum"]);
+        let zoom_value = widgets::line("1×", &["readout", "tnum"]);
         let hint = widgets::text("Drag the stick, or focus it and use the arrow keys. The gimbal stops when you let go.", &["small", "dim"]);
 
         FOLLOW_MIRROR.store(current_config().joystick_follows_mirror, Ordering::Relaxed);
         let sensitivity = (current_config().joystick_sensitivity_percent.clamp(10, 200) as f64) / 100.0;
         let state = Rc::new(State {
-            store: store.clone(), pad: pad.clone(), pan_value, tilt_value, hint,
+            store: store.clone(), pad: pad.clone(), pan_value, tilt_value, zoom_value, hint,
             stick: Cell::new((0.0, 0.0)), velocity: Cell::new((0.0, 0.0)), engaged: Cell::new(false),
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
@@ -178,7 +180,7 @@ impl Joystick {
         readouts.set_margin_end(14);
         readouts.set_margin_bottom(8);
         readouts.set_can_target(false);
-        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Tilt", &state.tilt_value, gtk::Align::End)] {
+        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Zoom", &state.zoom_value, gtk::Align::Center), ("Tilt", &state.tilt_value, gtk::Align::End)] {
             let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
             cell.set_hexpand(true);
             cell.set_halign(align);
@@ -241,10 +243,59 @@ impl Joystick {
         column.append(&speed);
 
         // Awake and asleep are how the camera is turned on and off, so they sit right here.
-        if let Some(power) = backend::registry::find("obsbot:sleep") {
-            column.append(widgets::SettingRow::new(&state.store, power, widgets::Density::Slim).widget());
-        }
+        column.append(&self.power_row());
         column
+    }
+
+    /// Wake and Sleep: two plain buttons that each send their command, whatever the camera says it is
+    /// doing. The camera's sleep byte is not confirmed as a read-back, so no state is shown.
+    fn power_row(&self) -> gtk::Box {
+        let store = self.0.store.clone();
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let title = widgets::line("Camera power", &["setting-label"]);
+        title.set_hexpand(true);
+        head.append(&title);
+        head.append(&widgets::info_button("Camera power", &[
+            "Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around it first.".into(),
+            "The camera can take a moment to report its new state.".into(),
+        ]));
+        row.append(&head);
+
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_homogeneous(true);
+        let wake = gtk::Button::with_label("Wake");
+        let sleep = gtk::Button::with_label("Sleep");
+        for button in [&wake, &sleep] { button.add_css_class("small"); }
+        wake.set_tooltip_text(Some("Wake the camera"));
+        sleep.set_tooltip_text(Some("Put the camera to sleep"));
+        buttons.append(&wake);
+        buttons.append(&sleep);
+        row.append(&buttons);
+
+        let send = |store: Store, sleep: bool| {
+            let done = store.clone();
+            store.call_now(move |d| backend::set_sleep_mode(d, sleep), move |result| {
+                match result {
+                    Ok(()) => done.toast(if sleep { "Sleep sent to the camera" } else { "Wake sent to the camera" }),
+                    Err(error) => done.error(&format!("Could not {}: {error}", if sleep { "put the camera to sleep" } else { "wake the camera" })),
+                }
+                // The camera takes a moment to report the new state.
+                let later = done.clone();
+                glib::timeout_add_local_once(Duration::from_millis(1500), move || later.refresh());
+            });
+        };
+        let s = store.clone();
+        wake.connect_clicked(move |_| send(s.clone(), false));
+        let s = store.clone();
+        sleep.connect_clicked(move |_| {
+            let s = s.clone();
+            s.clone().confirm("bedtime", "Put the camera to sleep?",
+                "The gimbal will move to its resting position. Clear the space around the camera first.", "Sleep",
+                move || send(s.clone(), true));
+        });
+
+        row
     }
 
     /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
@@ -395,6 +446,21 @@ impl Joystick {
                 window.connect_is_active_notify(move |window| { if !window.is_active() { joystick.release(); } });
             }
         });
+
+        // The zoom comes from the camera's zoom control, as the factor it gives.
+        {
+            let zoom = state.zoom_value.downgrade();
+            let show = move |snapshot: &backend::registry::Snapshot| -> bool {
+                let Some(zoom) = zoom.upgrade() else { return false };
+                match snapshot.control("zoom_absolute") {
+                    Some(control) => zoom.set_text(&backend::zoom::label(backend::zoom::factor(control.value as f64))),
+                    None => zoom.set_text("—"),
+                }
+                true
+            };
+            show(&state.store.snapshot());
+            state.store.subscribe(show);
+        }
 
         // The readouts show whatever the shared position feed says.
         let (pan_label, tilt_label) = (state.pan_value.downgrade(), state.tilt_value.downgrade());

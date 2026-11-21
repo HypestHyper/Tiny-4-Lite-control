@@ -8,6 +8,7 @@
 
 use super::store::Store;
 use super::widgets;
+use crate::backend::{current_config, update_config};
 use crate::video::{self, VideoMode};
 use gtk::gdk;
 use gtk::glib;
@@ -34,6 +35,8 @@ struct ViewInner {
     picture: gtk::Picture,
     placeholder: gtk::Box,
     placeholder_text: gtk::Label,
+    /// Shown with an error, to try the stream again.
+    retry: gtk::Button,
     chip: gtk::Label,
     root: gtk::Overlay,
 }
@@ -49,6 +52,8 @@ struct HubInner {
     target_width: Arc<AtomicU32>,
     stop_timer: RefCell<Option<glib::SourceId>>,
     last_texture: RefCell<Option<gdk::Texture>>,
+    /// Automatic restarts since the last frame arrived.
+    retries: Cell<u32>,
 }
 
 #[derive(Clone)]
@@ -62,20 +67,35 @@ impl PreviewHub {
             child: RefCell::default(),
             generation: Cell::new(0),
             running: Cell::new(false),
-            enabled: Cell::new(true),
+            enabled: Cell::new(!current_config().preview_paused),
             mode: RefCell::default(),
             target_width: Arc::new(AtomicU32::new(640)),
             stop_timer: RefCell::default(),
             last_texture: RefCell::default(),
+            retries: Cell::new(0),
         }))
     }
 
     pub fn is_enabled(&self) -> bool { self.0.enabled.get() }
     pub fn is_running(&self) -> bool { self.0.running.get() }
 
+    /// Start the stream again after it stopped or failed.
+    pub fn restart(&self) {
+        let hub = &self.0;
+        hub.retries.set(0);
+        let child = self.take_stream();
+        if let Some(mut child) = child { std::thread::spawn(move || { let _ = child.kill(); let _ = child.wait(); }); }
+        if !hub.enabled.get() { hub.enabled.set(true); update_config(|c| c.preview_paused = false); }
+        // A moment for the camera to let go of the old stream.
+        let this = self.clone();
+        glib::timeout_add_local_once(Duration::from_millis(500), move || this.update_demand());
+    }
+
     /// Pause or resume the live picture (kept off the camera when paused).
     pub fn set_enabled(&self, enabled: bool) {
         self.0.enabled.set(enabled);
+        self.0.retries.set(0);
+        update_config(|c| c.preview_paused = !enabled);
         if enabled { self.update_demand(); } else { self.stop(); self.each_view(|v| v.show_message("Preview paused", "pause_circle")); }
     }
 
@@ -206,7 +226,17 @@ impl PreviewHub {
             }
             if this.0.generation.get() == generation && this.0.running.get() {
                 this.0.running.set(false);
-                this.each_view(|v| v.show_message("The camera stream stopped. It restarts when you open the preview again.", "videocam_off"));
+                // A hiccup in the stream is common, so try again a few times before giving up.
+                if this.0.retries.get() < 3 && this.0.enabled.get() {
+                    this.0.retries.set(this.0.retries.get() + 1);
+                    this.each_view(|v| v.show_message("The picture stopped. Reconnecting…", "videocam"));
+                    let again = this.clone();
+                    glib::timeout_add_local_once(Duration::from_secs(2), move || {
+                        if !again.0.running.get() { again.update_demand(); }
+                    });
+                } else {
+                    this.each_view(|v| v.show_message("The picture stopped.", "videocam_off"));
+                }
             }
         });
     }
@@ -229,6 +259,7 @@ impl PreviewHub {
         // Tell the decoder how big the largest view is, so it can decode smaller.
         if wanted > 0 { self.0.target_width.store(wanted, Ordering::Relaxed); }
         *self.0.last_texture.borrow_mut() = Some(texture);
+        self.0.retries.set(0);
     }
 
     pub fn stop(&self) {
@@ -247,6 +278,8 @@ impl ViewInner {
         self.placeholder_text.set_text(message);
         if let Some(first) = self.placeholder.first_child().and_then(|c| c.downcast::<gtk::Label>().ok()) { widgets::set_icon(&first, glyph); }
         self.placeholder.set_visible(true);
+        // A stopped or failed stream can be started again from here.
+        self.retry.set_visible(glyph == "videocam_off");
         self.chip.set_text("");
         self.chip.set_visible(false);
     }
@@ -276,8 +309,13 @@ impl PreviewView {
         placeholder_text.set_justify(gtk::Justification::Center);
         placeholder_text.set_xalign(0.5);
         placeholder_text.set_max_width_chars(34);
+        let retry = gtk::Button::with_label("Restart preview");
+        retry.add_css_class("filled");
+        retry.set_halign(gtk::Align::Center);
+        retry.set_visible(false);
         placeholder.append(&glyph);
         placeholder.append(&placeholder_text);
+        placeholder.append(&retry);
 
         let chip = gtk::Label::new(None);
         chip.add_css_class("overlay-chip");
@@ -296,7 +334,10 @@ impl PreviewView {
         root.add_overlay(&chip);
         root.set_size_request(240, 135);
 
-        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, chip, root: root.clone() });
+        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone() });
+        let restart_hub = hub.clone();
+        retry.connect_clicked(move |_| restart_hub.restart());
+        if !hub.is_enabled() { inner.show_message("Preview paused", "pause_circle"); }
         hub.0.views.borrow_mut().push(Rc::downgrade(&inner));
         if let Some(texture) = hub.0.last_texture.borrow().as_ref() {
             inner.picture.set_paintable(Some(texture));

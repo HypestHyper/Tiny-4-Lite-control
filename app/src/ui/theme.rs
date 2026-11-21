@@ -412,8 +412,15 @@ window.t4.csd { border-radius: §18§; }
 
 /* Scrolling */
 .t4 scrolledwindow, .t4 viewport { background: transparent; border: none; }
-.t4 scrollbar { background: transparent; }
-.t4 scrollbar slider { min-width: §6§; min-height: §6§; border-radius: 3px; background: alpha(@t_on_surface, 0.28); }
+/* Thin scrollbars: GTK's own padding and trough are taken out so they are as wide as the slider. */
+.t4 scrollbar { background: transparent; padding: 0; margin: 0; border: none; min-width: 0; min-height: 0; }
+.t4 scrollbar trough { background: transparent; border: none; padding: 0; margin: 0; min-width: 0; min-height: 0; }
+.t4 scrollbar.vertical { min-width: §8§; }
+.t4 scrollbar.horizontal { min-height: §8§; }
+.t4 scrollbar slider { min-width: §4§; min-height: §4§; margin: 0 2px; border-radius: 3px; background: alpha(@t_on_surface, 0.28); }
+.t4 scrollbar.horizontal slider { margin: 2px 0; }
+.t4 scrollbar.vertical slider { min-height: §32§; }
+.t4 scrollbar.horizontal slider { min-width: §32§; }
 .t4 scrollbar slider:hover { background: alpha(@t_on_surface, 0.5); }
 /* The scrollbar keeps one size, hovered or not: where it takes room, changing it would move the page. */
 .t4 paned > separator { min-width: §10§; min-height: §10§; background: transparent; }

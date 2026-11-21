@@ -90,6 +90,8 @@ pub struct AppConfig {
     /// With Mirror image on, turn the stick the other way, so pushing it right still moves the picture
     /// you see to the right.
     pub joystick_follows_mirror: bool,
+    /// The live preview was paused with its button; it stays paused until it is resumed.
+    pub preview_paused: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -170,6 +172,7 @@ impl Default for AppConfig {
             model_view_yaw: 180.0,
             model_pan_reversed: false,
             joystick_follows_mirror: true,
+            preview_paused: false,
         }
     }
 }

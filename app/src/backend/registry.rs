@@ -271,6 +271,8 @@ pub struct Setting {
     pub deps: Vec<Dep>,
     /// Eligible for the slim window.
     pub quick: bool,
+    /// Never label this row Unknown: it is made of buttons that send a command, not of a state.
+    pub quiet: bool,
     pub readback: Readback,
     /// Shown as experimental in the info dialog.
     pub experimental: bool,
@@ -280,7 +282,7 @@ pub struct Setting {
 impl Setting {
     fn new(id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind, source: Source) -> Setting {
         Setting {
-            id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true,
+            id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true, quiet: false,
             readback: Readback::Camera, experimental: false, source,
         }
     }
@@ -298,6 +300,7 @@ impl Setting {
     fn last_sent(mut self) -> Setting { self.readback = Readback::LastSent; self }
     fn experimental(mut self) -> Setting { self.experimental = true; self }
     fn not_quick(mut self) -> Setting { self.quick = false; self }
+    fn quiet(mut self) -> Setting { self.quiet = true; self }
 
     // Reading
 
@@ -724,10 +727,13 @@ fn build() -> Vec<Setting> {
                     action: "Sleep",
                 }) },
             ]),
-            |s| from_camera(s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None })),
+            // Wake and Sleep are two commands. The camera's sleep byte is not confirmed as a read-back, so
+            // neither button is lit by it and both always send.
+            |_| None,
             |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
-            .info("Sleep and wake physically move the gimbal. The state can take a moment to show after the command."),
+            .quiet()
+            .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around the camera first."),
     ]
 }
 
