@@ -367,7 +367,7 @@ fn install_writes_a_systemd_unit_and_an_autostart_entry_only_when_asked() {
     // A window manager's own config is never written for you.
     let refused = service_run(&run, &runtime, &log, &["service", "install", "hyprland", "--write"]);
     assert_ne!(refused.status.code(), Some(0));
-    assert!(text(&service_run(&run, &runtime, &log, &["service", "install", "niri"]).stdout).contains("spawn-at-startup"));
+    assert!(text(&service_run(&run, &runtime, &log, &["service", "install", "niri"]).stdout).contains("spawn-sh-at-startup"));
     assert_eq!(service_run(&run, &runtime, &log, &["service", "uninstall", "systemd"]).status.code(), Some(0));
     assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists());
 }

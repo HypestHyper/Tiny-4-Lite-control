@@ -38,8 +38,8 @@ Only one service runs at a time; `service status` shows it. Start it with your s
 
 ```bash
 tiny4lite-control service install systemd --write
-tiny4lite-control service install hyprland        # prints: exec-once = ...
-tiny4lite-control service targets                 # systemd, xdg, hyprland, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
+tiny4lite-control service install hyprland        # Hyprland 0.55+ (Lua): hl.on("hyprland.start", ...); hyprland-legacy prints exec-once
+tiny4lite-control service targets                 # systemd, xdg, hyprland, hyprland-legacy, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
 ```
 
 Window manager configurations are never edited for you. For the AppImage the unit points at the AppImage file itself. The `udev` target prints a rule that starts the systemd user service when the camera is plugged in.

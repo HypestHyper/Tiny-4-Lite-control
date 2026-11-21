@@ -749,7 +749,7 @@ Settings (every setting the windows show):
   service run [--once]       The background service: restores the camera when it is plugged in (needs no window)
   service status | config    Is it running; what it is set to do
   service set KEY VALUE      restore on|off, preset NAME|none, gimbal on|off, sleep on|off, sleep-after MINUTES
-  service install [TARGET] [--write]   Start it with your session: systemd, xdg, hyprland, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
+  service install [TARGET] [--write]   Start it with your session: systemd, xdg, hyprland, hyprland-legacy, niri, sway, i3, river, mango, labwc, openbox, bspwm, shell, openrc, runit, s6, dinit, cron, udev
   service targets | uninstall          List the targets; remove what --write made
 
 Other things the windows do:

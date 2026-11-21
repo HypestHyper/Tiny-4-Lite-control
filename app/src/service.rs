@@ -431,8 +431,9 @@ fn set_command(key: Option<&str>, value: Option<&str>) -> i32 {
 pub const TARGETS: &[(&str, &str)] = &[
     ("systemd", "A systemd user service (most distributions: Fedora, Arch, Debian, Ubuntu, openSUSE, NixOS). Writes with --write."),
     ("xdg", "A desktop autostart entry (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt and anything that follows the XDG spec). Writes with --write."),
-    ("hyprland", "A line for hyprland.conf"),
-    ("niri", "A line for niri's config.kdl"),
+    ("hyprland", "Hyprland 0.55 and later, which is configured in Lua (hyprland.lua)"),
+    ("hyprland-legacy", "Hyprland before 0.55, or a hyprland.conf you still use"),
+    ("niri", "niri's config.kdl (a one-line shell command; older niri gets the long form in a comment)"),
     ("sway", "A line for sway's config"),
     ("i3", "A line for i3's config"),
     ("river", "A line for river's init script"),
@@ -461,6 +462,12 @@ fn quoted(path: &str) -> String {
     else { format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\"")) }
 }
 
+/// Text for the inside of a Lua string in double quotes.
+fn lua_escaped(text: &str) -> String { text.replace('\\', "\\\\").replace('"', "\\\"") }
+
+/// Text for the inside of a KDL string in double quotes.
+fn kdl_escaped(text: &str) -> String { text.replace('\\', "\\\\").replace('"', "\\\"") }
+
 fn config_home() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
@@ -482,12 +489,17 @@ pub fn snippet(target: &str, program: &str) -> Option<(String, String)> {
     match target {
         "systemd" => line(systemd_unit(program), "~/.config/systemd/user/tiny4lite-control.service, then: systemctl --user daemon-reload && systemctl --user enable --now tiny4lite-control.service"),
         "xdg" => line(desktop_entry(program), "~/.config/autostart/tiny4lite-control-service.desktop"),
-        "hyprland" => line(format!("exec-once = {p} service run\n"), "~/.config/hypr/hyprland.conf"),
-        "niri" => line(format!("spawn-at-startup \"{}\" \"service\" \"run\"\n", program.replace('\\', "\\\\").replace('"', "\\\"")), "~/.config/niri/config.kdl"),
+        // Hyprland 0.55 moved its configuration to Lua: a function that runs when it starts.
+        "hyprland" => line(format!("hl.on(\"hyprland.start\", function()\n  hl.exec_cmd(\"{} service run\")\nend)\n", lua_escaped(&p)), "~/.config/hypr/hyprland.lua"),
+        "hyprland-legacy" => line(format!("exec-once = {p} service run\n"), "~/.config/hypr/hyprland.conf"),
+        // niri 25.08 added spawn-sh-at-startup, which takes one string like a shell would. Older
+        // versions take each argument on its own.
+        "niri" => line(format!("spawn-sh-at-startup \"{}\"\n// niri before 25.08:\n// spawn-at-startup \"{}\" \"service\" \"run\"\n",
+            kdl_escaped(&format!("{p} service run")), kdl_escaped(program)), "~/.config/niri/config.kdl"),
         "sway" => line(format!("exec {p} service run\n"), "~/.config/sway/config"),
         "i3" => line(format!("exec --no-startup-id {p} service run\n"), "~/.config/i3/config"),
         "river" => line(format!("riverctl spawn \"{} service run\"\n", p.replace('"', "\\\"")), "~/.config/river/init"),
-        "mango" => line(format!("exec-once={p} service run\n"), "~/.config/mango/config.conf (check your MangoWC version's autostart syntax)"),
+        "mango" => line(format!("exec-once={p} service run\n"), "~/.config/mango/config.conf (exec-once runs once at start; exec runs on every reload)"),
         "labwc" | "openbox" => line(format!("{p} service run &\n"), if target == "labwc" { "~/.config/labwc/autostart" } else { "~/.config/openbox/autostart" }),
         "bspwm" => line(format!("{p} service run &\n"), "~/.config/bspwm/bspwmrc"),
         "shell" => line(format!("{p} service run &\n"), "your autostart script, ~/.xinitrc or ~/.xprofile"),
@@ -705,10 +717,15 @@ mod tests {
 
     #[test]
     fn a_path_with_spaces_is_quoted_for_each_syntax() {
-        let (hypr, _) = snippet("hyprland", "/a b/tiny").unwrap();
-        assert_eq!(hypr, "exec-once = \"/a b/tiny\" service run\n");
+        let (legacy, _) = snippet("hyprland-legacy", "/a b/tiny").unwrap();
+        assert_eq!(legacy, "exec-once = \"/a b/tiny\" service run\n");
+        // Hyprland's Lua configuration: a start handler that runs the command through a Lua string.
+        let (lua, place) = snippet("hyprland", "/a b/tiny").unwrap();
+        assert_eq!(lua, "hl.on(\"hyprland.start\", function()\n  hl.exec_cmd(\"\\\"/a b/tiny\\\" service run\")\nend)\n");
+        assert!(place.ends_with("hyprland.lua"));
         let (niri, _) = snippet("niri", "/a b/tiny").unwrap();
-        assert_eq!(niri, "spawn-at-startup \"/a b/tiny\" \"service\" \"run\"\n");
+        assert!(niri.starts_with("spawn-sh-at-startup \"\\\"/a b/tiny\\\" service run\"\n"), "{niri}");
+        assert!(niri.contains("// spawn-at-startup \"/a b/tiny\" \"service\" \"run\""));
         let (unit, _) = snippet("systemd", "/a b/tiny").unwrap();
         assert!(unit.contains("ExecStart=\"/a b/tiny\" service run\n"));
         let (plain, _) = snippet("sway", "/usr/bin/tiny4lite-control").unwrap();
