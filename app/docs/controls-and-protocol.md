@@ -218,9 +218,8 @@ gesture toggles, gesture zoom ratio, theme, joystick sensitivity, and
 background-service policy.
 
 The service policy is stored under `[service]`:
-- `auto_sleep_enabled = false` by default. The future service must not
-  start idle monitoring or send automatic sleep commands unless this is
-  explicitly enabled.
+- `auto_sleep_enabled = false` by default. The service does not start idle
+  monitoring or send automatic sleep commands unless this is enabled (Device tab, Sleep timer).
 - `auto_sleep_timeout_minutes = 10` is the default idle timeout and is
   validated to the range 1–1440 minutes.
 
@@ -230,7 +229,7 @@ service fields does not invalidate existing user settings.
 
 Loading the file does not send camera commands. In particular,
 `apply_on_connect` defaults to `false`; saved camera values are retained
-for the future in-process service, but are not replayed to the camera at
+for the background service, which replays them only when `apply_on_connect` is on, but they are not replayed to the camera at
 startup. Camera read-back remains authoritative for settings that the
 device exposes. Autofocus priority is queried from the camera when the
 Controls page is populated, after each setter, and on explicit refresh;
@@ -241,7 +240,7 @@ last successfully submitted commands.
 The config module provides version checking, defaults for missing keys,
 safe value validation, and write-to-temporary-file followed by rename.
 The settings module is implemented and loaded at application startup.
-The background service (`src/service.rs`) reads this policy when it starts and does not reload it while running; restart it after `service set`. `apply_on_connect` is the restore switch.
+The background service (`src/service.rs`) reloads this file whenever it changes (within a couple of seconds), so a change in the window or from `service set` needs no restart. `apply_on_connect` is the restore switch.
 
 ## Diagnostics and USB capture
 
@@ -326,13 +325,12 @@ revision as build-verified.
 - Pan/tilt commands physically move the gimbal. Keep its movement area
   clear. The joystick sends neutral speed on release; absolute steps
   move immediately.
-- Sleep/wake physically move the gimbal and remain explicit actions.
+- Sleep/wake physically move the gimbal. The window's buttons always send the command. The service sends sleep itself only when the sleep timer, shutdown or suspend options are on.
 - No camera movement or sleep action runs automatically at startup.
-- There is no separately installed background daemon or automatic
-  sleep/wake service. Persistent TOML configuration is implemented. The
-  background service (`tiny4lite-control service run`) restores the capture
-  mode, optionally the settings, and optionally sleeps an idle camera; it is
-  described in the README and has not been run against a real camera.
+- The background service (`tiny4lite-control service run`) restores the capture
+  mode, optionally the settings, and optionally sleeps an idle camera, at shutdown
+  and at suspend. It never wakes the camera. It is described in the README and
+  in `service-and-distros.md`, and has not been run against a real camera.
 - Global / Face autofocus-priority setter and camera-side GET read-back
   are hardware-verified on 2026-11-20 and implemented in the backend and
   Controls test UI. Face = `bf fb 01 00`; Global = `be 07 00 00`.
@@ -356,9 +354,9 @@ revision as build-verified.
 
 ## Centre
 
-The Centre button on the gimbal card, and `tiny4lite-control gimbal centre`, send pan 0 and tilt 0
+The Centre button in the Camera controls card, and `tiny4lite-control gimbal centre`, send pan 0 and tilt 0
 in one V4L2 command (`pan_absolute=0,tilt_absolute=0`). The user confirmed on a real camera that this is
-the physical centre. The camera turns, so the window asks first and the command line needs `--yes`.
+the physical centre. The camera turns, and neither the window nor the command line asks first.
 
 ## Autofocus priority: what the four bytes are
 

@@ -12,7 +12,7 @@ It talks to the camera through standard V4L2 controls and OBSBOT's vendor UVC ex
 
 | Window | Opens with | Purpose |
 |---|---|---|
-| Full | default, or `--full` | Live preview and gimbal joystick beside tabbed settings (Camera, Tracking, Audio, Presets, Device). |
+| Full | default, or `--full` | Live preview and gimbal joystick beside tabbed settings (Camera, Presets, Device). |
 | Slim | `--slim` | A narrow panel with only the controls you pick (the tune button chooses them), plus an optional preview and joystick. |
 | Preview | `--preview`, or the pop-out button | The preview in its own resizable window. |
 
@@ -66,6 +66,8 @@ Window manager configurations are never edited for you. For the AppImage the uni
 If the model swings the wrong way when the camera pans, turn on **Reverse pan on the camera model** in Settings (Device tab, Appearance). It is a one-time choice, and the gimbal info button says where it is.
 
 **The stick and the picture.** Pushing the stick right moves the picture you see to the right. On this camera a positive pan speed shows more of the scene's left, so the stick sends the opposite; Mirror image flips the picture, so with it on the stick sends the plain direction. Turn the mirror part off with **Flip the joystick with the mirror** in Settings (Device tab, Appearance). `gimbal move` follows the same rule, so right means right. The 1° step buttons are angles and keep the camera's own direction, and the camera model follows the real camera.
+
+**Tracking and the stick.** While Tracking mode is anything but No tracking the camera moves itself, so the stick, the 1° steps and Centre are greyed out, with a hint under the stick. Presets and Wake/Sleep stay usable.
 
 **Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.
 
@@ -161,8 +163,9 @@ ignore case, spaces and hyphens. `--device /dev/videoN` (or `TINY4LITE_DEVICE`) 
 
 **Dependencies apply here too.** `set red-balance 1000` while Auto white balance is on exits with 3 and
 says what to change; `--force` sends it anyway. Anything that physically moves the camera or changes
-what it stores (`set camera-power asleep`, `position go`, `position delete`, `startup set`, applying a
-preset that includes a gimbal position) needs `--yes`; without it the command explains and exits 4.
+what it stores needs `--yes`: turning the light off, `position delete` and `startup set`. Moving the
+gimbal, sleep and wake, `position go` and applying a preset never ask; without `--yes` the commands that do
+explain and exit 4.
 
 Exit codes: 0 done, 1 failed, 2 wrong usage, 3 unavailable because of another setting, 4 needs
 `--yes`, 5 no camera found.
@@ -289,7 +292,7 @@ window, tab and state, then uses real pointer events to check that:
 * each window has the expected class and title;
 * dragging the joystick sends speeds in the right direction, never more than 30 updates a second, and
   always ends with a stop;
-* putting the camera to sleep asks for confirmation first;
+* turning the light off asks for confirmation first;
 * the 1° step buttons send one-degree absolute pan and tilt moves;
 * Developer tools opens and a diagnostic read works.
 
