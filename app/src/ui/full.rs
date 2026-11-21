@@ -121,7 +121,9 @@ impl FullWindow {
 
         let preview_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         preview_card.add_css_class("stage-card");
-        preview_card.set_vexpand(true);
+        // The preview is as tall as its width and the camera's shape make it; the gimbal takes the rest.
+        preview_card.set_vexpand(false);
+        preview_card.set_valign(gtk::Align::Start);
         let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let pause = widgets::icon_button("pause", "Pause the preview", true);
         pause.add_css_class("on-stage");
@@ -150,7 +152,7 @@ impl FullWindow {
 
         // When the preview is in its own window, say so and offer a way back.
         let popped = gtk::Stack::new();
-        popped.set_vexpand(true);
+        popped.set_vexpand(false);
         popped.add_named(hub_view.widget(), Some("here"));
         let away = gtk::Box::new(gtk::Orientation::Vertical, 10);
         away.add_css_class("preview-surface");
@@ -176,6 +178,7 @@ impl FullWindow {
 
         let gimbal_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         gimbal_card.add_css_class("card");
+        gimbal_card.set_vexpand(true);
         gimbal_card.append(&joystick.widget());
         stage.append(&preview_card);
         stage.append(&gimbal_card);
@@ -372,9 +375,9 @@ impl FullWindow {
                         stage_scroller.set_size_request(-1, -1);
                         gimbal_card.set_size_request(-1, -1);
                         preview_card.set_hexpand(false);
-                        preview_card.set_vexpand(true);
-                        preview_card.set_valign(gtk::Align::Fill);
-                        popped.set_vexpand(true);
+                        preview_card.set_vexpand(false);
+                        preview_card.set_valign(gtk::Align::Start);
+                        popped.set_vexpand(false);
                         preview_card.set_size_request(-1, -1);
                         paned.set_orientation(gtk::Orientation::Horizontal);
                         let saved = current_config().split_position;

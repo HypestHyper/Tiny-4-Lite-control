@@ -72,6 +72,8 @@ struct State {
     /// The pointer button is down on the pad. Losing focus then does not end the drag: the button
     /// still decides.
     pointer_down: Cell<bool>,
+    /// Until when to read the position often, after a command that moves the camera by itself.
+    boost_until: Cell<Option<Instant>>,
     /// When the direction of the pan or tilt speed last changed.
     direction_changed_at: Cell<Instant>,
     poll_error: RefCell<Option<String>>,
@@ -137,7 +139,7 @@ impl Joystick {
 
         let pan_value = widgets::line("—", &["readout", "tnum"]);
         let tilt_value = widgets::line("—", &["readout", "tnum"]);
-        let zoom_value = widgets::line("1×", &["readout", "tnum"]);
+        let zoom_value = widgets::line("1×", &["setting-value", "tnum"]);
         let hint = widgets::text("Drag the stick, or focus it and use the arrow keys. The gimbal stops when you let go.", &["small", "dim"]);
 
         FOLLOW_MIRROR.store(current_config().joystick_follows_mirror, Ordering::Relaxed);
@@ -148,7 +150,7 @@ impl Joystick {
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
             last_position: Cell::new(None), last_position_at: Cell::new(None), ramped: Cell::new((0.0, 0.0)),
-            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
+            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), boost_until: Cell::new(None), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
         let joystick = Joystick(state);
@@ -172,6 +174,12 @@ impl Joystick {
         let title = widgets::line("Gimbal", &["heading"]);
         title.set_hexpand(true);
         head.append(&title);
+        // The zoom sits in the heading, where nothing is drawn behind it.
+        let zoom_caption = widgets::line("Zoom", &["small", "dim"]);
+        zoom_caption.set_valign(gtk::Align::Center);
+        state.zoom_value.set_valign(gtk::Align::Center);
+        head.append(&zoom_caption);
+        head.append(&state.zoom_value);
         head.append(&widgets::info_button("Gimbal joystick", &[
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
@@ -191,7 +199,7 @@ impl Joystick {
         readouts.set_margin_end(14);
         readouts.set_margin_bottom(8);
         readouts.set_can_target(false);
-        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Zoom", &state.zoom_value, gtk::Align::Center), ("Tilt", &state.tilt_value, gtk::Align::End)] {
+        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Tilt", &state.tilt_value, gtk::Align::End)] {
             let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
             cell.set_hexpand(true);
             cell.set_halign(align);
@@ -286,8 +294,10 @@ impl Joystick {
         buttons.append(&sleep);
         row.append(&buttons);
 
-        let send = |store: Store, sleep: bool| {
+        let joystick = self.clone();
+        let send = Rc::new(move |store: Store, sleep: bool| {
             let done = store.clone();
+            joystick.boost_polling();
             store.call_now(move |d| backend::set_sleep_mode(d, sleep), move |result| {
                 match result {
                     Ok(()) => done.toast(if sleep { "Sleep sent to the camera" } else { "Wake sent to the camera" }),
@@ -297,11 +307,13 @@ impl Joystick {
                 let later = done.clone();
                 glib::timeout_add_local_once(Duration::from_millis(1500), move || later.refresh());
             });
-        };
+        });
         let s = store.clone();
-        wake.connect_clicked(move |_| send(s.clone(), false));
+        let wake_send = send.clone();
+        wake.connect_clicked(move |_| wake_send(s.clone(), false));
         let s = store.clone();
         sleep.connect_clicked(move |_| {
+            let send = send.clone();
             let s = s.clone();
             s.clone().confirm("bedtime", "Put the camera to sleep?",
                 "The gimbal will move to its resting position. Clear the space around the camera first.", "Sleep",
@@ -377,7 +389,7 @@ impl Joystick {
             let again = this.clone();
             this.0.store.clone().call_now(|d| backend::centre_gimbal(d), move |result| {
                 match result {
-                    Ok(()) => again.0.store.toast("Centring the camera"),
+                    Ok(()) => { again.boost_polling(); again.0.store.toast("Centring the camera") }
                     Err(error) => again.0.store.error(&format!("Could not centre the camera: {error}")),
                 }
                 again.poll_now();
@@ -803,9 +815,17 @@ impl Joystick {
             };
             state.store.set_gimbal(position);
             // Quick while it moves (or while the stick is held); relaxed when it is still.
-            let wait = if moving || state.engaged.get() { 150 } else { 700 };
+            let boosted = state.boost_until.get().is_some_and(|until| Instant::now() < until);
+            let wait = if boosted { 100 } else if moving || state.engaged.get() { 150 } else { 700 };
             this.schedule_poll(wait);
         });
+    }
+
+    /// Read the position often for a few seconds. Used after Sleep, Wake, Centre and the like, which turn
+    /// the camera by themselves, so the readout and the model follow the whole move instead of jumping.
+    pub fn boost_polling(&self) {
+        self.0.boost_until.set(Some(Instant::now() + Duration::from_secs(6)));
+        if self.0.polling.get() { self.poll_now(); }
     }
 
     /// Read again right away (after a step or a release).

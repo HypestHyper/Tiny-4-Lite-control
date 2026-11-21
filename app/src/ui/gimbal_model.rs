@@ -379,8 +379,12 @@ fn model(pan: f64, tilt: f64, zoom: f64, yaw: f64) -> Vec<Line> {
     let viewer = toward_viewer(yaw);
     let facing = |normal: V3| normal.0 * viewer.0 + normal.1 * viewer.1 + normal.2 * viewer.2 > 0.02;
     let head_front = forward(pan, tilt);
+    // How squarely the lens faces the viewer. The lens accent is kept a little past edge-on, and
+    // fades there, so it does not pop in and out as the camera or the view turns.
+    let head_dot = head_front.0 * viewer.0 + head_front.1 * viewer.1 + head_front.2 * viewer.2;
     let visible = |kind: Kind| match kind {
-        Kind::HeadFront | Kind::LensFront => facing(head_front),
+        Kind::HeadFront => facing(head_front),
+        Kind::LensFront => head_dot > LENS_EDGE,
         Kind::HeadBack => facing((-head_front.0, -head_front.1, -head_front.2)),
         Kind::BaseFront => facing((0.0, 0.0, -1.0)),
         Kind::BaseBack => facing((0.0, 0.0, 1.0)),
@@ -410,8 +414,9 @@ pub fn snap_yaw(yaw: f64) -> f64 {
     if (yaw - nearest).abs() <= SNAP_DEGREES { normalise_yaw(nearest) } else { yaw }
 }
 
-/// At this tilt and below the camera is in its sleeping pose, looking at nothing, so the view cone goes.
-pub const SLEEP_TILT: f64 = -32.0;
+/// At this tilt and below the camera is going to or in its sleeping pose, looking at nothing, so the
+/// view cone goes.
+pub const SLEEP_TILT: f64 = -30.0;
 /// The cone fades in over this many degrees above the sleeping pose (and out again going down).
 pub const CONE_FADE_DEGREES: f64 = 4.0;
 
@@ -420,6 +425,23 @@ pub const CONE_FADE_DEGREES: f64 = 4.0;
 pub fn cone_visibility(tilt: f64) -> f64 {
     let t = ((tilt - SLEEP_TILT) / CONE_FADE_DEGREES).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// The lens accent shows until the lens faces this far past edge-on (the cosine of the angle).
+const LENS_EDGE: f64 = -0.12;
+
+/// How much of the lens accent to draw, 0 to 1, for how squarely the lens faces the viewer: full once
+/// it clearly faces the viewer, fading to nothing a little past edge-on.
+pub fn lens_visibility(facing: f64) -> f64 {
+    let t = ((facing - LENS_EDGE) / 0.27).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How squarely the camera's lens faces the viewer, for the given reading and view.
+fn lens_facing(pan: f64, tilt: f64, yaw: f64) -> f64 {
+    let front = forward(pan_sign() * pan, tilt);
+    let viewer = toward_viewer(yaw);
+    front.0 * viewer.0 + front.1 * viewer.1 + front.2 * viewer.2
 }
 
 /// Move `current` towards `target` by a time step, without overshoot (it is measured data).
@@ -598,9 +620,9 @@ impl GimbalModel {
             let yaw = state.yaw.get();
             let lines = model(pan, tilt, state.zoom_shown.get(), yaw);
             // One stroke per style: the model has over a thousand short lines.
-            let styles: [&[Kind]; 6] = [
+            let styles: [&[Kind]; 7] = [
                 &[Kind::Base], &[Kind::Detail, Kind::HeadFront, Kind::HeadBack, Kind::BaseFront, Kind::BaseBack],
-                &[Kind::Moving], &[Kind::Lens, Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
+                &[Kind::Moving], &[Kind::Lens], &[Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
             ];
             for kinds in styles {
                 if !known && kinds[0] == Kind::Aim { continue; }
@@ -609,6 +631,8 @@ impl GimbalModel {
                 if cone <= 0.0 { continue; }
                 let ((r, g, b), width, alpha) = colour(kinds[0]);
                 let alpha = alpha * cone;
+                // The lens accent fades near edge-on instead of vanishing at once.
+                let alpha = if kinds.contains(&Kind::LensFront) { alpha * lens_visibility(lens_facing(pan, tilt, yaw)) } else { alpha };
                 cr.set_source_rgba(r, g, b, alpha * fade);
                 cr.set_line_width(width);
                 for line in lines.iter().filter(|l| kinds.contains(&l.kind)) {
@@ -669,15 +693,27 @@ mod tests {
     }
 
     #[test]
+    fn the_lens_accent_fades_near_edge_on_and_is_whole_when_facing() {
+        assert_eq!(lens_visibility(1.0), 1.0);
+        assert_eq!(lens_visibility(0.15), 1.0);
+        assert!(lens_visibility(0.0) > 0.3 && lens_visibility(0.0) < 0.9);
+        assert_eq!(lens_visibility(LENS_EDGE), 0.0);
+        assert_eq!(lens_visibility(-0.5), 0.0);
+        // Straight on, at rest, it faces the viewer; seen from behind it does not.
+        assert!(lens_facing(0.0, 0.0, FRONT_YAW) > 0.9);
+        assert!(lens_facing(0.0, 0.0, 0.0) < -0.9);
+    }
+
+    #[test]
     fn the_view_cone_fades_out_towards_the_sleeping_pose_and_back() {
         assert_eq!(cone_visibility(-60.0), 0.0);
-        assert_eq!(cone_visibility(-32.0), 0.0);
-        assert_eq!(cone_visibility(-28.0), 1.0);
+        assert_eq!(cone_visibility(-30.0), 0.0);
+        assert_eq!(cone_visibility(-26.0), 1.0);
         assert_eq!(cone_visibility(0.0), 1.0);
-        assert!((cone_visibility(-30.0) - 0.5).abs() < 1e-9);
+        assert!((cone_visibility(-28.0) - 0.5).abs() < 1e-9);
         // Smooth and one-way: it never dips as the tilt rises through the fade.
         let mut last = 0.0;
-        for tenth in -330..=-270 {
+        for tenth in -320..=-250 {
             let v = cone_visibility(f64::from(tenth) / 10.0);
             assert!(v >= last - 1e-12);
             last = v;

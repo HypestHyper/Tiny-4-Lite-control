@@ -37,6 +37,7 @@ struct ViewInner {
     placeholder_text: gtk::Label,
     /// Shown with an error, to try the stream again.
     retry: gtk::Button,
+    frame: gtk::AspectFrame,
     chip: gtk::Label,
     root: gtk::Overlay,
 }
@@ -340,12 +341,23 @@ impl PreviewView {
         let root = gtk::Overlay::new();
         root.add_css_class("preview-surface");
         root.set_overflow(gtk::Overflow::Hidden);
-        root.set_child(Some(&picture));
+        // The picture keeps the camera's shape (16:9 until the stream says otherwise), so the frame
+        // hugs it and there are no black bars. The frame's height follows its width.
+        let frame = gtk::AspectFrame::new(0.5, 0.5, 16.0 / 9.0, false);
+        frame.set_child(Some(&picture));
+        root.set_child(Some(&frame));
         root.add_overlay(&placeholder);
         root.add_overlay(&chip);
         root.set_size_request(240, 135);
 
-        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone() });
+        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone(), frame: frame.clone() });
+        if let Some(mode) = hub.0.mode.borrow().as_ref() { frame.set_ratio(mode.width as f32 / mode.height.max(1) as f32); }
+        {
+            let weak = Rc::downgrade(&inner);
+            hub.on_mode(move |mode| {
+                if let Some(view) = weak.upgrade() { view.frame.set_ratio(mode.width as f32 / mode.height.max(1) as f32); }
+            });
+        }
         let restart_hub = hub.clone();
         retry.connect_clicked(move |_| restart_hub.restart());
         if !hub.is_enabled() { inner.show_message("Preview paused", "pause_circle"); }
