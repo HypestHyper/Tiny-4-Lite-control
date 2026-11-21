@@ -333,7 +333,7 @@ window.t4.csd { border-radius: §18§; }
 
 /* Tab bar */
 .tabbar { background: @t_surface_low; border-radius: §24§; padding: §4§; }
-.t4 button.tab { background: transparent; color: @t_on_surface_variant; border-radius: §20§; padding: 0 §16§; min-height: §40§; }
+.t4 button.tab { background: transparent; color: @t_on_surface_variant; border-radius: §20§; padding: 0 §16§; min-height: §40§; min-width: §40§; }
 .t4 button.tab:hover { background: alpha(@t_on_surface, 0.08); color: @t_on_surface; }
 .t4 button.tab:checked { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: §12§; }
 .t4 button.tab:checked .icon { font-variation-settings: "FILL" 1, "wght" 500, "opsz" 24; }

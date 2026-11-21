@@ -279,6 +279,7 @@ impl FullWindow {
 
         for (index, (page, label, glyph)) in PAGES.iter().enumerate() {
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            content.set_halign(gtk::Align::Center);
             content.append(&widgets::icon(glyph));
             let text = widgets::line(label, &["tab-label"]);
             // The words give way to the icons rather than forcing the window wide.
@@ -482,7 +483,12 @@ impl FullWindow {
             move |_, width, _| {
                 // Tabs shrink to icons when the column is tight.
                 for (_, button) in state.tabs.borrow().iter() {
-                    if let Some(label) = button.child().and_then(|c| c.last_child()) { label.set_visible(width >= 420); }
+                    let words = width >= 420;
+                    if let Some(content) = button.child() {
+                        if let Some(label) = content.last_child() { label.set_visible(words); }
+                        // With the words gone the gap beside the icon goes too, so the icon sits in the middle.
+                        if let Ok(row) = content.downcast::<gtk::Box>() { row.set_spacing(if words { 8 } else { 0 }); }
+                    }
                 }
                 // One column of cards at every width: the stage on the left already uses the width.
                 let want_two = false;

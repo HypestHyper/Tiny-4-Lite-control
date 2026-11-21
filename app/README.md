@@ -56,7 +56,9 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.
 
-**Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's
+**Layout.** There are three tabs. **Camera** starts with tracking, then exposure, white balance, focus and picture. **Presets** holds the saved positions and the app's presets. **Device** has gestures, microphone, light, power, capture mode, the start-up position, appearance and developer tools. Next to the preview is the **Camera controls** card: the model, the joystick with four preset buttons beside it (they apply the first four presets), the 1° steps, Centre, zoom, field of view, speed and Wake/Sleep. Wide, the preview and card sit in a column on the left (drag the divider to size the preview) and the tabs on the right. When the right-hand panel would get narrower than about 470 px, whatever the window size, the page stacks and scrolls as one: preview and controls, then the tabs, then the content.
+
+**Live camera model.** The Camera controls card starts with a wireframe camera on its gimbal that follows the camera's
 real pan and tilt, with the numbers on top. It is drawn straight on from the front and a little above, like a product photo: the lens and the front of the base
 face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward
 your left, because it is the camera's right. A blue cone shows the view and follows the zoom: OBSBOT's published 67.2° horizontal at zoom 0 (79.4° diagonal at 4:3), narrowed by the documented zoom factors (1.15× at 5, 1.47× at 15) up to the published 4× at 100; the line between 15 and 100 is an assumption, and so is that the 16:9 picture keeps the full sensor width. The inner lens glass sits deeper as you zoom in. It is a drawing of the angles the camera reports (the same position
@@ -76,12 +78,12 @@ one-number change. Positive pan
 turns right and positive tilt looks up, matching the joystick; whether those signs match your camera's own
 convention has not been checked on hardware. The slim window shows it with the joystick.
 
-The gimbal card also has **Pan −1° / +1°** and **Tilt −1° / +1°** buttons: small, bounded turns for precise
+The card also has **Pan −1° / +1°** and **Tilt −1° / +1°** buttons: small, bounded turns for precise
 moves and careful first tests (a step is at most 5°, and stays inside the range the driver reports). They use
 the standard absolute pan and tilt controls. Which way "+" turns has not been checked on a camera; the
 position readout above the buttons shows the result.
 
-Keyboard: `Alt+1`…`Alt+5` switch tabs, `Ctrl+F` or just typing opens search, `Esc` closes search or a
+Keyboard: `Alt+1`…`Alt+3` switch tabs, `Ctrl+F` or just typing opens search, `Esc` closes search or a
 dialogue. With the joystick focused the arrow keys move the gimbal and releasing them stops it; `Space` or
 `Esc` stops it at once.
 
