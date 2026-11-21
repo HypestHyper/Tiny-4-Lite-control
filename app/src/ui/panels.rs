@@ -455,6 +455,19 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
     };
     let load_map = load.clone();
     card.connect_map(move |_| { if !loaded.replace(true) { load_map(); } });
+    // The preview knows what the camera is really sending. If that is not what the lists show (after the
+    // camera was unplugged and plugged in, say), the lists follow it.
+    {
+        let (model, fill, busy, load) = (model.clone(), fill.clone(), busy.clone(), load.clone());
+        hub.on_mode(move |mode| {
+            if busy.get() { return; }
+            if model.borrow().caps.is_empty() { load(); return; }
+            if model.borrow().current.as_ref() != Some(mode) {
+                model.borrow_mut().current = Some(mode.clone());
+                fill();
+            }
+        });
+    }
 
     // Choosing a format or size changes what the next dropdowns offer.
     let apply: Rc<dyn Fn()> = {

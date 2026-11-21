@@ -54,6 +54,8 @@ struct HubInner {
     last_texture: RefCell<Option<gdk::Texture>>,
     /// Automatic restarts since the last frame arrived.
     retries: Cell<u32>,
+    /// Told the mode the camera is really streaming, whenever a stream starts.
+    mode_listeners: RefCell<Vec<Rc<dyn Fn(&VideoMode)>>>,
 }
 
 #[derive(Clone)]
@@ -73,11 +75,18 @@ impl PreviewHub {
             stop_timer: RefCell::default(),
             last_texture: RefCell::default(),
             retries: Cell::new(0),
+            mode_listeners: RefCell::default(),
         }))
     }
 
     pub fn is_enabled(&self) -> bool { self.0.enabled.get() }
     pub fn is_running(&self) -> bool { self.0.running.get() }
+
+    /// Be told the capture mode the camera is really using each time the preview starts, so other
+    /// parts of the window can show the same one.
+    pub fn on_mode(&self, listener: impl Fn(&VideoMode) + 'static) {
+        self.0.mode_listeners.borrow_mut().push(Rc::new(listener));
+    }
 
     /// Start the stream again after it stopped or failed.
     pub fn restart(&self) {
@@ -185,6 +194,8 @@ impl PreviewHub {
     fn spawn_stream(&self, mode: VideoMode, generation: u64) {
         let hub = &self.0;
         *hub.mode.borrow_mut() = Some(mode.clone());
+        let listeners: Vec<_> = hub.mode_listeners.borrow().clone();
+        for listener in listeners { listener(&mode); }
         let device = hub.store.device();
         let mut child = if super::super::backend::ui_test_mode() {
             None

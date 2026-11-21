@@ -82,7 +82,15 @@ impl Ctx {
                 let was = self.store.connection();
                 self.store.set_camera(Camera::spawn(&path), Connection::Connected);
                 if let Some(id) = self.scan_timer.borrow_mut().take() { id.remove(); }
-                if was != Connection::Connected { self.store.toast("Camera connected"); }
+                if was != Connection::Connected {
+                    self.store.toast("Camera connected");
+                    // A camera that was unplugged comes back in its own default mode: put the one chosen
+                    // here back, with the preview out of the way while it changes.
+                    let store = self.store.clone();
+                    self.hub.while_stopped(|device| backend::apply_saved_video_mode(device), move |message| {
+                        if let Some(message) = message { store.toast(&message); }
+                    });
+                }
             }
             (_, connection) => {
                 if self.store.connection() != connection {
