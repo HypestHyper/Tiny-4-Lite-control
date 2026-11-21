@@ -185,7 +185,12 @@ pub fn run() {
         .flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     // The icon in the title bar, the task switcher and the dock, found by name in the icon theme.
-    app.connect_startup(|_| gtk::Window::set_default_icon_name("tiny4lite-control"));
+    app.connect_startup(|_| {
+        gtk::Window::set_default_icon_name("tiny4lite-control");
+        // Scrollbars float over the page and never take room from it, so the page does not shift when
+        // the pointer arrives and they appear.
+        if let Some(settings) = gtk::Settings::default() { settings.set_gtk_overlay_scrolling(true); }
+    });
     // Options: --slim / --full choose the window; --preview opens the pop-out too.
     app.add_main_option("slim", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the slim window", None);
     app.add_main_option("full", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the full window", None);

@@ -383,7 +383,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 scale highlight { min-width: 0; margin: 0; padding: 0; min-height: §16§; border-radius: §8§; background: @t_primary; border: none; }
 .t4 scale slider { min-width: 4px; min-height: §32§; margin: -§8§ 0; border-radius: 3px; background: @t_primary; border: none; box-shadow: 0 0 0 §4§ @t_surface; transition: min-width 160ms cubic-bezier(0.2,0,0,1); }
 .card-inner scale slider { box-shadow: 0 0 0 §4§ @t_surface_high; }
-.t4 scale:active slider { min-width: 2px; }
+/* The slider keeps its width while pressed, so nothing around it moves. */
 .t4 scale:disabled { opacity: 0.45; }
 .t4 scale marks { color: @t_on_surface_variant; }
 .t4 scale mark label { font-size: ¶11.5¶; color: @t_on_surface_variant; }
@@ -415,7 +415,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 scrollbar { background: transparent; }
 .t4 scrollbar slider { min-width: §6§; min-height: §6§; border-radius: 3px; background: alpha(@t_on_surface, 0.28); }
 .t4 scrollbar slider:hover { background: alpha(@t_on_surface, 0.5); }
-.t4 scrollbar.overlay-indicator:not(.hovering) slider { min-width: 4px; min-height: 4px; }
+/* The scrollbar keeps one size, hovered or not: where it takes room, changing it would move the page. */
 .t4 paned > separator { min-width: §10§; min-height: §10§; background: transparent; }
 .t4 paned > separator:hover { background: alpha(@t_primary, 0.18); border-radius: §5§; }
 
@@ -514,3 +514,24 @@ mod tests {
 
 /// Borrow the current palette without cloning it (used while drawing).
 pub fn with<R>(f: impl FnOnce(&Palette) -> R) -> R { CURRENT.with(|p| f(&p.borrow())) }
+
+#[cfg(test)]
+mod hover_tests {
+    /// Nothing may change size under the pointer: a hovered or pressed widget that grows or shrinks moves
+    /// everything around it, which shows as the window "breathing". Colour and corner shape are fine.
+    #[test]
+    fn hover_and_press_never_change_a_size() {
+        let source = include_str!("theme.rs");
+        let sizes = ["min-width", "min-height", "padding", "margin", "border-width", "font-size", "font-weight", "width", "height"];
+        let start = source.find("const TEMPLATE").or_else(|| source.find("r#\"")).unwrap_or(0);
+        for line in source[start..].lines() {
+            let selector = line.split('{').next().unwrap_or("");
+            if !(selector.contains(":hover") || selector.contains(":active") || selector.contains(".hovering")) { continue; }
+            if !line.contains('{') || line.contains("fn ") || line.contains("contains(") { continue; }
+            let body = line.split_once('{').map(|(_, rest)| rest).unwrap_or("");
+            for size in sizes {
+                assert!(!body.split(';').any(|rule| rule.trim().starts_with(size)), "a size changes under the pointer: {line}");
+            }
+        }
+    }
+}
