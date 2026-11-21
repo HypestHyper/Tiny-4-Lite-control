@@ -210,11 +210,24 @@ impl Joystick {
 
     /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
     fn step_row(&self) -> gtk::Box {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        // The groups sit side by side while there is room and wrap onto a second line when there is not,
+        // so the words are never squeezed into dots.
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.set_halign(gtk::Align::Center);
+        let flow = gtk::FlowBox::new();
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_homogeneous(false);
+        flow.set_min_children_per_line(1);
+        flow.set_max_children_per_line(3);
+        flow.set_column_spacing(10);
+        flow.set_row_spacing(6);
+        flow.set_halign(gtk::Align::Center);
+        flow.set_activate_on_single_click(false);
+        row.append(&flow);
         let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
         for (axis, control) in [("Pan", "pan_absolute"), ("Tilt", "tilt_absolute")] {
-            row.append(&widgets::line(axis, &["small", "dim"]));
+            let group = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            group.append(&widgets::line(axis, &["small", "dim"]));
             for degrees in [-1_i64, 1] {
                 let sign = if degrees < 0 { "−" } else { "+" };
                 let button = gtk::Button::with_label(&format!("{sign}1°"));
@@ -235,9 +248,10 @@ impl Joystick {
                         again.poll_position_once();
                     });
                 });
-                row.append(&button);
+                group.append(&button);
                 buttons.borrow_mut().push(button);
             }
+            flow.insert(&group, -1);
         }
         // Centre: pan 0, tilt 0, straight away.
         let centre = widgets::icon_button("center_focus_strong", "Centre: turn the camera to pan 0°, tilt 0°", true);
@@ -252,7 +266,8 @@ impl Joystick {
                 again.poll_now();
             });
         });
-        row.append(&centre);
+        centre.set_halign(gtk::Align::Center);
+        flow.insert(&centre, -1);
         buttons.borrow_mut().push(centre);
         // Only usable when the driver offers working absolute pan and tilt.
         let weak: Vec<_> = buttons.borrow().iter().map(|b| b.downgrade()).collect();

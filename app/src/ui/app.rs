@@ -184,6 +184,8 @@ pub fn run() {
         .application_id(windowing::APP_ID)
         .flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+    // The icon in the title bar, the task switcher and the dock, found by name in the icon theme.
+    app.connect_startup(|_| gtk::Window::set_default_icon_name("tiny4lite-control"));
     // Options: --slim / --full choose the window; --preview opens the pop-out too.
     app.add_main_option("slim", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the slim window", None);
     app.add_main_option("full", glib::Char::from(0), glib::OptionFlags::NONE, glib::OptionArg::None, "Open the full window", None);

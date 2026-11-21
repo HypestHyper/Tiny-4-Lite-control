@@ -20,6 +20,10 @@ The app remembers which of full or slim you used last, the size of the pop-out, 
 preview and settings. Dragging the divider in the full window resizes the preview; the slim preview
 follows the window width.
 
+## Icon
+
+`assets/tiny4lite-control.svg` is the app icon: the camera from the front as a plain outline on a rounded tile, with a red ring round the lens. `assets/tiny4lite-control-symbolic.svg` is the one-colour version for panels and trays. Install both into the icon theme (`share/icons/hicolor/scalable/apps/` and `share/icons/hicolor/symbolic/apps/`), as the AppImage does; the window asks for the icon by the name `tiny4lite-control`.
+
 ## Background service
 
 `tiny4lite-control service run` needs no window and no display. It watches for the camera being plugged in and, once the camera has settled, puts the saved capture mode back. That is all it does by default.

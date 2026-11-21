@@ -31,11 +31,12 @@ jobs:
         run: cargo build --release
       - name: Assemble AppDir
         run: |
-          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps AppDir/usr/share/icons/hicolor/symbolic/apps
           install -Dm755 app/target/release/tiny4lite-control AppDir/usr/bin/tiny4lite-control
           install -Dm755 "$(command -v v4l2-ctl)" AppDir/usr/bin/v4l2-ctl
           install -Dm644 app/assets/tiny4lite-control.desktop AppDir/usr/share/applications/tiny4lite-control.desktop
           install -Dm644 app/assets/tiny4lite-control.svg AppDir/usr/share/icons/hicolor/scalable/apps/tiny4lite-control.svg
+          install -Dm644 app/assets/tiny4lite-control-symbolic.svg AppDir/usr/share/icons/hicolor/symbolic/apps/tiny4lite-control-symbolic.svg
       - name: Download linuxdeploy
         run: |
           curl -fL --retry 3 --retry-all-errors \
