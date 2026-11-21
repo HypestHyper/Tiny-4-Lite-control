@@ -25,6 +25,13 @@ use std::time::{Duration, Instant};
 
 /// The joystick pad's side in the full window, in pixels. It does not grow or shrink with the window.
 const PAD_SIZE: i32 = 168;
+
+/// True while the camera's own tracking is moving the gimbal; manual moves wait until it is off.
+fn tracking_active(snapshot: &backend::registry::Snapshot) -> bool {
+    backend::registry::find("obsbot:ai_tracking_mode")
+        .and_then(|setting| setting.read(snapshot))
+        .is_some_and(|value| value.as_i64() > 0)
+}
 const KEY: &str = "gimbal-speed";
 const POSITION_KEY: &str = "gimbal-position";
 const SEND_INTERVAL: Duration = Duration::from_millis(40);
@@ -485,7 +492,8 @@ impl Joystick {
         // Only usable when the driver offers working absolute pan and tilt.
         let weak: Vec<_> = buttons.borrow().iter().map(|b| b.downgrade()).collect();
         self.0.store.subscribe(move |snapshot| {
-            let usable = ["pan_absolute", "tilt_absolute"].iter().all(|n| snapshot.control(n).is_some_and(|c| !c.disabled));
+            let usable = ["pan_absolute", "tilt_absolute"].iter().all(|n| snapshot.control(n).is_some_and(|c| !c.disabled))
+                && !tracking_active(snapshot);
             let mut alive = false;
             for button in &weak {
                 if let Some(button) = button.upgrade() { button.set_sensitive(usable); alive = true; }
@@ -622,9 +630,12 @@ impl Joystick {
             let Some(state) = weak.upgrade() else { return false };
             let available = snapshot.control("pan_speed").is_some_and(|c| !c.disabled)
                 && snapshot.control("tilt_speed").is_some_and(|c| !c.disabled);
-            state.pad.set_sensitive(available);
-            state.hint.set_visible(!available);
-            if !available {
+            let tracking = tracking_active(snapshot);
+            state.pad.set_sensitive(available && !tracking);
+            state.hint.set_visible(!available || tracking);
+            if tracking {
+                state.hint.set_text("Tracking is on, so the camera moves itself. Set Tracking mode to No tracking to steer it.");
+            } else if !available {
                 state.hint.set_text("Gimbal speed controls are not available on this video node.");
             }
             true
