@@ -85,6 +85,7 @@ fn every_setting_can_be_read_and_set_from_the_terminal() {
                     "obsbot:exposure_compensation" => "0".into(),
                     "v4l2:exposure_time_absolute" => "1/30".into(),
                     "v4l2:white_balance_temperature" => "5000".into(),
+                    "v4l2:zoom_absolute" => "1x".into(),
                     _ => format!("{default}"),
                 }
             }

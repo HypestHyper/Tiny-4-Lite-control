@@ -161,25 +161,13 @@ mod shape {
     /// Horizontal field of view at zoom 0: 67.2° (OBSBOT's published spec for the Tiny 2 Lite, which
     /// gives 79.4° diagonal at 4:3). The 16:9 picture is assumed to keep the full sensor width.
     pub const FOV_HORIZONTAL_DEGREES: f64 = 67.2;
-    /// Zoom control position and the zoom factor measured there. The three presets are documented
-    /// (0 → 1.00×, 5 → 1.15×, 15 → 1.47×); the top of the range (100) is OBSBOT's published 4× digital
-    /// zoom, and the curve between 15 and 100 is a straight line (an assumption).
-    pub const ZOOM_CURVE: [(f64, f64); 4] = [(0.0, 1.0), (5.0, 1.15), (15.0, 1.47), (100.0, 4.0)];
     pub const CONE_REACH: f64 = 40.0;
     /// One drawing unit is this many millimetres.
     pub const UNIT: f64 = 32.0;
 }
 
 /// Zoom factor at a zoom control position (0–100), straight between the documented points.
-pub fn zoom_factor(zoom: f64) -> f64 {
-    let curve = shape::ZOOM_CURVE;
-    let z = zoom.clamp(curve[0].0, curve[curve.len() - 1].0);
-    for pair in curve.windows(2) {
-        let ((z0, f0), (z1, f1)) = (pair[0], pair[1]);
-        if z <= z1 { return f0 + (f1 - f0) * (z - z0) / (z1 - z0); }
-    }
-    curve[curve.len() - 1].1
-}
+pub fn zoom_factor(zoom: f64) -> f64 { crate::backend::zoom::factor(zoom) }
 
 /// Horizontal field of view in degrees: the widest angle divided down by the zoom factor.
 pub fn fov_horizontal(zoom: f64) -> f64 {
@@ -338,7 +326,7 @@ fn model(pan: f64, tilt: f64, zoom: f64, yaw: f64) -> Vec<Line> {
     close_loop(&plate.iter().map(|p| (plate_centre + p.0, p.1, -HEAD_HALF_D)).collect::<Vec<_>>(), Kind::HeadFront, &mut head);
     // The lens: glass edge, recess, barrel and glass, with fine ridges between recess and edge.
     // Zooming draws the inner glass further into the barrel, a sketch of the lens working.
-    let zoom_t = (zoom_factor(zoom) - 1.0) / (ZOOM_CURVE[ZOOM_CURVE.len() - 1].1 - 1.0);
+    let zoom_t = (zoom_factor(zoom) - 1.0) / (crate::backend::zoom::MAX_FACTOR - 1.0);
     for (radius, depth) in LENS_RINGS {
         let depth = depth * (1.0 + 0.9 * zoom_t * (depth / LENS_RINGS[3].1));
         close_loop(&ring_xy(LENS_X, 0.0, radius, -HEAD_HALF_D + depth, 32), Kind::LensFront, &mut head);

@@ -98,7 +98,7 @@ const fn opt(value: i64, label: &'static str, hint: &'static str) -> Opt {
 /// Number formats. `Iso` is here for drivers that report ISO sensitivity.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Fmt { Plain, Shutter, Kelvin, Ev, Ratio, Level, Iso }
+pub enum Fmt { Plain, Shutter, Kelvin, Ev, Ratio, Level, Iso, Zoom }
 
 impl Fmt {
     pub fn format(self, value: f64) -> String {
@@ -114,6 +114,8 @@ impl Fmt {
             Fmt::Kelvin => format!("{value:.0} K"),
             Fmt::Ev => format!("{} EV", exposure_compensation_label(value.round().clamp(0.0, 18.0) as u8)),
             Fmt::Ratio => format!("{value:.2}×"),
+            // The control runs 0 to 100; people see the zoom it gives, 1× to 4×.
+            Fmt::Zoom => super::zoom::label(super::zoom::factor(value)),
             Fmt::Level => if value.round() as i64 == 0 { "Off".into() } else { format!("Level {:.0}", value) },
             Fmt::Iso => format!("ISO {value:.0}"),
         }
@@ -395,6 +397,17 @@ fn dep_holds(dep: &Dep, snapshot: &Snapshot) -> bool {
     }
 }
 
+/// The zoom preset the user pressed, or -1. It stays lit only while the zoom is still there.
+static PRESSED_PRESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
+/// Which preset to light for this zoom position: the pressed one if the zoom is still on it, else none.
+fn lit_preset(zoom: i64) -> i64 {
+    let pressed = PRESSED_PRESET.load(std::sync::atomic::Ordering::Relaxed);
+    if pressed >= 0 && pressed == zoom { return pressed; }
+    PRESSED_PRESET.store(-1, std::sync::atomic::Ordering::Relaxed);
+    -1
+}
+
 /// The dependency map as Markdown: what each setting needs before it can be changed.
 pub fn dependency_map() -> String {
     let say = |dep: &Dep| -> String {
@@ -483,7 +496,7 @@ fn build() -> Vec<Setting> {
             .info("Face: exposure follows a face the camera finds. Global: exposure follows the whole picture. Works while Exposure mode is Auto, and is separate from autofocus priority."),
         Setting::custom("obsbot:exposure_compensation", Exposure, "Exposure compensation",
             "Make automatic exposure brighter or darker.",
-            resting_at(ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "0"), (18.0, "+3")]), 9.0),
+            resting_at(ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "Centre · 0"), (18.0, "+3")]), 9.0),
             |s| from_camera(number(s.exposure_comp))
                 .or_else(|| if s.exposure_comp.is_none() { from_saved(number(s.config.exposure_compensation_position)) } else { None }),
             |d, v| set_exposure_compensation(d, v.as_i64().clamp(0, 18) as u8).map(|actual| Some(Value::Int(i64::from(actual)))))
@@ -506,10 +519,10 @@ fn build() -> Vec<Setting> {
             "Lower is warmer, higher is cooler.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
-            "Fine-tune the red channel.", slider(0.0, 2048.0, 1.0, Fmt::Plain))
+            "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "Centre")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust red."),
         Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
-            "Fine-tune the blue channel.", slider(0.0, 2048.0, 1.0, Fmt::Plain))
+            "Fine-tune the blue channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "Centre")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust blue."),
 
         // ── Focus ──
@@ -532,20 +545,22 @@ fn build() -> Vec<Setting> {
 
         // ── Zoom ──
         Setting::v4l2("zoom_absolute", "v4l2:zoom_absolute", Zoom, "Zoom",
-            "Smoothly narrow the view.", slider(0.0, 100.0, 1.0, Fmt::Plain))
+            "Smoothly narrow the view.", ticked(0.0, 100.0, 1.0, Fmt::Zoom, vec![(0.0, "1×"), (15.0, "1.5×"), (100.0, "4×")]))
             .info("Zooms in smoothly, from 1× up to 4×."),
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
             Kind::Choice(vec![opt(0, "67°", "Widest"), opt(5, "60°", "Normal"), opt(15, "48°", "Narrow")]),
-            |s| from_camera(s.control("zoom_absolute").map(|c| c.value).filter(|v| matches!(v, 0 | 5 | 15)).map(Value::Int)),
-            |d, v| sent(set_control(d, "zoom_absolute", v.as_i64())))
+            // A preset is lit only after it is pressed, and only while the zoom stays there, so sliding the
+            // zoom through a preset does not make the buttons flicker.
+            |s| from_camera(s.control("zoom_absolute").map(|c| Value::Int(lit_preset(c.value)))),
+            |d, v| { PRESSED_PRESET.store(v.as_i64(), std::sync::atomic::Ordering::Relaxed); sent(set_control(d, "zoom_absolute", v.as_i64())) })
             .info("Jumps to one of three common zoom levels: 1×, 1.15× and 1.47×. The angles are the approximate horizontal field of view at each."),
 
         // ── Picture ──
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("contrast", "v4l2:contrast", Picture, "Contrast", "Separate light from dark.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("saturation", "v4l2:saturation", Picture, "Saturation", "How vivid colours look.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
-        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Rotate all colours around the colour wheel.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
+        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Rotate all colours around the colour wheel.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "Centre")])),
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,
@@ -794,7 +809,26 @@ mod tests {
             let spec = setting.slider(&snap).unwrap_or_else(|| panic!("{id} is not a slider"));
             let middle = (spec.min + spec.max) / 2.0;
             assert_eq!(spec.default, Some(middle), "{id}: resets to {:?}, the middle is {middle}", spec.default);
+            // The middle is marked under the bar, so it is easy to find.
+            assert!(spec.ticks.iter().any(|(at, label)| *at == middle && !label.is_empty()), "{id}: no label at the middle {middle}: {:?}", spec.ticks);
         }
+    }
+
+    #[test]
+    fn a_zoom_preset_lights_only_after_it_is_pressed_and_only_while_the_zoom_is_there() {
+        let at = |zoom: i64| {
+            let snap = snapshot(vec![{ let mut c = control("zoom_absolute", zoom, false); c.max = 100; c }]);
+            find("obsbot:fov").unwrap().reading(&snap).map(|(v, _)| v.as_i64())
+        };
+        PRESSED_PRESET.store(-1, std::sync::atomic::Ordering::Relaxed);
+        // Sliding through the presets lights nothing, and is never "unknown".
+        for zoom in [0, 3, 5, 9, 15, 40] { assert_eq!(at(zoom), Some(-1), "zoom {zoom}"); }
+        // Pressing 5 lights it while the zoom is on 5.
+        PRESSED_PRESET.store(5, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(at(5), Some(5));
+        // Moving away puts it out, and coming back by hand does not light it again.
+        assert_eq!(at(6), Some(-1));
+        assert_eq!(at(5), Some(-1));
     }
 
     /// What a person reads in an info button must not be development notes.

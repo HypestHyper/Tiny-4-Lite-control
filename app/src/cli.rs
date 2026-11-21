@@ -263,6 +263,8 @@ pub fn parse_slider(fmt: Fmt, text: &str) -> Result<f64, String> {
         }
         Fmt::Kelvin => parse_number(text, &["k"]),
         Fmt::Ratio => parse_number(text, &["x", "×"]),
+        // Zoom is typed as the factor the window shows (2.5x, or just 2.5) and becomes a position.
+        Fmt::Zoom => parse_number(text, &["x", "×"]).and_then(|f| if (1.0..=crate::backend::zoom::MAX_FACTOR).contains(&f) { Ok(crate::backend::zoom::position(f)) } else { Err("Zoom must be between 1× and 4×.".to_string()) }),
         Fmt::Level => if text.trim().eq_ignore_ascii_case("off") { Ok(0.0) } else { parse_number(text, &["level"]) },
         Fmt::Iso => parse_number(text, &["iso"]),
         Fmt::Plain => parse_number(text, &["%"]),
@@ -933,6 +935,11 @@ mod tests {
         assert!(parse_slider(Fmt::Ev, "5").is_err());
         assert_eq!(parse_slider(Fmt::Kelvin, "5600K").unwrap(), 5600.0);
         assert_eq!(parse_slider(Fmt::Ratio, "2.5x").unwrap(), 2.5);
+        // Zoom is typed as the factor shown, and becomes the control's position.
+        assert_eq!(parse_slider(Fmt::Zoom, "1x").unwrap(), 0.0);
+        assert_eq!(parse_slider(Fmt::Zoom, "4×").unwrap(), 100.0);
+        assert!((parse_slider(Fmt::Zoom, "1.47x").unwrap() - 15.0).abs() < 1e-9);
+        assert!(parse_slider(Fmt::Zoom, "5x").is_err() && parse_slider(Fmt::Zoom, "0.5").is_err());
         assert_eq!(parse_slider(Fmt::Level, "off").unwrap(), 0.0);
         assert_eq!(parse_slider(Fmt::Plain, "40%").unwrap(), 40.0);
         assert!(parse_slider(Fmt::Plain, "loud").is_err());
