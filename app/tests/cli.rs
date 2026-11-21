@@ -372,3 +372,20 @@ fn install_writes_a_systemd_unit_and_an_autostart_entry_only_when_asked() {
     assert_eq!(service_run(&run, &runtime, &log, &["service", "uninstall", "systemd"]).status.code(), Some(0));
     assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists());
 }
+
+#[test]
+fn exposure_compensation_is_sent_as_the_standard_backlight_control() {
+    let run = Run::new("ev");
+    let log = run.config.join("commands.log");
+    let out = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["set", "exposure-compensation", "+2"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let commands = std::fs::read_to_string(&log).unwrap();
+    assert!(commands.contains("--set-ctrl=backlight_compensation=15"), "{commands}");
+}

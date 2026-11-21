@@ -90,14 +90,14 @@ The GitHub Actions workflow `.github/workflows/headless-ui.yml` runs unit tests,
   the actual read-back value, not the requested value. This is distinct
   from autofocus priority. Protocol read-back is capture-verified;
   integrated app behaviour still needs physical camera validation.
-  Exposure compensation (−3.0 to +3.0) uses standard UVC Processing
-  Unit 3, selector 1 (Backlight Compensation). Direct hardware tests
-  cross-checked OBSBOT Center +2.0 with BLC 15 (`0f 00`) and +2.3
-  with BLC 16 (`10 00`). The slider sends its zero-based position
-  0–18 directly as an unsigned little-endian 16-bit value; the previous
-  position+1 mapping was off by one. The UI reads the camera value on
-  startup and follows every SET_CUR with GET_CUR. It displays and
-  persists the returned value, not merely the requested value. The
+  Exposure compensation (−3.0 to +3.0) is the camera's standard V4L2
+  control `backlight_compensation`, 0 to 18, read and written through
+  `v4l2-ctl`. (The earlier raw Processing Unit ioctl failed with ENOENT on
+  this camera and kernel.) Direct hardware tests cross-checked OBSBOT
+  Center +2.0 with 15 and +2.3 with 16. The slider sends its zero-based
+  position 0–18 directly. The UI reads the value on startup and reads it
+  back after every write, and displays and persists the returned value,
+  not merely the requested value. The
   control is available only while Auto Exposure is Auto. The current value
   is initialised with UVC GET_CUR when supported, and successful changes
   are persisted locally.

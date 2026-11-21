@@ -541,14 +541,10 @@ impl SettingRow {
     /// Label where the value came from. A camera-confirmed value needs no label.
     fn show_origin(&self, origin: Origin) {
         let row = &self.0;
-        row.unknown.set_visible(origin != Origin::Camera);
+        // Only an unknown state is worth a label. A value the app remembers just shows, without comment.
+        row.unknown.set_visible(origin == Origin::Unknown);
         match origin {
-            Origin::Camera => {}
-            Origin::Saved => {
-                row.unknown.set_text("Saved");
-                row.unknown.add_css_class("neutral");
-                row.unknown.set_tooltip_text(Some("The last value this app sent. The camera has not confirmed it, and it may differ if you changed it elsewhere."));
-            }
+            Origin::Camera | Origin::Saved => {}
             Origin::Unknown => {
                 row.unknown.set_text("Unknown");
                 row.unknown.remove_css_class("neutral");
@@ -629,9 +625,9 @@ impl SettingRow {
             out.push(format!("Available when: {}", needs.join(" ")));
         }
         if setting.readback == Readback::LastSent {
-            out.push("The camera can't report this setting back, so the row shows the last value you chose here (Saved), or Unknown if you haven't chosen one. It may differ if you change it in another program.".into());
+            out.push("The camera can't report this setting back, so the row shows the last value you chose here, or Unknown if you haven't chosen one. It may differ if you change it in another program.".into());
         } else if matches!(setting.source, crate::backend::registry::Source::Custom { .. }) {
-            out.push("Read from the camera. If it can't be read, the row says Unknown, or Saved for a value you chose earlier.".into());
+            out.push("Read from the camera. If it can't be read, the row shows the value you chose earlier, or Unknown if there isn't one.".into());
         }
         if setting.experimental { out.push("Experimental: not fully tested on this camera.".into()); }
         if out.is_empty() { return out; }

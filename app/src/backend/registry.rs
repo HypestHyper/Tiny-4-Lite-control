@@ -1040,7 +1040,7 @@ mod tests {
     fn exposure_compensation_is_one_setting_and_hdr_is_gone() {
         assert!(find("obsbot:hdr").is_none(), "the HDR switch was removed");
         assert!(find("v4l2:backlight_compensation").is_none());
-        // Backlight compensation is the same hardware control as Exposure compensation (UVC PU, selector 1).
+        // Backlight compensation is the same hardware control as Exposure compensation (V4L2 backlight_compensation).
         let snap = snapshot(vec![control("backlight_compensation", 9, false), control("gamma", 1, false)]);
         let names: Vec<_> = discovered(&snap).iter().map(|s| s.id).collect();
         assert_eq!(names, vec!["v4l2:gamma"]);

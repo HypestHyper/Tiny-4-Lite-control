@@ -480,36 +480,6 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
     Ok(())
 }
 
-pub(crate) fn pu_query(device: &str, selector: u8, request: u8, data: &mut [u8]) -> Result<(), String> {
-    if ui_test_mode() {
-        if selector == 0x01 && data.len() == 2 {
-            if request == UVC_SET_CUR {
-                let value = u16::from_le_bytes([data[0], data[1]]);
-                if value > 18 {
-                    return Err(format!("Synthetic BLC value {value} is outside 0–18."));
-                }
-                LAST_UI_TEST_EXPOSURE_COMPENSATION.store(value as u8, Ordering::Relaxed);
-            } else if request == UVC_GET_CUR {
-                data.copy_from_slice(&(LAST_UI_TEST_EXPOSURE_COMPENSATION.load(Ordering::Relaxed) as u16).to_le_bytes());
-            }
-        }
-        return Ok(());
-    }
-    use std::os::fd::AsRawFd;
-    let file = std::fs::OpenOptions::new().read(true).write(true).open(device)
-        .map_err(|e| format!("Cannot open {device} for UVC Processing Unit controls: {e}"))?;
-    let mut query = UvcXuControlQuery {
-        unit: 3, selector, query: request, _pad: 0,
-        size: data.len() as u16, _pad2: 0, data: data.as_mut_ptr(),
-    };
-    let result = unsafe { ioctl(file.as_raw_fd(), UVCIOC_CTRL_QUERY, &mut query) };
-    if result < 0 {
-        return Err(format!("UVC Processing Unit 3 selector 0x{selector:02x} request 0x{request:02x}: {}",
-            std::io::Error::last_os_error()));
-    }
-    Ok(())
-}
-
 pub(crate) const UVC_CAMERA_TERMINAL_UNIT: u8 = 1;
 pub(crate) const UVC_CT_PANTILT_ABSOLUTE: u8 = 0x0d;
 // Existing V4L2 PTZ controls use 3600 raw units for a one-degree step.
@@ -710,31 +680,25 @@ pub(crate) fn decode_candidate_gimbal_position(data: &[u8; 60]) -> Result<(f64, 
     Ok((pan.clamp(-130.0, 130.0), tilt.clamp(-90.0, 90.0)))
 }
 
-pub(crate) fn exposure_compensation_payload(position: u8) -> Result<[u8; 2], String> {
-    if position > 18 {
-        return Err("Exposure compensation position must be between 0 and 18.".into());
-    }
-    Ok((position as u16).to_le_bytes())
-}
-
-pub(crate) fn exposure_compensation_position(payload: [u8; 2]) -> Option<u8> {
-    let raw = u16::from_le_bytes(payload);
-    (0..=18).contains(&raw).then_some(raw as u8)
-}
-
+/// Exposure compensation is the camera's standard V4L2 control `backlight_compensation`, 0 to 18.
+/// (Reading it through the raw Processing Unit ioctl fails on this camera and kernel.)
 pub(crate) fn get_exposure_compensation(device: &str) -> Result<u8, String> {
-    let mut data = [0u8; 2];
-    pu_query(device, 0x01, UVC_GET_CUR, &mut data)?;
-    exposure_compensation_position(data)
-        .ok_or_else(|| format!("Camera returned unsupported exposure compensation value {}.", u16::from_le_bytes(data)))
+    let value = if ui_test_mode() {
+        i64::from(LAST_UI_TEST_EXPOSURE_COMPENSATION.load(Ordering::Relaxed))
+    } else {
+        get_control(device, "backlight_compensation")?
+    };
+    u8::try_from(value).ok().filter(|value| *value <= 18)
+        .ok_or_else(|| format!("The camera reported an exposure compensation of {value}; expected 0 to 18."))
 }
 
 pub(crate) fn set_exposure_compensation(device: &str, position: u8) -> Result<u8, String> {
-    let mut data = exposure_compensation_payload(position)?;
-    pu_query(device, 0x01, UVC_SET_CUR, &mut data)?;
-
-    // A completed SET_CUR only confirms transport. Confirm the camera's
-    // actual value with GET_CUR before updating the UI or saved preference.
+    if position > 18 {
+        return Err("Exposure compensation must be between 0 and 18.".into());
+    }
+    run_v4l2(device, &format!("--set-ctrl=backlight_compensation={position}"))?;
+    if ui_test_mode() { LAST_UI_TEST_EXPOSURE_COMPENSATION.store(position, Ordering::Relaxed); }
+    // Show and keep what the camera now says, not just what was asked for.
     let actual = get_exposure_compensation(device)?;
     update_config(|config| config.exposure_compensation_position = Some(actual));
     Ok(actual)
@@ -1187,13 +1151,30 @@ pub(crate) fn get_auto_exposure_mode(device: &str) -> Result<bool, String> {
     ))
 }
 
+/// After a command, read the state back, waiting a little for the camera to catch up: it often
+/// reports the old value for a moment after accepting a change. Returns the last reading, which is
+/// only different from `wanted` if the camera really kept something else.
+pub(crate) fn settle_readback<T: PartialEq + Copy>(wanted: T, read: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    settle_readback_with(wanted, read, if ui_test_mode() { std::time::Duration::ZERO } else { std::time::Duration::from_millis(200) })
+}
+
+pub(crate) fn settle_readback_with<T: PartialEq + Copy>(wanted: T, mut read: impl FnMut() -> Result<T, String>, wait: std::time::Duration) -> Result<T, String> {
+    const ATTEMPTS: usize = 7;
+    for attempt in 1..=ATTEMPTS {
+        let actual = read()?;
+        if actual == wanted || attempt == ATTEMPTS { return Ok(actual); }
+        std::thread::sleep(wait);
+    }
+    unreachable!("the last attempt returns")
+}
+
 pub(crate) fn set_auto_exposure_mode(device: &str, face_priority: bool) -> Result<bool, String> {
     let mut data = auto_exposure_mode_payload(face_priority);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
 
     // Do not treat a successful ioctl or the requested value as proof of
     // device state. Read the complete status block and trust byte 7.
-    let actual_face_priority = get_auto_exposure_mode(device)
+    let actual_face_priority = settle_readback(face_priority, || get_auto_exposure_mode(device))
         .map_err(|error| format!("SET_CUR was submitted, but Auto Exposure priority read-back failed: {error}"))?;
     update_config(|config| config.auto_exposure_mode = Some(
         if actual_face_priority { "face" } else { "global" }.into()
@@ -1293,7 +1274,7 @@ pub(crate) fn set_face_focus(device: &str, requested: FaceFocusPriority) -> Resu
 
     // A successful SET_CUR is only host-transport evidence. Confirm the
     // camera's state with the independent CAM_GET_FACE_FOCUS transaction.
-    let actual = get_face_focus(device)?;
+    let actual = settle_readback(requested, || get_face_focus(device))?;
     update_config(|config| config.focus_mode = Some(actual.config_value().into()));
     Ok(actual)
 }
@@ -1564,20 +1545,7 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn exposure_compensation_maps_all_nineteen_positions() {
-        assert_eq!(exposure_compensation_payload(0).unwrap(), hex("0000").as_slice());
-        assert_eq!(exposure_compensation_payload(9).unwrap(), hex("0900").as_slice());
-        assert_eq!(exposure_compensation_payload(15).unwrap(), hex("0f00").as_slice());
-        assert_eq!(exposure_compensation_payload(16).unwrap(), hex("1000").as_slice());
-        assert_eq!(exposure_compensation_payload(18).unwrap(), hex("1200").as_slice());
-        assert_eq!(exposure_compensation_position([0x0f, 0x00]), Some(15));
-        assert_eq!(exposure_compensation_position([0x10, 0x00]), Some(16));
-        for position in 0..=18 {
-            let payload = exposure_compensation_payload(position).unwrap();
-            assert_eq!(exposure_compensation_position(payload), Some(position));
-        }
-        assert!(exposure_compensation_payload(19).is_err());
-        assert_eq!(exposure_compensation_position([0x13, 0x00]), None);
+    fn exposure_compensation_labels_match_verified_checkpoints() {
         assert_eq!(exposure_compensation_label(0), "-3.0");
         assert_eq!(exposure_compensation_label(9), "0.0");
         assert_eq!(exposure_compensation_label(15), "+2.0");
@@ -1890,5 +1858,34 @@ mod timeout_tests {
     fn changing_the_capture_mode_is_given_longer_than_a_control() {
         assert!(v4l2_timeout("--set-fmt-video=width=1280,height=720,pixelformat=MJPG") > v4l2_timeout("--set-ctrl=brightness=1"));
         assert!(v4l2_timeout("--set-parm=30.000") > v4l2_timeout("--get-ctrl=pan_absolute"));
+    }
+}
+
+#[cfg(test)]
+mod settle_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_late_readback_is_waited_for_not_reported_as_a_failure() {
+        let mut readings = vec!["Global", "Global", "Global", "Face"].into_iter();
+        let result = settle_readback_with("Face", || Ok(readings.next().unwrap()), Duration::ZERO);
+        assert_eq!(result, Ok("Face"));
+    }
+
+    #[test]
+    fn a_camera_that_really_keeps_the_old_value_is_reported_as_it_is() {
+        let mut calls = 0;
+        let result = settle_readback_with(1, || { calls += 1; Ok(0) }, Duration::ZERO);
+        assert_eq!(result, Ok(0));
+        assert_eq!(calls, 7);
+    }
+
+    #[test]
+    fn a_failed_readback_is_an_error_at_once() {
+        let mut calls = 0;
+        let result: Result<i32, String> = settle_readback_with(1, || { calls += 1; Err("no answer".into()) }, Duration::ZERO);
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
     }
 }

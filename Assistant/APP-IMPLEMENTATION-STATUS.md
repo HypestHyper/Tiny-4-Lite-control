@@ -127,23 +127,22 @@ The Video capture controls enumerate discrete format/resolution/frame-rate combi
 
 - Auto Exposure Face / Global priority is implemented as a separate grouped control, shown only while the V4L2 `auto_exposure` menu is Auto (value 0). The verified protocol is XU unit 2 / selector `0x06`, with 60-byte `SET_CUR` and `GET_CUR` transfers. SET uses the full 60-byte payload: Face = `03 01 00` followed by 57 zero bytes; Global = `03 01 01` followed by 57 zero bytes. GET_CUR returns a 60-byte status block; byte offset 7 is authoritative (Face = `00`, Global = `01`). The app reads the camera on startup, uses the saved local selection only if read-back is unavailable, and performs a GET_CUR after every SET_CUR. UI and persisted state follow the value actually reported by the camera, including when it differs from the requested value. The 2026-11-20 controlled capture established repeated matching SET/GET transitions. This is unrelated to autofocus priority and must remain separate. Protocol mapping/read-back are hardware-evidence verified; integrated app behavior still requires a physical camera test.
 - The 2026-11-18 Linux capture contains five selector `0x06` writes: frames 80075 (`03 01 00`), 146705 (`03 01 01`), 219369 (`03 01 00`), 297559 (`03 01 01`), and 300515 (`03 01 00`). These repeated transitions support Face = 0 and Global = 1. The final checkpoint was labelled Global, but the last actual write is Face; retain that checkpoint discrepancy rather than changing the byte mapping to fit the label.
-- Exposure compensation uses standard UVC Processing Unit 3,
-  selector 1 (Backlight Compensation), not the OBSBOT vendor Extension
-  Unit. The 19-position slider spans −3.0 to +3.0 in 1/3-stop steps.
-  Direct Linux SET_CUR + GET_CUR tests followed by checking OBSBOT Center
-  confirmed **+2.0 = BLC 15** (payload `0f 00`) and **+2.3 = BLC 16**
-  (payload `10 00`). These adjacent points establish the zero-based
-  slider mapping used by the app: slider position 0–18 is sent directly
-  as an unsigned 16-bit little-endian BLC value 0–18. The previous
-  one-based position+1 implementation (values 1–19) was off by one and
-  has been corrected. The exact fractional label mapping has not been
-  independently checked at every slider position; the two listed
-  positions are the direct Center cross-checks. The control is shown only
-  while V4L2 Auto Exposure is Auto. Startup reads the current value with
-  GET_CUR. Every SET_CUR is followed by GET_CUR; the UI displays and
-  persists the camera-reported value, and reports a mismatch rather than
-  claiming the requested value was applied. A failed or invalid read-back
-  is treated as a failed setting operation.
+- Exposure compensation (Backlight Compensation) is exposed by the
+  camera as the standard V4L2 control `backlight_compensation`, range
+  0–18. Direct Linux UVC SET_CUR + GET_CUR tests followed by checking
+  OBSBOT Center confirmed **+2.0 = BLC 15** (`0f 00`) and
+  **+2.3 = BLC 16** (`10 00`). The 19-position slider maps positions
+  0–18 directly to those V4L2 values and spans −3.0 to +3.0 in 1/3-stop
+  steps. The previous raw ioctl implementation incorrectly assumed
+  Processing Unit entity 3 was queryable through `UVCIOC_CTRL_QUERY`;
+  on this camera/kernel that returned ENOENT for selector 0x01. The app
+  now reads and writes `backlight_compensation` through `v4l2-ctl`
+  and verifies each write by reading the V4L2 value back. It persists and
+  displays the returned value, not merely the requested value. The
+  control is shown only while V4L2 Auto Exposure is Auto. The two listed
+  OBSBOT Center checkpoints directly verify +2.0 and +2.3; the remaining
+  fractional labels have not been independently checked at every step.
+  Hardware validation of the new app path is still required.
 
 - Zoom and FOV now share one standard V4L2 path. The Tiny 2 Lite reports
   `zoom_absolute` from 0 to 100; the user confirmed smooth adjustment
