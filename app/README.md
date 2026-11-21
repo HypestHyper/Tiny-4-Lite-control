@@ -47,6 +47,8 @@ Idle means no other program has the camera open (a call, a recording, the previe
 
 **Installing and running the service from the window.** The **Background service** card on the Device tab shows its status, refreshed every two seconds (process, uptime, camera, last event), and has **Install…**, then **Start**, **Stop** and **Remove**. Install opens a terminal (your `$TERMINAL`, or the first of the common ones found) that runs `tiny4lite-control service setup`: it lists what is needed, offers to install what is missing with your package manager (apt, dnf, pacman, zypper, apk, xbps, emerge) asking for your password in that terminal, then installs the service as a systemd user service, or as a desktop autostart entry where there is no systemd user manager, and starts it. The same steps are commands: `requirements [--install]`, `service setup|start|stop|restart|remove`.
 
+How the service is installed and run on systemd and non-systemd systems, the window managers and init systems it has lines for, and what is not covered, is in `docs/service-and-distros.md`.
+
 **Capture mode and other programs.** Changing resolution or frame rate breaks the picture of any other program using the camera, and the camera may refuse. The window now checks first, names the programs that have the camera open (a browser, OBS), and leaves the mode alone until they are closed.
 
 Only one service runs at a time; `service status` shows it. Start it with your session using `service install`, which prints what to add, or writes it with `--write` for systemd and desktop autostart:
