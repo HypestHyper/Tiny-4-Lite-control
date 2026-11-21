@@ -144,12 +144,14 @@ pub enum Kind {
 
 // ── Dependencies ──────────────────────────────────────────────────────────
 
-/// A dependency test. `IsNot` is available for entries that need it.
+/// A dependency test: the other setting is one value, is not one value, or is any of a few.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
-pub enum Cond { Is(i64), IsNot(i64) }
+pub enum Cond { Is(i64), IsNot(i64), OneOf(&'static [i64]) }
 pub const ON: Cond = Cond::Is(1);
 pub const OFF: Cond = Cond::Is(0);
+/// Zoom can be set by hand while tracking is off (0) or Normal (1). The other modes frame the picture themselves.
+pub const ZOOM_TRACKING: Cond = Cond::OneOf(&[0, 1]);
 
 #[derive(Clone, Debug)]
 pub struct Dep {
@@ -410,6 +412,7 @@ fn dep_holds(dep: &Dep, snapshot: &Snapshot) -> bool {
     match dep.cond {
         Cond::Is(expected) => value.as_i64() == expected,
         Cond::IsNot(other) => value.as_i64() != other,
+        Cond::OneOf(any) => any.contains(&value.as_i64()),
     }
 }
 
@@ -428,7 +431,15 @@ fn lit_preset(zoom: i64) -> i64 {
 pub fn dependency_map() -> String {
     let say = |dep: &Dep| -> String {
         let target = find(dep.on).expect("a dependency points at a real setting");
-        let (value, is) = match dep.cond { Cond::Is(v) => (v, "is"), Cond::IsNot(v) => (v, "is not") };
+        // Several accepted values read as "is X or Y".
+        if let Cond::OneOf(values) = dep.cond {
+            let names: Vec<String> = values.iter().map(|v| match &target.kind {
+                Kind::Choice(options) => options.iter().find(|o| o.value == *v).map(|o| o.label.to_string()).unwrap_or_else(|| v.to_string()),
+                _ => v.to_string(),
+            }).collect();
+            return format!("{} is {}", target.label, names.join(" or "));
+        }
+        let (value, is) = match dep.cond { Cond::Is(v) => (v, "is"), Cond::IsNot(v) => (v, "is not"), Cond::OneOf(_) => unreachable!("handled above") };
         let state = match &target.kind {
             Kind::Toggle => if value == 1 { "on" } else { "off" }.to_string(),
             Kind::Choice(options) => options.iter().find(|o| o.value == value).map(|o| o.label.to_string()).unwrap_or_else(|| value.to_string()),
@@ -562,7 +573,8 @@ fn build() -> Vec<Setting> {
         // ── Zoom ──
         Setting::v4l2("zoom_absolute", "v4l2:zoom_absolute", Zoom, "Zoom",
             "Smoothly narrow the view.", ticked(0.0, 100.0, 1.0, Fmt::Zoom, vec![(0.0, "1×"), (15.0, "1.5×"), (100.0, "4×")]))
-            .info("Zooms in smoothly, from 1× up to 4×."),
+            .needs("obsbot:ai_tracking_mode", ZOOM_TRACKING, "Zoom works with tracking off or on Normal. Change Tracking mode to use it.")
+            .info("Zooms in smoothly, from 1× up to 4×. Works with tracking off or on Normal; the other tracking modes frame the picture themselves."),
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
             Kind::Choice(vec![opt(0, "Wide · 67°", "The widest view"), opt(5, "Normal · 60°", "A little closer"), opt(15, "Narrow · 48°", "Closer still")]),
@@ -570,7 +582,8 @@ fn build() -> Vec<Setting> {
             // zoom through a preset does not make the buttons flicker.
             |s| from_camera(s.control("zoom_absolute").map(|c| Value::Int(lit_preset(c.value)))),
             |d, v| { PRESSED_PRESET.store(v.as_i64(), std::sync::atomic::Ordering::Relaxed); sent(set_control(d, "zoom_absolute", v.as_i64())) })
-            .info("Jumps to one of three common zoom levels: 1×, 1.15× and 1.47×. The angles are the approximate horizontal field of view at each."),
+            .needs("obsbot:ai_tracking_mode", ZOOM_TRACKING, "Zoom works with tracking off or on Normal. Change Tracking mode to use it.")
+            .info("Jumps to one of three common zoom levels: 1×, 1.15× and 1.47×. The angles are the approximate horizontal field of view at each. Works with tracking off or on Normal."),
 
         // ── Picture ──
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
@@ -860,6 +873,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn zoom_works_with_tracking_off_or_normal_and_not_with_the_framing_modes() {
+        let with_mode = |mode: u8, sub: u8| {
+            let mut status = [0u8; 60];
+            status[0x18] = mode;
+            status[0x1c] = sub;
+            Snapshot { status: Some(status), controls: vec![control("zoom_absolute", 10, false)], ..Snapshot::default() }
+        };
+        for id in ["v4l2:zoom_absolute", "obsbot:fov"] {
+            let setting = find(id).unwrap();
+            // Off (0/0) and Normal (2/0) leave zoom to you.
+            assert!(setting.blockers(&with_mode(0, 0)).is_empty(), "{id} with tracking off");
+            assert!(setting.blockers(&with_mode(2, 0)).is_empty(), "{id} with Normal tracking");
+            // Upper body, Close-up, Headless, Lower body and Group frame the picture themselves.
+            for (mode, sub) in [(2, 1), (2, 2), (2, 3), (2, 4), (1, 0)] {
+                let blockers = setting.blockers(&with_mode(mode, sub));
+                assert_eq!(blockers.len(), 1, "{id} with tracking {mode}/{sub}");
+                assert!(blockers[0].contains("Tracking mode"));
+            }
+            // Unknown tracking never blocks.
+            assert!(setting.blockers(&Snapshot { controls: vec![control("zoom_absolute", 10, false)], ..Snapshot::default() }).is_empty());
+        }
+    }
+
     /// docs/dependencies.md is generated: `tiny4lite-control deps > docs/dependencies.md`.
     #[test]
     fn the_dependency_document_is_up_to_date() {
@@ -872,12 +909,14 @@ mod tests {
         for setting in all() {
             for dep in &setting.deps {
                 let target = find(dep.on).unwrap();
-                let value = match dep.cond { Cond::Is(v) | Cond::IsNot(v) => v };
+                let values: Vec<i64> = match dep.cond { Cond::Is(v) | Cond::IsNot(v) => vec![v], Cond::OneOf(any) => any.to_vec() };
+                for value in values {
                 match &target.kind {
                     Kind::Toggle => assert!(matches!(value, 0 | 1), "{} needs {} to be {value}", setting.id, dep.on),
                     Kind::Choice(options) => assert!(options.iter().any(|o| o.value == value), "{} needs {} to be {value}, which is not an option", setting.id, dep.on),
                     Kind::DriverMenu => assert!(target.options(&snap).iter().any(|o| o.value == value), "{} needs {} to be {value}, which the driver does not offer", setting.id, dep.on),
                     Kind::Slider(_) => panic!("{} depends on a slider", setting.id),
+                }
                 }
                 assert!(!dep.reason.is_empty());
             }
