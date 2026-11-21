@@ -359,3 +359,16 @@ revision as build-verified.
 The Centre button on the gimbal card, and `tiny4lite-control gimbal centre --yes`, send pan 0 and tilt 0
 in one V4L2 command (`pan_absolute=0,tilt_absolute=0`). The user confirmed on a real camera that this is
 the physical centre. The camera turns, so the window asks first and the command line needs `--yes`.
+
+## Autofocus priority: what the four bytes are
+
+The notes call Face `bf fb 01 00` and Global `be 07 00 00` "the payload". They are not. The set frame has a
+payload length of 4 at offset 12, a CRC16/USB of that payload at offsets 14 and 15, and a 32-bit number at
+offsets 16 to 19. The bytes written down are offsets 14 to 17: the CRC (`bf fb` for the number 1, `be 07` for
+0) and the first two bytes of the number. The sleep and wake frames show the same pairs in front of
+`01 00 00 00` and `00 00 00 00`, and a unit test checks that the CRC of a frame carrying 1 is `bf fb`.
+
+So the number sent is 1 for Face and 0 for Global. The first versions of this app sent `0x0001FBBF` and
+`0x000007BE`, which the camera did not take as either state, so switching priority left the camera
+where it was. The camera's reply is read by its number (1 or 0), with the old byte pattern as a second
+opinion. Run with `TINY4LITE_DEBUG_XU=1` to see what is sent and what the camera answers.

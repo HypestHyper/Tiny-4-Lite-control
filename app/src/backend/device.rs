@@ -435,9 +435,11 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                     data[4..6].copy_from_slice(&12u16.to_le_bytes());
                     data[8..12].copy_from_slice(&[0x02, 0x0a, 0xc2, 0x35]);
                     data[12..14].copy_from_slice(&4u16.to_le_bytes());
-                    data[14..18].copy_from_slice(
-                        &LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes(),
-                    );
+                    // Laid out like a command frame: the payload CRC, then the number (1 Face, 0 Global).
+                    let value = LAST_UI_TEST_FOCUS_VALUE.load(Ordering::Relaxed).to_le_bytes();
+                    data[16..20].copy_from_slice(&value);
+                    let payload_crc = crc16_usb(&data[12..20]);
+                    data[14..16].copy_from_slice(&payload_crc.to_le_bytes());
                     let crc = crc16_usb(&data[..12]);
                     data[6..8].copy_from_slice(&crc.to_le_bytes());
                 } else if !payload.is_empty() {
@@ -906,7 +908,7 @@ pub(crate) static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 pub(crate) static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
-pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(0x0001_fbbf);
+pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(1);
 
 pub(crate) fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {
@@ -1196,6 +1198,19 @@ pub(crate) enum FaceFocusPriority {
 }
 
 impl FaceFocusPriority {
+    /// The value sent: a 32-bit number at offset 16 of the frame, 1 for Face and 0 for Global, with the
+    /// frame's payload CRC just before it. (The bytes `bf fb 01 00` and `be 07 00 00` that were once
+    /// taken for the value are that CRC followed by the first two bytes of the number: they are the
+    /// same two bytes that appear before `01 00 00 00` and `00 00 00 00` in the sleep and wake frames.)
+    pub(crate) fn value(self) -> [u8; 4] {
+        match self {
+            Self::Face => 1u32.to_le_bytes(),
+            Self::Global => 0u32.to_le_bytes(),
+        }
+    }
+
+    /// Bytes 14 to 18 of a frame carrying this value: its CRC and the first half of the number. This is
+    /// how the camera's reply looks, and how the earlier notes wrote it down.
     pub(crate) fn payload(self) -> [u8; 4] {
         match self {
             Self::Face => [0xbf, 0xfb, 0x01, 0x00],
@@ -1253,6 +1268,13 @@ pub(crate) fn decode_face_focus_reply(data: &[u8], sequence: u16) -> Result<Opti
     if crc16_usb(&header) != received_crc {
         return Err("CAM_GET_FACE_FOCUS reply header CRC is invalid.".into());
     }
+    // The number sits at 16 to 20: 1 is Face, 0 is Global. The older reading of bytes 14 to 18 (the
+    // CRC and half the number) is kept as a second opinion for replies laid out that way.
+    match [data[16], data[17], data[18], data[19]] {
+        [1, 0, 0, 0] => return Ok(Some(FaceFocusPriority::Face)),
+        [0, 0, 0, 0] if data[14..16] == FaceFocusPriority::Global.payload()[..2] => return Ok(Some(FaceFocusPriority::Global)),
+        _ => {}
+    }
     let payload = [data[14], data[15], data[16], data[17]];
     FaceFocusPriority::from_payload(payload).map(Some)
 }
@@ -1276,12 +1298,21 @@ pub(crate) fn get_face_focus(device: &str) -> Result<FaceFocusPriority, String> 
 pub(crate) fn set_face_focus(device: &str, requested: FaceFocusPriority) -> Result<FaceFocusPriority, String> {
     let group = [0x0a, 0x02, 0x02, 0x36, 0x04, 0x00];
     let mut command = [0u8; 6];
-    command[2..6].copy_from_slice(&requested.payload());
+    command[2..6].copy_from_slice(&requested.value());
     xu_send_frame(device, group, command)?;
+    if std::env::var_os("TINY4LITE_DEBUG_XU").is_some() {
+        eprintln!("[xu] autofocus priority: sent {} (value {:02x?})", requested.label(), requested.value());
+    }
 
     // A successful SET_CUR is only host-transport evidence. Confirm the
     // camera's state with the independent CAM_GET_FACE_FOCUS transaction.
-    let actual = settle_readback(requested, || get_face_focus(device))?;
+    let actual = settle_readback(requested, || {
+        let reading = get_face_focus(device);
+        if std::env::var_os("TINY4LITE_DEBUG_XU").is_some() {
+            eprintln!("[xu] autofocus priority: camera answered {:?}", reading.as_ref().map(|p| p.label()));
+        }
+        reading
+    })?;
     update_config(|config| config.focus_mode = Some(actual.config_value().into()));
     Ok(actual)
 }
@@ -1566,17 +1597,37 @@ mod xu_protocol_tests {
         assert_eq!(FaceFocusPriority::Face.payload(), hex("bffb0100").as_slice());
         assert_eq!(FaceFocusPriority::Global.payload(), hex("be070000").as_slice());
 
+        // The frame carries the number 1 (Face) or 0 (Global) at offset 16, and its own CRC before it.
+        // Written out from byte 14 these read bf fb 01 00 00 00 and be 07 00 00 00 00, the same CRCs as in
+        // the sleep and wake frames, which is where the older notes' four bytes come from.
         let mut face_command = [0u8; 6];
-        face_command[2..6].copy_from_slice(&FaceFocusPriority::Face.payload());
+        face_command[2..6].copy_from_slice(&FaceFocusPriority::Face.value());
         let face = obsbot_frame(0x0040, group, face_command);
         assert_eq!(&face[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&face[16..20], hex("bffb0100").as_slice());
+        assert_eq!(&face[14..20], hex("bffb01000000").as_slice());
 
         let mut global_command = [0u8; 6];
-        global_command[2..6].copy_from_slice(&FaceFocusPriority::Global.payload());
+        global_command[2..6].copy_from_slice(&FaceFocusPriority::Global.value());
         let global = obsbot_frame(0x0041, group, global_command);
         assert_eq!(&global[8..14], hex("0a0202360400").as_slice());
-        assert_eq!(&global[16..20], hex("be070000").as_slice());
+        assert_eq!(&global[14..20], hex("be0700000000").as_slice());
+    }
+
+    #[test]
+    fn a_reply_laid_out_like_a_command_frame_decodes_by_its_number() {
+        for (value, expected) in [(1u32, FaceFocusPriority::Face), (0u32, FaceFocusPriority::Global)] {
+            let mut reply = [0u8; 60];
+            reply[..6].copy_from_slice(&hex("aa2916000c00"));
+            reply[8..14].copy_from_slice(&hex("020ac2350400"));
+            reply[16..20].copy_from_slice(&value.to_le_bytes());
+            let payload_crc = crc16_usb(&reply[12..20]);
+            reply[14..16].copy_from_slice(&payload_crc.to_le_bytes());
+            let crc = crc16_usb(&reply[..12]);
+            reply[6..8].copy_from_slice(&crc.to_le_bytes());
+            assert_eq!(decode_face_focus_reply(&reply, 0x16).unwrap(), Some(expected));
+            // The CRC in front of the number is the pair of bytes the earlier notes took for the value.
+            assert_eq!(&reply[14..18], expected.payload().as_slice());
+        }
     }
 
     #[test]
