@@ -12,9 +12,6 @@ fn ai_mode_id(status: &[u8; 60]) -> Option<i64> {
         (0x02, 0x03) => Some(4),
         (0x02, 0x04) => Some(5),
         (0x01, 0x00) => Some(6),
-        // Added after the first presets were saved, so it takes the next number and
-        // older presets keep their meaning.
-        (0x03, 0x00) => Some(7),
         _ => None,
     }
 }
@@ -28,7 +25,6 @@ fn ai_mode_payload(id: i64) -> Option<(u8, u8)> {
         4 => Some((0x02, 0x03)),
         5 => Some((0x02, 0x04)),
         6 => Some((0x01, 0x00)),
-        7 => Some((0x03, 0x00)),
         _ => None,
     }
 }
@@ -179,7 +175,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 .ok_or_else(|| "LED brightness must be between 0 and 3.".to_string())
                 .and_then(|level| set_led_brightness(device, level))
         } else if key == "obsbot:ai_tracking_mode" {
-            ai_mode_payload(*value).ok_or_else(|| "Unknown AI tracking mode in preset.".to_string())
+            ai_mode_payload(*value).ok_or_else(|| if *value == 7 { "Hand tracking is no longer offered, so this setting was skipped.".to_string() } else { "Unknown AI tracking mode in preset.".to_string() })
                 .and_then(|mode| set_ai_mode(device, mode))
         } else if key == "obsbot:tracking_speed" {
             match *value {
@@ -273,13 +269,12 @@ mod tests {
 
     #[test]
     fn ai_mode_preset_ids_round_trip() {
-        for id in 0..=7 {
+        for id in 0..=6 {
             assert_eq!(ai_mode_id_from_payload(ai_mode_payload(id).unwrap()), Some(id));
         }
-        assert!(ai_mode_payload(8).is_none());
-        // Presets saved before Hand existed keep their meaning: 6 is still Group.
+        // Hand tracking is no longer offered; a preset that has it skips that one setting.
+        assert!(ai_mode_payload(7).is_none());
         assert_eq!(ai_mode_payload(6), Some((0x01, 0x00)));
-        assert_eq!(ai_mode_payload(7), Some((0x03, 0x00)));
     }
 
     fn ai_mode_id_from_payload(payload: (u8, u8)) -> Option<i64> {
@@ -287,7 +282,7 @@ mod tests {
             (0x00, 0x00) => Some(0), (0x02, 0x00) => Some(1),
             (0x02, 0x01) => Some(2), (0x02, 0x02) => Some(3),
             (0x02, 0x03) => Some(4), (0x02, 0x04) => Some(5),
-            (0x01, 0x00) => Some(6), (0x03, 0x00) => Some(7), _ => None,
+            (0x01, 0x00) => Some(6), _ => None,
         }
     }
 

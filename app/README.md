@@ -209,7 +209,7 @@ metering priority) only do so if the camera's status block cannot be read at all
 Two controls that look alike are different: **Metering priority** (Auto Exposure Face/Global) and **Autofocus
 priority** (Face/Global focus) use different commands. **Exposure compensation** is the camera's standard
 Backlight Compensation control; there is no separate backlight slider because it is the same control.
-**Tracking mode** has eight choices; Target selection is a gesture, not a tracking mode.
+**Tracking mode** has seven choices; Target selection is a gesture, not a tracking mode.
 
 ### Adding or changing a setting
 

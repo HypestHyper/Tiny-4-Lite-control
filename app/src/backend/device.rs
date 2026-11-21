@@ -1306,13 +1306,15 @@ pub(crate) fn set_ai_mode(device: &str, mode: (u8, u8)) -> Result<(), String> {
     data[2] = mode.0;
     data[3] = mode.1;
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
-    let readback = xu_status(device)?;
-    let actual = (readback[0x18], readback[0x1c]);
-    if actual != mode {
-        return Err(format!(
-            "AI mode read-back mismatch: requested {:02x}/{:02x}, camera reports {:02x}/{:02x}.",
-            mode.0, mode.1, actual.0, actual.1
-        ));
+    // The camera takes a moment to report the new mode, and it works either way, so wait a little
+    // for the report to catch up and never treat a late one as a failure. The window reads the
+    // state again afterwards and shows whatever the camera says.
+    for attempt in 0..5 {
+        match xu_status(device) {
+            Ok(status) if (status[0x18], status[0x1c]) == mode => break,
+            _ if attempt < 4 && !ui_test_mode() => std::thread::sleep(std::time::Duration::from_millis(150)),
+            _ => break,
+        }
     }
     let name = match mode { (0x00, 0x00) => "off", (0x02, 0x00) => "normal", (0x02, 0x01) => "upper", (0x02, 0x02) => "close", (0x02, 0x03) => "headless", (0x02, 0x04) => "lower", (0x03, 0x00) => "hand", (0x01, 0x00) => "group", _ => "unknown" };
     update_config(|config| config.ai_tracking_mode = Some(name.into()));

@@ -208,7 +208,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
     refresh.connect_clicked(move |_| reload_click());
     actions.append(&refresh);
     actions.append(&widgets::info_button("Camera memory", &[
-        "Saving stores the camera's live pose and zoom. Moving to a position turns the gimbal, so the app asks first.".into(),
+        "Saving stores where the camera is pointing and its zoom. Moving to a position turns the gimbal, so the app asks first.".into(),
         "Press Enter in a name field to rename a position.".into(),
     ]));
     body.append(&actions);

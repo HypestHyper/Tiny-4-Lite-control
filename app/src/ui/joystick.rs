@@ -199,6 +199,11 @@ impl Joystick {
         speed.append(&scale);
         speed.append(&value);
         column.append(&speed);
+
+        // Awake and asleep are how the camera is turned on and off, so they sit right here.
+        if let Some(power) = backend::registry::find("obsbot:sleep") {
+            column.append(widgets::SettingRow::new(&state.store, power, widgets::Density::Slim).widget());
+        }
         column
     }
 

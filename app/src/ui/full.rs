@@ -91,6 +91,9 @@ impl FullWindow {
         let controls = gtk::WindowControls::new(gtk::PackType::End);
         controls.set_visible(ctx.style.window_buttons());
         { let (c, s) = (controls.clone(), ctx.style.clone()); ctx.style.on_change(move || c.set_visible(s.window_buttons())); }
+        // Start in the smallest form; the first layout pass gives the words back when there is room.
+        title.set_visible(false);
+        chip.set_compact(true);
         header.append(&logo);
         header.append(&title);
         header.append(&chip.root);
@@ -107,6 +110,14 @@ impl FullWindow {
         let joystick = Joystick::new(&store);
         let stage = gtk::Box::new(gtk::Orientation::Vertical, 16);
         stage.set_size_request(320, -1);
+        // The preview and the gimbal scroll together when the window is short, so the window can
+        // always be made smaller than they are.
+        let stage_scroller = gtk::ScrolledWindow::new();
+        stage_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        stage_scroller.set_propagate_natural_height(false);
+        stage_scroller.set_propagate_natural_width(true);
+        stage_scroller.set_min_content_height(120);
+        stage_scroller.set_child(Some(&stage));
 
         let preview_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         preview_card.add_css_class("stage-card");
@@ -256,6 +267,8 @@ impl FullWindow {
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             content.append(&widgets::icon(glyph));
             let text = widgets::line(label, &["tab-label"]);
+            // The words give way to the icons rather than forcing the window wide.
+            text.set_ellipsize(gtk::pango::EllipsizeMode::End);
             content.append(&text);
             let button = gtk::ToggleButton::new();
             button.set_child(Some(&content));
@@ -306,12 +319,12 @@ impl FullWindow {
         paned.set_wide_handle(false);
         paned.set_resize_start_child(false);
         paned.set_resize_end_child(true);
-        paned.set_shrink_start_child(false);
-        paned.set_shrink_end_child(false);
+        paned.set_shrink_start_child(true);
+        paned.set_shrink_end_child(true);
         paned.set_margin_start(20);
         paned.set_margin_end(14);
         paned.set_margin_bottom(20);
-        paned.set_start_child(Some(&stage));
+        paned.set_start_child(Some(&stage_scroller));
         paned.set_end_child(Some(&right));
         let stacked = Rc::new(Cell::new(false));
         paned.set_position(if current_config().split_position >= 320 { current_config().split_position } else { 420 });
@@ -325,35 +338,63 @@ impl FullWindow {
         store.add_toaster(toaster);
         window.set_child(Some(dialogs.overlay()));
 
-        // Adapt to the window size.
+
+        // Adapt to the window size: three layouts. Wide has the stage beside the settings. Narrow puts it
+        // above, with the preview and the gimbal side by side. Tiny puts everything in one column.
+        let layout = Rc::new(Cell::new(0_u8));
         let relayout = {
-            let (paned, stage, right, preview_card, gimbal_card, stacked, ctx) =
-                (paned.clone(), stage.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), ctx.clone());
+            let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, layout, ctx, title, chip) =
+                (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), layout.clone(), ctx.clone(), title.clone(), chip.clone());
             Rc::new(move |width: i32| {
                 ctx.style.report_width(width);
-                let narrow = width < if stacked.get() { 880 } else { 820 };
-                if narrow == stacked.get() && paned.start_child().is_some() { return; }
-                stacked.set(narrow);
+                // The header gives up its words before its buttons.
+                title.set_visible(width >= 540);
+                chip.set_compact(width < 720);
+                let was = layout.get();
+                // A little slack each way, so a window sitting on a threshold does not flicker.
+                let next = if width < if was == 2 { 740 } else { 700 } { 2 }
+                    else if width < if was == 0 { 820 } else { 880 } { 1 } else { 0 };
+                if next == was && paned.start_child().is_some() { return; }
+                layout.set(next);
+                stacked.set(next != 0);
                 paned.set_start_child(None::<&gtk::Widget>);
                 paned.set_end_child(None::<&gtk::Widget>);
-                if narrow {
-                    stage.set_orientation(gtk::Orientation::Horizontal);
-                    stage.set_size_request(-1, 260);
-                    gimbal_card.set_size_request(250, -1);
-                    preview_card.set_hexpand(true);
-                    paned.set_orientation(gtk::Orientation::Vertical);
-                    paned.set_position(280);
-                } else {
-                    stage.set_orientation(gtk::Orientation::Vertical);
-                    stage.set_size_request(320, -1);
-                    gimbal_card.set_size_request(-1, -1);
-                    preview_card.set_hexpand(false);
-                    paned.set_orientation(gtk::Orientation::Horizontal);
-                    let saved = current_config().split_position;
-                    paned.set_position(if saved >= 320 { saved } else { 420 });
+                match next {
+                    0 => {
+                        stage.set_orientation(gtk::Orientation::Vertical);
+                        stage.set_size_request(320, -1);
+                        stage_scroller.set_size_request(-1, -1);
+                        gimbal_card.set_size_request(-1, -1);
+                        preview_card.set_hexpand(false);
+                        preview_card.set_size_request(-1, -1);
+                        paned.set_orientation(gtk::Orientation::Horizontal);
+                        let saved = current_config().split_position;
+                        paned.set_position(if saved >= 320 { saved } else { 420 });
+                    }
+                    1 => {
+                        stage.set_orientation(gtk::Orientation::Horizontal);
+                        stage.set_size_request(-1, 260);
+                        stage_scroller.set_size_request(-1, 260);
+                        gimbal_card.set_size_request(250, -1);
+                        preview_card.set_hexpand(true);
+                        preview_card.set_size_request(120, -1);
+                        paned.set_orientation(gtk::Orientation::Vertical);
+                        paned.set_position(280);
+                    }
+                    _ => {
+                        stage.set_orientation(gtk::Orientation::Vertical);
+                        stage.set_size_request(-1, -1);
+                        stage_scroller.set_size_request(-1, 260);
+                        gimbal_card.set_size_request(-1, -1);
+                        preview_card.set_hexpand(true);
+                        preview_card.set_size_request(-1, 150);
+                        paned.set_orientation(gtk::Orientation::Vertical);
+                        paned.set_position(280);
+                    }
                 }
-                paned.set_start_child(Some(&stage));
+                paned.set_start_child(Some(&stage_scroller));
                 paned.set_end_child(Some(&right));
+                let _ = &right;
             })
         };
 

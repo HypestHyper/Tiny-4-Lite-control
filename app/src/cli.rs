@@ -946,8 +946,8 @@ mod tests {
         assert_eq!(parse_value(mode, &snapshot, "Upper body").unwrap(), Value::Int(2));
         assert_eq!(parse_value(mode, &snapshot, "close_up").unwrap(), Value::Int(3));
         assert!(parse_value(mode, &snapshot, "sideways").unwrap_err().contains("No tracking, Normal, Upper body"));
-        assert_eq!(parse_value(mode, &snapshot, "hand").unwrap(), Value::Int(6));
-        assert_eq!(parse_value(mode, &snapshot, "group").unwrap(), Value::Int(7));
+        assert!(parse_value(mode, &snapshot, "hand").is_err(), "hand tracking is not offered");
+        assert_eq!(parse_value(mode, &snapshot, "group").unwrap(), Value::Int(6));
         let fov = registry::find("obsbot:fov").unwrap();
         assert_eq!(parse_value(fov, &snapshot, "60").unwrap(), Value::Int(5));
     }

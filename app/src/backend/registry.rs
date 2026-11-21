@@ -441,12 +441,12 @@ fn ticked(min: f64, max: f64, step: f64, fmt: Fmt, ticks: Vec<(f64, &'static str
 fn flag(value: Option<bool>) -> Option<Value> { value.map(Value::Bool) }
 fn number(value: Option<u8>) -> Option<Value> { value.map(|v| Value::Int(i64::from(v))) }
 
-/// The eight AI tracking modes, as (saved name, mode byte, sub-mode byte). Each was set and read
+/// The seven AI tracking modes offered, as (saved name, mode byte, sub-mode byte). Each was set and read
 /// back exactly from status offsets 0x18 and 0x1C (reference/15). Do not add modes without
 /// new hardware evidence.
-const TRACKING_MODES: [(&str, u8, u8); 8] = [
+const TRACKING_MODES: [(&str, u8, u8); 7] = [
     ("off", 0x00, 0x00), ("normal", 0x02, 0x00), ("upper", 0x02, 0x01), ("close", 0x02, 0x02),
-    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("hand", 0x03, 0x00), ("group", 0x01, 0x00),
+    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("group", 0x01, 0x00),
 ];
 const GESTURE_TARGET: [u8; 6] = [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00];
 const GESTURE_ZOOM: [u8; 6] = [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00];
@@ -469,7 +469,7 @@ fn build() -> Vec<Setting> {
         // ── Exposure ──
         Setting::v4l2("auto_exposure", ae, Exposure, "Exposure mode",
             "Let the camera choose exposure, or set the shutter yourself.", Kind::DriverMenu)
-            .info("Auto: the camera sets exposure on its own. Manual: you set the shutter speed, and exposure compensation and metering priority switch off. The list of modes comes from the camera driver."),
+            .info("Auto: the camera sets exposure on its own. Manual: you set the shutter speed, and exposure compensation and metering priority switch off."),
         Setting::custom("obsbot:auto_exposure_mode", Exposure, "Metering priority",
             "Which part of the picture automatic exposure aims at.",
             Kind::Choice(vec![opt(0, "Global", "Balance the whole frame"), opt(1, "Face", "Favour a detected face")]),
@@ -480,7 +480,7 @@ fn build() -> Vec<Setting> {
                 } else { None }),
             |d, v| set_auto_exposure_mode(d, v.as_i64() == 1).map(|actual| Some(Value::Int(i64::from(actual)))))
             .needs(ae, Cond::Is(0), "Set Exposure mode to Auto to choose a metering priority.")
-            .info("Sends OBSBOT's Auto Exposure priority command and reads the result back from the camera's status block (byte 7) after every change. This is separate from autofocus priority."),
+            .info("Face: exposure follows a face the camera finds. Global: exposure follows the whole picture. Works while Exposure mode is Auto, and is separate from autofocus priority."),
         Setting::custom("obsbot:exposure_compensation", Exposure, "Exposure compensation",
             "Make automatic exposure brighter or darker.",
             resting_at(ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "0"), (18.0, "+3")]), 9.0),
@@ -488,7 +488,7 @@ fn build() -> Vec<Setting> {
                 .or_else(|| if s.exposure_comp.is_none() { from_saved(number(s.config.exposure_compensation_position)) } else { None }),
             |d, v| set_exposure_compensation(d, v.as_i64().clamp(0, 18) as u8).map(|actual| Some(Value::Int(i64::from(actual)))))
             .needs(ae, Cond::Is(0), "Set Exposure mode to Auto to use exposure compensation.")
-            .info("Moves the automatic exposure target in thirds of a stop, from −3 to +3 EV. This is the camera's standard Backlight Compensation control (0 to 18), which OBSBOT Center calls Exposure Compensation, so it appears once here. OBSBOT Center shows +2.0 for 15 and +2.3 for 16; the other labels follow the same scale but have not each been checked."),
+            .info("Makes automatic exposure brighter or darker, in steps of a third of a stop from −3 to +3 EV. Works while Exposure mode is Auto."),
         Setting::v4l2("exposure_time_absolute", "v4l2:exposure_time_absolute", Exposure, "Shutter speed",
             "How long each frame is exposed.", slider(1.0, 2500.0, 1.0, Fmt::Shutter))
             .needs(ae, Cond::Is(1), "Set Exposure mode to Manual to choose a shutter speed.")
@@ -525,7 +525,7 @@ fn build() -> Vec<Setting> {
                 set_face_focus(d, wanted).map(|actual| Some(Value::Int(i64::from(actual == FaceFocusPriority::Face))))
             })
             .needs(af, ON, "Turn on Autofocus to choose its priority.")
-            .info("Sends CAM_SET_FACE_FOCUS and reads the camera's state back with CAM_GET_FACE_FOCUS after every change. If the camera does not answer, this shows Unknown rather than a saved value. A matching read-back confirms the setting, not how the focus behaves. This is separate from Auto Exposure priority."),
+            .info("Face: focus favours a face the camera finds. Global: focus favours the whole scene. Works while Autofocus is on, and is separate from metering priority. If the camera does not answer, this shows Unknown."),
         Setting::v4l2("focus_absolute", "v4l2:focus_absolute", Focus, "Manual focus",
             "Set the focus distance yourself.", slider(0.0, 100.0, 1.0, Fmt::Plain))
             .needs(af, OFF, "Turn off Autofocus to focus by hand."),
@@ -533,13 +533,13 @@ fn build() -> Vec<Setting> {
         // ── Zoom ──
         Setting::v4l2("zoom_absolute", "v4l2:zoom_absolute", Zoom, "Zoom",
             "Smoothly narrow the view.", slider(0.0, 100.0, 1.0, Fmt::Plain))
-            .info("Uses the standard zoom control. The camera's separate continuous-zoom control reports an invalid value, so it is not offered."),
+            .info("Zooms in smoothly, from 1× up to 4×."),
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
             Kind::Choice(vec![opt(0, "67°", "Widest"), opt(5, "60°", "Normal"), opt(15, "48°", "Narrow")]),
             |s| from_camera(s.control("zoom_absolute").map(|c| c.value).filter(|v| matches!(v, 0 | 5 | 15)).map(Value::Int)),
             |d, v| sent(set_control(d, "zoom_absolute", v.as_i64())))
-            .info("Moves the zoom control to one of three common positions, 1.00×, 1.15× and 1.47×. The angles are the horizontal field of view: OBSBOT publishes 67.2° at the widest, and the others are that divided by the zoom factor, so they are approximate."),
+            .info("Jumps to one of three common zoom levels: 1×, 1.15× and 1.47×. The angles are the approximate horizontal field of view at each."),
 
         // ── Picture ──
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
@@ -552,7 +552,7 @@ fn build() -> Vec<Setting> {
             |s| from_saved(flag(s.config.mirror_image_enabled)),
             |d, v| sent(set_mirror_image(d, v.as_bool())))
             .last_sent()
-            .info("Uses a command captured from OBSBOT Center. The camera does not report it back, so the switch shows the last value this app sent."),
+            .info("Flips the picture left to right. The camera can't report this setting, so the switch shows what you last chose here."),
 
         // ── Tracking ──
         Setting::custom("obsbot:ai_tracking_mode", Tracking, "Tracking mode",
@@ -564,8 +564,7 @@ fn build() -> Vec<Setting> {
                 opt(3, "Close-up", "Frame tightly on the face"),
                 opt(4, "Headless", "Frame the body below the head"),
                 opt(5, "Lower body", "Frame from the waist down"),
-                opt(6, "Hand", "Track a hand"),
-                opt(7, "Group", "Keep several people in frame"),
+                opt(6, "Group", "Keep several people in frame"),
             ]),
             |s| match (s.byte(0x18), s.byte(0x1c)) {
                 // The camera answered: an unrecognised pair is Unknown, never a guess.
@@ -579,7 +578,7 @@ fn build() -> Vec<Setting> {
                 // set_ai_mode only succeeds when the camera's status matches the request exactly.
                 set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
-            .info("The framing names are OBSBOT's. Each mode was set and read back exactly from the camera's status block. Tracking moves the gimbal by itself, so clear the space around the camera first. Target selection is a gesture, not a tracking mode."),
+            .info("How the camera frames the person it follows. Tracking moves the gimbal by itself, so clear the space around the camera first. Target selection is a separate hand-gesture setting."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows movement.",
             Kind::Choice(vec![opt(0, "Standard", "Smooth and steady"), opt(1, "Sport", "Faster, for quick movement")]),
@@ -593,13 +592,13 @@ fn build() -> Vec<Setting> {
             |s| from_camera(s.byte(0x01).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
                 .or_else(|| if s.byte(0x01).is_none() { gesture_saved(s, "target_selection") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_TARGET, v.as_bool())))
-            .info("The only gesture the camera reports back (status byte 1: 0 is off, 1 is on). It is a gesture command, not a tracking mode."),
+            .info("Lets you choose who to follow with a hand gesture. It is a gesture setting, not a tracking mode."),
         Setting::custom("obsbot:gesture_zoom", Gestures, "Zoom gesture",
             "Zoom in and out with an L-shaped hand pose.", Kind::Toggle,
             |s| gesture_saved(s, "zoom_l_pose"),
             |d, v| sent(set_gesture(d, GESTURE_ZOOM, v.as_bool())))
             .last_sent()
-            .info("The command works on the camera, but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
+            .info("The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
         Setting::custom("obsbot:gesture_zoom_ratio", Gestures, "Gesture zoom amount",
             "How far the zoom gesture zooms in.",
             slider(1.0, 4.0, 0.01, Fmt::Ratio),
@@ -611,21 +610,21 @@ fn build() -> Vec<Setting> {
             |s| gesture_saved(s, "dynamic_zoom"),
             |d, v| sent(set_gesture(d, GESTURE_DYNAMIC, v.as_bool())))
             .last_sent()
-            .info("The command works on the camera, but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
+            .info("The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
         Setting::custom("obsbot:gesture_dynamic_zoom_direction", Gestures, "Reverse dynamic zoom",
             "Swap which hand movement zooms in.", Kind::Toggle,
             |s| gesture_saved(s, "dynamic_zoom_direction"),
             |d, v| sent(set_gesture(d, GESTURE_DIRECTION, v.as_bool())))
             .last_sent()
-            .info("The command works on the camera (it reverses Dynamic zoom), but it has no state the app can read, so the switch shows the last value this app sent, or Unknown."),
+            .info("Swaps which hand movement zooms in. The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
 
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
-            "Turn the camera's microphones on or off.", Kind::Toggle,
+            "On: the microphones work. Off: they are muted.", Kind::Toggle,
             |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
             |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
             .last_sent()
-            .info("The camera may restart its audio when this changes, and apps using the microphone can drop out for a moment. The camera does not report this back."),
+            .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment. The camera can't report this setting, so the switch shows what you last chose here."),
         Setting::custom("obsbot:mic_during_sleep", Microphone, "Listen while asleep",
             "Keep the microphone running when the camera is asleep.", Kind::Toggle,
             |s| from_camera(s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
@@ -653,7 +652,7 @@ fn build() -> Vec<Setting> {
             |s| from_saved(flag(s.config.pop_filter_enabled)),
             |d, v| sent(set_pop_filter(d, v.as_bool())))
             .last_sent().experimental()
-            .info("Experimental: this replays two commands captured from OBSBOT Center without decoding them. The camera does not report the state back."),
+            .info("Softens harsh “p” and “b” sounds. The camera can't report this setting, so the switch shows what you last chose here."),
 
         // ── Light ──
         Setting::custom("obsbot:led_brightness", Lighting, "LED brightness",
@@ -795,6 +794,19 @@ mod tests {
             let spec = setting.slider(&snap).unwrap_or_else(|| panic!("{id} is not a slider"));
             let middle = (spec.min + spec.max) / 2.0;
             assert_eq!(spec.default, Some(middle), "{id}: resets to {:?}, the middle is {middle}", spec.default);
+        }
+    }
+
+    /// What a person reads in an info button must not be development notes.
+    #[test]
+    fn info_text_is_for_people_not_developers() {
+        let banned = ["byte", "0x", "selector", "captured", "OBSBOT Center", "CAM_", "read-back", "readback", "status block", "firmware", "V4L2", "driver", "replay"];
+        for setting in all() {
+            for text in [setting.info, setting.summary] {
+                for word in banned {
+                    assert!(!text.to_lowercase().contains(&word.to_lowercase()), "{}: \"{}\" contains `{word}`", setting.id, text);
+                }
+            }
         }
     }
 
@@ -954,11 +966,11 @@ mod tests {
     }
 
     #[test]
-    fn there_are_exactly_eight_tracking_modes_and_unknown_tuples_stay_unknown() {
+    fn there_are_exactly_seven_tracking_modes_and_unknown_tuples_stay_unknown() {
         let setting = find("obsbot:ai_tracking_mode").unwrap();
         let labels: Vec<&str> = setting.options(&Snapshot::default()).iter().map(|o| o.label).collect();
-        assert_eq!(labels, ["No tracking", "Normal", "Upper body", "Close-up", "Headless", "Lower body", "Hand", "Group"]);
-        for (index, (mode, sub)) in [(0u8, 0u8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (3, 0), (1, 0)].into_iter().enumerate() {
+        assert_eq!(labels, ["No tracking", "Normal", "Upper body", "Close-up", "Headless", "Lower body", "Group"]);
+        for (index, (mode, sub)) in [(0u8, 0u8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (1, 0)].into_iter().enumerate() {
             let mut status = [0u8; 60];
             status[0x18] = mode;
             status[0x1c] = sub;

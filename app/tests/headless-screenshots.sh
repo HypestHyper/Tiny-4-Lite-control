@@ -94,9 +94,9 @@ check_class io.github.hypesthyper.Tiny4LiteControl.Preview "Tiny 2 Lite Control 
 echo "ok: window classes and titles"
 
 # ── Joystick: drag, hold, release ──
-# The pad sits below the gimbal model; at this window size its centre is (235, 660).
+# The pad sits below the gimbal model; at this window size its centre is (235, 594).
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick
-CENTRE_X=235; CENTRE_Y=660
+CENTRE_X=235; CENTRE_Y=594
 xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
 sleep 0.2
 xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y - 50)); sleep 0.35
@@ -117,8 +117,8 @@ echo "ok: joystick sends speeds while held and always stops on release"
 
 # ── 1° step buttons send small signed moves ──
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start step
-xdotool mousemove --window "$WINDOW" 202 791 click 1; sleep 0.5      # Pan +1°
-xdotool mousemove --window "$WINDOW" 298 791 click 1; sleep 0.5      # Tilt -1°
+xdotool mousemove --window "$WINDOW" 183 720 click 1; sleep 0.5      # Pan +1°
+xdotool mousemove --window "$WINDOW" 279 720 click 1; sleep 0.5      # Tilt -1°
 shot step-buttons
 stop_app
 grep -q -- '--set-ctrl=pan_absolute=3600' "$OUT/step.commands.log" || fail "Pan +1° did not send a one-degree pan step"

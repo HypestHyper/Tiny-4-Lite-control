@@ -628,11 +628,11 @@ impl SettingRow {
             out.push(format!("Available when: {}", needs.join(" ")));
         }
         if setting.readback == Readback::LastSent {
-            out.push("The camera does not report this back. The app shows the last value it sent, labelled Saved, or Unknown if it has none. It may differ if you change it in another program.".into());
+            out.push("The camera can't report this setting back, so the row shows the last value you chose here (Saved), or Unknown if you haven't chosen one. It may differ if you change it in another program.".into());
         } else if matches!(setting.source, crate::backend::registry::Source::Custom { .. }) {
-            out.push("Shown from the camera's own report. If the camera can't be read, the row says Unknown (or Saved, for a value this app sent earlier).".into());
+            out.push("Read from the camera. If it can't be read, the row says Unknown, or Saved for a value you chose earlier.".into());
         }
-        if setting.experimental { out.push("Experimental: not fully verified on this camera.".into()); }
+        if setting.experimental { out.push("Experimental: not fully tested on this camera.".into()); }
         if out.is_empty() { return out; }
         out
     }
