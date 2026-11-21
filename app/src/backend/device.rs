@@ -1344,6 +1344,15 @@ pub(crate) fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
     // CAM_SET_DEV_STATUS (0xA0C2), confirmed on Tiny 2 Lite.
     // Power-state verification is deliberately separate: the camera's
     // status byte may lag behind the command.
+    if ui_test_mode() {
+        // The synthetic camera records what was asked, for the tests.
+        if let Ok(path) = std::env::var("TINY4LITE_UI_TEST_LOG") {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(file, "sleep={}", if sleep { "on" } else { "off" });
+            }
+        }
+    }
     let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
     let command = if sleep {
         [0x00, 0x00, 0x01, 0x00, 0x00, 0x00]

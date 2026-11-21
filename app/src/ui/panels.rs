@@ -7,12 +7,13 @@ use super::style::Style;
 use super::theme::{self, ThemeMode, UiScale};
 use super::widgets::{self, Segmented};
 use crate::backend::registry::Opt;
-use crate::backend::{self, current_config, update_config_checked, CameraPresetEntry};
+use crate::backend::{self, current_config, update_config, update_config_checked, CameraPresetEntry};
 use crate::{config, presets, video};
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 fn card(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -474,6 +475,17 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
             let Some(fps) = rate.split(' ').next().and_then(|v| v.parse::<f64>().ok()) else { return };
             let mode = video::VideoMode { width, height, pixel_format: format, frame_rate_milli: (fps * 1000.0).round() as u32 };
             if model.borrow().current.as_ref() == Some(&mode) { return; }
+            // Changing the mode breaks the picture of any other program that is using the camera, and the
+            // camera may refuse to change at all. So say who it is, and leave the camera as it is.
+            if !backend::ui_test_mode() {
+                let others = backend::usage::holder_names(&store.device());
+                if !others.is_empty() {
+                    store.error(&format!("{} {} using the camera. Close {} before changing the capture mode.",
+                        others.join(", "), if others.len() == 1 { "is" } else { "are" }, if others.len() == 1 { "it" } else { "them" }));
+                    load();
+                    return;
+                }
+            }
             let previous = model.borrow().current.clone();
             let (store2, load2, mode_for_job) = (store.clone(), load.clone(), mode.clone());
             // Show that something is happening, and take the lists out of play until it is over.
@@ -538,6 +550,96 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
             });
         });
     }
+    card
+}
+
+/// The sleep timer: when the camera is put to sleep so it does not stay on. The background service does it,
+/// and reads these settings as soon as they change.
+pub fn sleep_timer_card() -> gtk::Box {
+    let (card, body) = card("Sleep timer", "bedtime",
+        "Puts the camera to sleep when it is not needed, so it does not stay on. The background service does this.");
+    let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> (gtk::Box, gtk::Switch) {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        titles.set_hexpand(true);
+        titles.append(&widgets::text(title, &["setting-label"]));
+        titles.append(&widgets::text(summary, &["setting-summary"]));
+        let switch = gtk::Switch::new();
+        switch.set_valign(gtk::Align::Center);
+        switch.set_active(active);
+        widgets::label_accessible(&switch, title);
+        switch.connect_active_notify(move |sw| on_change(sw.is_active()));
+        row.append(&titles);
+        row.append(&switch);
+        (row, switch)
+    };
+    let config = current_config();
+
+    // After this long with nothing using the camera.
+    let minutes = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    minutes.append(&widgets::line("After", &["setting-label"]));
+    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 120.0, 1.0);
+    scale.set_draw_value(false);
+    scale.set_hexpand(true);
+    scale.set_value(f64::from(config.service.auto_sleep_timeout_minutes.clamp(1, 120)));
+    widgets::lock_wheel(&scale);
+    widgets::label_accessible(&scale, "Minutes without use before the camera sleeps");
+    let value = widgets::line(&format!("{} min", config.service.auto_sleep_timeout_minutes.clamp(1, 120)), &["setting-value", "tnum"]);
+    value.set_width_chars(7);
+    value.set_xalign(1.0);
+    let save_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    {
+        let (value, save_timer) = (value.clone(), save_timer.clone());
+        scale.connect_value_changed(move |scale| {
+            let minutes = scale.value().round() as u32;
+            value.set_text(&format!("{minutes} min"));
+            // Saved once the slider settles, not on every step.
+            if let Some(id) = save_timer.borrow_mut().take() { id.remove(); }
+            let timer = save_timer.clone();
+            let id = glib::timeout_add_local_once(Duration::from_millis(500), move || {
+                timer.borrow_mut().take();
+                update_config(|c| c.service.auto_sleep_timeout_minutes = minutes);
+            });
+            *save_timer.borrow_mut() = Some(id);
+        });
+    }
+    minutes.append(&scale);
+    minutes.append(&value);
+    minutes.set_sensitive(config.service.auto_sleep_enabled);
+
+    let (idle_row, _) = {
+        let minutes = minutes.clone();
+        switch_row("Sleep when nothing is using the camera",
+            "After the time below with no app using it, and the control window closed. It wakes when an app starts using it.",
+            config.service.auto_sleep_enabled,
+            Box::new(move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); }))
+    };
+    body.append(&idle_row);
+    body.append(&minutes);
+    let (shutdown_row, _) = switch_row("Sleep when the computer shuts down",
+        "Also when you log out, so the camera is not left on.",
+        config.service.sleep_on_shutdown,
+        Box::new(|on| update_config(|c| c.service.sleep_on_shutdown = on)));
+    body.append(&shutdown_row);
+
+    // Whether the service that does all this is running.
+    let status = widgets::text("", &["small", "dim"]);
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    let show = {
+        let status = status.downgrade();
+        move || -> bool {
+            let Some(status) = status.upgrade() else { return false };
+            match crate::service::running_status() {
+                Some(_) => status.set_text("The background service is running."),
+                None => status.set_text("The background service is not running, so none of this happens yet. Start it with your session by running: tiny4lite-control service install"),
+            }
+            true
+        }
+    };
+    show();
+    glib::timeout_add_local(Duration::from_secs(3), move || if show() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
+    body.append(&status);
     card
 }
 

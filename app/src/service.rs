@@ -17,8 +17,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// How often the service looks at the camera.
-const TICK: Duration = Duration::from_secs(2);
+/// The service sleeps in small slices so it can answer a stop quickly, and looks at the camera every
+/// tenth slice (every two seconds).
+const SLICE: Duration = Duration::from_millis(200);
+const ROUND_SLICES: u32 = 10;
 /// A new camera gets this long to settle before anything is sent to it.
 const SETTLE: Duration = Duration::from_secs(2);
 
@@ -39,9 +41,14 @@ pub enum Action {
 pub struct Brain {
     pub auto_sleep: bool,
     pub sleep_after: Duration,
+    /// The service owns the camera's sleep (idle sleep or sleep at shutdown is on): a camera found asleep
+    /// is taken to be its doing, so it wakes the camera when something starts using it.
+    pub claim_sleep: bool,
     device: Option<String>,
     connected_at: Option<Instant>,
     restored: bool,
+    /// The first reading of the camera's state has been taken.
+    claimed_once: bool,
     idle_since: Option<Instant>,
     we_slept: bool,
 }
@@ -60,9 +67,17 @@ pub struct Sight<'a> {
 impl Brain {
     pub fn new(auto_sleep: bool, sleep_after_minutes: u32) -> Brain {
         Brain {
-            auto_sleep, sleep_after: Duration::from_secs(u64::from(sleep_after_minutes.max(1)) * 60),
-            device: None, connected_at: None, restored: false, idle_since: None, we_slept: false,
+            auto_sleep, claim_sleep: auto_sleep, sleep_after: Duration::from_secs(u64::from(sleep_after_minutes.max(1)) * 60),
+            device: None, connected_at: None, restored: false, claimed_once: false, idle_since: None, we_slept: false,
         }
+    }
+
+    /// Change the policy while running (the settings were edited). The state it has built up stays.
+    pub fn set_policy(&mut self, auto_sleep: bool, sleep_after_minutes: u32, claim_sleep: bool) {
+        self.auto_sleep = auto_sleep;
+        self.claim_sleep = claim_sleep || auto_sleep;
+        self.sleep_after = Duration::from_secs(u64::from(sleep_after_minutes.max(1)) * 60);
+        if !auto_sleep { self.idle_since = None; }
     }
 
     pub fn step(&mut self, now: Instant, sight: &Sight) -> Vec<Action> {
@@ -72,6 +87,7 @@ impl Brain {
                 self.device = Some(new.to_string());
                 self.connected_at = Some(now);
                 self.restored = false;
+                self.claimed_once = false;
                 self.idle_since = None;
                 self.we_slept = false;
                 actions.push(Action::Connected(new.to_string()));
@@ -91,13 +107,21 @@ impl Brain {
             self.restored = true;
             actions.push(Action::Restore);
         }
-        if self.auto_sleep && self.restored {
+        // A camera found asleep when the service has the say over sleep is its own doing: it was put to
+        // sleep at the last shutdown, say. Waking it when something uses it is then the service's job.
+        if self.claim_sleep && self.restored && !self.we_slept && sight.asleep == Some(true) && !self.claimed_once {
+            self.we_slept = true;
+        }
+        if self.restored && sight.asleep.is_some() { self.claimed_once = true; }
+        if (self.auto_sleep || self.claim_sleep) && self.restored {
             if sight.in_use {
                 self.idle_since = None;
                 if self.we_slept {
                     self.we_slept = false;
                     actions.push(Action::Wake);
                 }
+            } else if !self.auto_sleep {
+                self.idle_since = None;
             } else if sight.window_open {
                 // Someone is at the controls: never sleep it from under them.
                 self.idle_since = None;
@@ -178,6 +202,13 @@ pub struct Status {
     pub asleep_by_service: bool,
 }
 
+/// The running service's status, if one is running: for the window to show.
+pub fn running_status() -> Option<Status> {
+    let text = std::fs::read_to_string(state_path()).ok()?;
+    let status: Status = serde_json::from_str(&text).ok()?;
+    if is_service_process(status.pid) { Some(status) } else { None }
+}
+
 fn write_status(status: &Status) {
     let path = state_path();
     if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
@@ -188,24 +219,6 @@ fn write_status(status: &Status) {
 }
 
 // ── Looking around ────────────────────────────────────────────────────────
-
-/// The process ids that have `node` open, apart from this one and the helper programs it starts.
-fn openers(node: &str) -> Vec<u32> {
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else { return found };
-    let me = std::process::id();
-    for entry in entries.flatten() {
-        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        if pid == me { continue; }
-        // The helper that sends this service's own commands.
-        if std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "v4l2-ctl") { continue; }
-        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else { continue };
-        if fds.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|target| target == Path::new(node))) {
-            found.push(pid);
-        }
-    }
-    found
-}
 
 /// Is the control window of this app running?
 fn window_open() -> bool {
@@ -281,7 +294,32 @@ fn camera_asleep(device: &str) -> Option<bool> {
     backend::xu_status(device).ok().and_then(|s| match s[0x02] { 0 => Some(false), 1 => Some(true), _ => None })
 }
 
+/// When the settings file was last written, to notice an edit made in the window.
+fn config_stamp() -> Option<SystemTime> {
+    std::fs::metadata(crate::config::config_path()).and_then(|m| m.modified()).ok()
+}
+
+/// Put the camera to sleep on the way out, trying a few times, and never for long: at shutdown there is
+/// little time before the computer goes.
+fn sleep_for_shutdown(device: &str, status: &mut Status) {
+    if camera_asleep(device) == Some(true) { return; }
+    for attempt in 0..3 {
+        if backend::set_sleep_mode(device, true).is_ok() {
+            log("Shutting down, so the camera was put to sleep.");
+            status.last_event = "The camera was put to sleep as the computer shut down.".into();
+            status.last_event_at = now_unix();
+            write_status(status);
+            return;
+        }
+        if attempt < 2 { std::thread::sleep(Duration::from_millis(200)); }
+    }
+    log("Shutting down, but the camera could not be put to sleep.");
+}
+
 /// Run until stopped. With `once`, stop after the camera has been found and restored.
+///
+/// SIGINT, SIGTERM and SIGHUP all mean the same: stop. That is what a shutdown, a reboot, a logout and
+/// `systemctl stop` do to a program in every init system, so one handler covers them all.
 pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let _lock = match Lock::acquire(&lock_path()) {
         Ok(lock) => lock,
@@ -292,36 +330,68 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
         let stop = stop.clone();
         let _ = ctrlc::set_handler(move || stop.store(true, std::sync::atomic::Ordering::Relaxed));
     }
+    let policy = |config: &crate::config::AppConfig| (config.service.auto_sleep_enabled, config.service.auto_sleep_timeout_minutes, config.service.sleep_on_shutdown);
     let config = current_config();
-    let mut brain = Brain::new(config.service.auto_sleep_enabled, config.service.auto_sleep_timeout_minutes);
+    let (auto, minutes, on_shutdown) = policy(&config);
+    let mut brain = Brain::new(auto, minutes);
+    brain.set_policy(auto, minutes, on_shutdown);
+    let mut stamp = config_stamp();
     let mut status = Status { pid: std::process::id(), started: now_unix(), last_event: "Started.".into(), last_event_at: now_unix(), ..Status::default() };
-    log(&format!("Started. Restore on connect: {}. Idle sleep: {}.",
+    log(&format!("Started. Restore on connect: {}. Idle sleep: {}. Sleep at shutdown: {}.",
         if config.apply_on_connect { "on" } else { "off" },
-        if config.service.auto_sleep_enabled { format!("after {} min", config.service.auto_sleep_timeout_minutes) } else { "off".into() }));
+        if auto { format!("after {minutes} min") } else { "off".into() },
+        if on_shutdown { "on" } else { "off" }));
     write_status(&status);
     let mut restored_once = false;
+    let mut last_device: Option<String> = None;
+    let mut slice = 0u32;
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-        let camera = device_override.clone().filter(|d| Path::new(d).exists() || backend::ui_test_mode())
-            .or_else(|| backend::discover_tiny4lite().into_iter().next());
-        let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode() && !openers(c).is_empty());
-        let window = brain.auto_sleep && !backend::ui_test_mode() && window_open();
-        let asleep = if brain.auto_sleep { camera.as_deref().and_then(camera_asleep) } else { None };
-        let sight = Sight { camera: camera.as_deref(), in_use, window_open: window, asleep };
-        for action in brain.step(Instant::now(), &sight) {
-            if let Some(device) = camera.as_deref() {
-                let restoring = action == Action::Restore;
-                perform(&action, device, &mut status);
-                if restoring { restored_once = true; }
-            } else {
-                perform(&action, "", &mut status);
+        // Looking around takes a round of slices: the wait is cut into small ones so a stop is answered
+        // within a fifth of a second.
+        if slice % ROUND_SLICES == 0 {
+            // Settings edited in the window take effect at once, without restarting the service.
+            let now_stamp = config_stamp();
+            if now_stamp != stamp {
+                stamp = now_stamp;
+                if let Ok(loaded) = crate::config::load() {
+                    backend::install_config(loaded);
+                    let (auto, minutes, on_shutdown) = policy(&current_config());
+                    brain.set_policy(auto, minutes, on_shutdown);
+                    log(&format!("Settings reloaded. Idle sleep: {}. Sleep at shutdown: {}.",
+                        if auto { format!("after {minutes} min") } else { "off".into() }, if on_shutdown { "on" } else { "off" }));
+                }
             }
-            status.camera = camera.clone();
+            let camera = device_override.clone().filter(|d| Path::new(d).exists() || backend::ui_test_mode())
+                .or_else(|| backend::discover_tiny4lite().into_iter().next());
+            let watching = brain.auto_sleep || brain.claim_sleep;
+            let in_use = watching && camera.as_deref().is_some_and(|c| !backend::ui_test_mode() && !backend::usage::holders(c).is_empty());
+            let window = brain.auto_sleep && !backend::ui_test_mode() && window_open();
+            let asleep = if watching { camera.as_deref().and_then(camera_asleep) } else { None };
+            let sight = Sight { camera: camera.as_deref(), in_use, window_open: window, asleep };
+            for action in brain.step(Instant::now(), &sight) {
+                if let Some(device) = camera.as_deref() {
+                    let restoring = action == Action::Restore;
+                    perform(&action, device, &mut status);
+                    if restoring { restored_once = true; }
+                } else {
+                    perform(&action, "", &mut status);
+                }
+                status.camera = camera.clone();
+                write_status(&status);
+            }
+            if camera.is_some() { last_device = camera.clone(); }
+            status.camera = camera;
             write_status(&status);
+            if once && restored_once { break; }
         }
-        status.camera = camera;
-        write_status(&status);
-        if once && restored_once { break; }
-        std::thread::sleep(if once { Duration::from_millis(250) } else { TICK });
+        std::thread::sleep(SLICE);
+        slice = slice.wrapping_add(1);
+    }
+    // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep.
+    if stop.load(std::sync::atomic::Ordering::Relaxed) && current_config().service.sleep_on_shutdown {
+        if let Some(device) = last_device.as_deref().filter(|d| Path::new(d).exists() || backend::ui_test_mode()) {
+            sleep_for_shutdown(device, &mut status);
+        }
     }
     let _ = std::fs::remove_file(state_path());
     log("Stopped.");
@@ -377,7 +447,7 @@ fn print_config(json: bool) {
     if json {
         println!("{}", serde_json::json!({
             "restore": c.apply_on_connect, "preset": c.service.connect_preset, "gimbal": c.service.allow_gimbal_move,
-            "sleep": c.service.auto_sleep_enabled, "sleep_after_minutes": c.service.auto_sleep_timeout_minutes,
+            "sleep": c.service.auto_sleep_enabled, "sleep_after_minutes": c.service.auto_sleep_timeout_minutes, "shutdown": c.service.sleep_on_shutdown,
         }));
         return;
     }
@@ -387,19 +457,21 @@ fn print_config(json: bool) {
     println!("gimbal           {}   Let a restore turn the gimbal to a saved position", on(c.service.allow_gimbal_move));
     println!("sleep            {}   Put an idle camera to sleep, and wake it when a program uses it", on(c.service.auto_sleep_enabled));
     println!("sleep-after      {} min", c.service.auto_sleep_timeout_minutes);
+    println!("shutdown         {}   Put the camera to sleep when the computer shuts down or the session ends", on(c.service.sleep_on_shutdown));
 }
 
 fn set_command(key: Option<&str>, value: Option<&str>) -> i32 {
     let (Some(key), Some(value)) = (key, value) else {
-        eprintln!("service set KEY VALUE, where KEY is one of: restore, preset, gimbal, sleep, sleep-after");
+        eprintln!("service set KEY VALUE, where KEY is one of: restore, preset, gimbal, sleep, sleep-after, shutdown");
         return crate::cli::USAGE;
     };
     let flag = |v: &str| match v.to_lowercase().as_str() { "on" | "yes" | "true" | "1" => Some(true), "off" | "no" | "false" | "0" => Some(false), _ => None };
     let result = match key {
-        "restore" | "gimbal" | "sleep" => match flag(value) {
+        "restore" | "gimbal" | "sleep" | "shutdown" => match flag(value) {
             Some(b) => update_config_checked(|c| match key {
                 "restore" => c.apply_on_connect = b,
                 "gimbal" => c.service.allow_gimbal_move = b,
+                "shutdown" => c.service.sleep_on_shutdown = b,
                 _ => c.service.auto_sleep_enabled = b,
             }),
             None => { eprintln!("{key} takes on or off."); return crate::cli::USAGE; }
@@ -418,10 +490,10 @@ fn set_command(key: Option<&str>, value: Option<&str>) -> i32 {
             Ok(m) if (1..=1440).contains(&m) => update_config_checked(|c| c.service.auto_sleep_timeout_minutes = m),
             _ => { eprintln!("sleep-after takes a number of minutes from 1 to 1440."); return crate::cli::USAGE; }
         },
-        other => { eprintln!("Unknown service setting `{other}`. Use restore, preset, gimbal, sleep or sleep-after."); return crate::cli::USAGE; }
+        other => { eprintln!("Unknown service setting `{other}`. Use restore, preset, gimbal, sleep, sleep-after or shutdown."); return crate::cli::USAGE; }
     };
     match result {
-        Ok(()) => { println!("Saved. A running service reads it when it next starts: systemctl --user restart tiny4lite-control (or restart your session)."); crate::cli::OK }
+        Ok(()) => { println!("Saved. A running service picks it up within a couple of seconds."); crate::cli::OK }
         Err(error) => { eprintln!("Could not save: {error}"); crate::cli::FAILED }
     }
 }
@@ -475,7 +547,7 @@ fn config_home() -> PathBuf {
 }
 
 fn systemd_unit(program: &str) -> String {
-    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nNice=10\n\n[Install]\nWantedBy=default.target\n", quoted(program))
+    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nNice=10\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n", quoted(program))
 }
 
 fn desktop_entry(program: &str) -> String {
@@ -647,6 +719,45 @@ mod tests {
         settled(&mut brain, t0);
         assert_eq!(brain.step(at(1), &sight(Some("/dev/video1"), true, false, Some(true))), vec![]);
         assert_eq!(brain.step(at(30), &sight(Some("/dev/video1"), false, false, Some(true))), vec![]);
+    }
+
+    #[test]
+    fn a_camera_found_asleep_is_woken_when_used_if_the_service_owns_sleep() {
+        let t0 = Instant::now();
+        // Only sleep at shutdown is on: the camera was put to sleep by the last shutdown, so it is woken.
+        let mut brain = Brain::new(false, 10);
+        brain.set_policy(false, 10, true);
+        brain.step(t0, &sight(Some("/dev/video1"), false, false, Some(true)));
+        brain.step(t0 + Duration::from_secs(3), &sight(Some("/dev/video1"), false, false, Some(true)));
+        assert_eq!(brain.step(t0 + Duration::from_secs(5), &sight(Some("/dev/video1"), true, false, Some(true))), vec![Action::Wake]);
+        // Nothing owned: a sleeping camera is left alone whatever uses it.
+        let mut brain = Brain::new(false, 10);
+        brain.step(t0, &sight(Some("/dev/video1"), false, false, Some(true)));
+        brain.step(t0 + Duration::from_secs(3), &sight(Some("/dev/video1"), false, false, Some(true)));
+        assert_eq!(brain.step(t0 + Duration::from_secs(5), &sight(Some("/dev/video1"), true, false, Some(true))), vec![]);
+        // Only the first reading counts: a camera put to sleep by someone else later is not claimed.
+        let mut brain = Brain::new(false, 10);
+        brain.set_policy(false, 10, true);
+        brain.step(t0, &sight(Some("/dev/video1"), false, false, Some(false)));
+        brain.step(t0 + Duration::from_secs(3), &sight(Some("/dev/video1"), false, false, Some(false)));
+        brain.step(t0 + Duration::from_secs(4), &sight(Some("/dev/video1"), false, false, Some(true)));
+        assert_eq!(brain.step(t0 + Duration::from_secs(5), &sight(Some("/dev/video1"), true, false, Some(true))), vec![]);
+    }
+
+    #[test]
+    fn editing_the_policy_while_running_keeps_what_it_has_seen() {
+        let mut brain = Brain::new(true, 10);
+        let t0 = Instant::now();
+        settled(&mut brain, t0);
+        let at = |m: u64| t0 + Duration::from_secs(10 + 60 * m);
+        brain.step(at(0), &sight(Some("/dev/video1"), false, false, Some(false)));
+        // The timer is shortened to 3 minutes while it counts: it sleeps at 3 minutes of idleness.
+        brain.set_policy(true, 3, false);
+        assert_eq!(brain.step(at(2), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
+        assert_eq!(brain.step(at(3), &sight(Some("/dev/video1"), false, false, Some(false))), vec![Action::Sleep]);
+        // Turned off: nothing more is done.
+        brain.set_policy(false, 3, false);
+        assert_eq!(brain.step(at(30), &sight(Some("/dev/video1"), false, false, Some(false))), vec![]);
     }
 
     #[test]

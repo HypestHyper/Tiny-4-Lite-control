@@ -384,3 +384,61 @@ fn exposure_compensation_is_sent_as_the_standard_backlight_control() {
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.contains("--set-ctrl=backlight_compensation=15"), "{commands}");
 }
+
+#[test]
+fn the_service_puts_the_camera_to_sleep_when_it_is_told_to_stop() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-shutdown");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "shutdown", "on"]).status.code(), Some(0));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Wait until it has found the camera, then stop it as a shutdown would: SIGTERM.
+    let state = runtime.join("tiny4lite-control/service.json");
+    let started = Instant::now();
+    while !state.exists() && started.elapsed() < Duration::from_secs(10) { std::thread::sleep(Duration::from_millis(100)); }
+    std::thread::sleep(Duration::from_millis(2600));
+    assert!(Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap().success());
+    let waited = Instant::now();
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() { break status.code(); }
+        assert!(waited.elapsed() < Duration::from_secs(8), "the service did not stop");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(code, Some(0));
+    let commands = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(commands.contains("sleep=on"), "no sleep command at shutdown:\n{commands}");
+    assert!(!runtime.join("tiny4lite-control/service.lock").exists(), "the lock was left behind");
+}
+
+#[test]
+fn without_the_setting_a_stopped_service_leaves_the_camera_alone() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-no-shutdown");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let state = runtime.join("tiny4lite-control/service.json");
+    let started = Instant::now();
+    while !state.exists() && started.elapsed() < Duration::from_secs(10) { std::thread::sleep(Duration::from_millis(100)); }
+    std::thread::sleep(Duration::from_millis(2600));
+    assert!(Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap().success());
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("sleep="));
+}

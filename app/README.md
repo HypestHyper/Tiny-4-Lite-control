@@ -38,6 +38,10 @@ follows the window width.
 
 Idle means no other program has the camera open (a call, a recording, the preview) and the control window is not running. A camera that was already asleep, or that does not answer, is never touched. A program that keeps the camera open all the time (some desktop camera monitors do) means it is never idle. Idle sleep has not been tried on a real camera.
 
+**Sleep timer and shutdown.** Both are on the Device tab under **Sleep timer**, and the service picks up a change within a couple of seconds. *Sleep when nothing is using the camera* watches the camera's video node: when no program other than this app's own preview and commands has it open, and the control window is closed, for the time you set (1 to 120 minutes), the service sends the sleep command; it sends wake when a program starts using it again. *Sleep when the computer shuts down* works from the stop signal: a shutdown, a reboot, a logout and `systemctl stop` all end a user program with SIGTERM or SIGHUP in every init system, and the service answers either by sending sleep first (a few tries, well under a second) and then exiting. A camera that is found asleep when the service starts is taken to be its doing, so it is woken the first time something uses it. Suspend is not handled.
+
+**Capture mode and other programs.** Changing resolution or frame rate breaks the picture of any other program using the camera, and the camera may refuse. The window now checks first, names the programs that have the camera open (a browser, OBS), and leaves the mode alone until they are closed.
+
 Only one service runs at a time; `service status` shows it. Start it with your session using `service install`, which prints what to add, or writes it with `--write` for systemd and desktop autostart:
 
 ```bash

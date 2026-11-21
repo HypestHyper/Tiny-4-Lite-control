@@ -104,6 +104,8 @@ pub struct ServiceConfig {
     pub connect_preset: Option<String>,
     /// Let a restore turn the gimbal to a saved position. Off, positions are left out.
     pub allow_gimbal_move: bool,
+    /// Put the camera to sleep when the computer shuts down or the session ends, so it does not stay on.
+    pub sleep_on_shutdown: bool,
 }
 
 impl Default for ServiceConfig {
@@ -113,6 +115,7 @@ impl Default for ServiceConfig {
             auto_sleep_timeout_minutes: 10,
             connect_preset: None,
             allow_gimbal_move: false,
+            sleep_on_shutdown: false,
         }
     }
 }
