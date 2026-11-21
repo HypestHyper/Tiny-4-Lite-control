@@ -410,6 +410,18 @@ pub fn snap_yaw(yaw: f64) -> f64 {
     if (yaw - nearest).abs() <= SNAP_DEGREES { normalise_yaw(nearest) } else { yaw }
 }
 
+/// At this tilt and below the camera is in its sleeping pose, looking at nothing, so the view cone goes.
+pub const SLEEP_TILT: f64 = -32.0;
+/// The cone fades in over this many degrees above the sleeping pose (and out again going down).
+pub const CONE_FADE_DEGREES: f64 = 4.0;
+
+/// How much of the view cone to draw, 0 to 1, at a tilt: none at the sleeping tilt or lower, all of it
+/// a few degrees above, and a smooth fade between.
+pub fn cone_visibility(tilt: f64) -> f64 {
+    let t = ((tilt - SLEEP_TILT) / CONE_FADE_DEGREES).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Move `current` towards `target` by a time step, without overshoot (it is measured data).
 fn approach(current: f64, target: f64, seconds: f64) -> f64 {
     let blend = 1.0 - (-seconds / 0.11).exp();
@@ -592,7 +604,11 @@ impl GimbalModel {
             ];
             for kinds in styles {
                 if !known && kinds[0] == Kind::Aim { continue; }
+                // The view cone fades out as the camera goes down to sleep, and back in as it comes up.
+                let cone = if kinds[0] == Kind::Aim { cone_visibility(tilt) } else { 1.0 };
+                if cone <= 0.0 { continue; }
                 let ((r, g, b), width, alpha) = colour(kinds[0]);
+                let alpha = alpha * cone;
                 cr.set_source_rgba(r, g, b, alpha * fade);
                 cr.set_line_width(width);
                 for line in lines.iter().filter(|l| kinds.contains(&l.kind)) {
@@ -650,6 +666,22 @@ mod tests {
     fn reversing_pan_in_settings_flips_the_drawn_direction() {
         assert_eq!(pan_sign_for(false), PAN_SIGN);
         assert_eq!(pan_sign_for(true), -PAN_SIGN);
+    }
+
+    #[test]
+    fn the_view_cone_fades_out_towards_the_sleeping_pose_and_back() {
+        assert_eq!(cone_visibility(-60.0), 0.0);
+        assert_eq!(cone_visibility(-32.0), 0.0);
+        assert_eq!(cone_visibility(-28.0), 1.0);
+        assert_eq!(cone_visibility(0.0), 1.0);
+        assert!((cone_visibility(-30.0) - 0.5).abs() < 1e-9);
+        // Smooth and one-way: it never dips as the tilt rises through the fade.
+        let mut last = 0.0;
+        for tenth in -330..=-270 {
+            let v = cone_visibility(f64::from(tenth) / 10.0);
+            assert!(v >= last - 1e-12);
+            last = v;
+        }
     }
 
     #[test]
