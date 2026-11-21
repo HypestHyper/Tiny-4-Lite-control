@@ -445,6 +445,9 @@ window.t4.csd { border-radius: §18§; }
 
 /* Joystick */
 .pad { background: transparent; }
+.t4 .compact .readout { font-size: ¶14¶; min-width: §40§; }
+.t4 .compact button.small { min-height: §24§; padding: 0 §6§; font-size: ¶12¶; border-radius: §12§; }
+.t4 .compact button.round.small { min-height: §26§; min-width: §26§; padding: 0; }
 .readout { font-size: ¶20¶; font-weight: 700; font-feature-settings: "tnum"; min-width: §72§; }
 
 /* Preset list items */

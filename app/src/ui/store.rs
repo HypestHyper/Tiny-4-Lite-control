@@ -300,6 +300,8 @@ impl Store {
     pub fn error(&self, message: &str) { self.show_toast(message, true); }
 
     fn show_toast(&self, message: &str, error: bool) {
+        let scrubbed = if error { plain_error(message) } else { message.to_string() };
+        let message = scrubbed.as_str();
         let toasters = self.0.toasters.borrow();
         if let Some(toaster) = toasters.iter().find(|t| t.is_visible()) { toaster.show(message, error); }
     }
@@ -312,5 +314,41 @@ impl Store {
             // No window is showing a dialog layer; do not act without asking.
             self.error("Could not ask for confirmation, so nothing was changed.");
         }
+    }
+}
+
+/// Words that mean a message is for developers, not for people.
+const TECHNICAL: [&str; 14] = ["0x", "selector", "ioctl", "UVC", "SET_CUR", "GET_CUR", "read-back", "CAM_", "XU ", "os error", "errno", "v4l2-ctl", "VIDIOC", "sequence"];
+
+/// A message for the screen: errors that are development notes are written to the terminal for us and
+/// replaced by something a person can act on.
+pub fn plain_error(message: &str) -> String {
+    let lower = message.to_lowercase();
+    if !TECHNICAL.iter().any(|word| lower.contains(&word.to_lowercase())) { return message.to_string(); }
+    eprintln!("{message}");
+    if lower.contains("cannot open") || lower.contains("permission denied") || lower.contains("busy") {
+        return "The camera could not be opened. Another program may be using it.".to_string();
+    }
+    let head = message.split(": ").next().unwrap_or("").trim().trim_end_matches('.');
+    if head.is_empty() || head.len() > 60 || TECHNICAL.iter().any(|word| head.to_lowercase().contains(&word.to_lowercase())) {
+        "The camera did not respond as expected. Try again, or unplug and replug it.".to_string()
+    } else {
+        format!("{head}. The camera did not respond as expected; try again, or unplug and replug it.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn people_do_not_see_development_notes() {
+        let shown = plain_error("Could not change tracking mode: UVC Camera Terminal 1 selector 0x0d request 0x81: Input/output error");
+        assert_eq!(shown, "Could not change tracking mode. The camera did not respond as expected; try again, or unplug and replug it.");
+        assert!(plain_error("Cannot open /dev/video1 for UVC Camera Terminal read-back: Permission denied").contains("Another program"));
+        assert!(!plain_error("Timed out waiting for a matching CAM_GET_FACE_FOCUS reply.").contains("CAM_"));
+        // A message that is already plain is left alone.
+        assert_eq!(plain_error("The camera was unplugged."), "The camera was unplugged.");
+        assert_eq!(plain_error("Name the preset first."), "Name the preset first.");
     }
 }

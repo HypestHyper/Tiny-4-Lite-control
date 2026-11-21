@@ -421,7 +421,7 @@ impl SettingRow {
                     // Say what the camera confirmed, not just that the command went out.
                     match confirmed {
                         Some(actual) if actual.as_i64() == value.as_i64() => {
-                            if announce { store.toast(&format!("{message} (confirmed by the camera)")); }
+                            if announce { store.toast(&message); }
                         }
                         Some(actual) => {
                             // The camera kept something else: show that, not what was asked for.
@@ -431,15 +431,12 @@ impl SettingRow {
                                 row.current.set(Some(actual));
                                 row.last_edit.set(Some(Instant::now()));
                                 SettingRow(row.clone()).show(Some(actual));
-                                store.error(&format!("{}: the camera reports {got}, not {wanted}.", setting.label));
+                                let _ = wanted;
+                                store.error(&format!("{} did not change: the camera is still on {got}.", setting.label));
                             }
                         }
                         None => {
-                            if announce {
-                                // Only say so where no read-back exists at all.
-                                let note = if setting.readback == Readback::LastSent { " (sent; the camera can't confirm this)" } else { "" };
-                                store.toast(&format!("{message}{note}"));
-                            }
+                            if announce { store.toast(&message); }
                         }
                     }
                     // Once the hold on this control ends, show what the camera really has

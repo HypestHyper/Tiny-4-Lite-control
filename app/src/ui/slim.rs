@@ -100,8 +100,8 @@ impl SlimWindow {
         let joystick_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         joystick_card.add_css_class("card");
         joystick_card.add_css_class("tight");
-        joystick_card.append(&joystick.widget());
-        joystick_card.set_size_request(-1, 300);
+        joystick_card.append(&joystick.widget_for(super::widgets::Density::Slim));
+        joystick_card.set_size_request(-1, -1);
 
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         list.add_css_class("card");

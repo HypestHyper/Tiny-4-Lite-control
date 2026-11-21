@@ -129,9 +129,16 @@ impl Joystick {
     }
 
     /// The pad with its readout and speed control.
-    pub fn widget(&self) -> gtk::Box {
+    /// The pad with its readout and speed control, at full size.
+    pub fn widget(&self) -> gtk::Box { self.widget_for(widgets::Density::Full) }
+
+    /// The same, closer together for the slim window: a smaller model beside a smaller pad, and
+    /// smaller buttons.
+    pub fn widget_for(&self, density: widgets::Density) -> gtk::Box {
+        let compact = density == widgets::Density::Slim;
         let state = &self.0;
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, if compact { 8 } else { 12 });
+        if compact { column.add_css_class("compact"); }
 
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let title = widgets::line("Gimbal", &["heading"]);
@@ -147,6 +154,7 @@ impl Joystick {
 
         // A wireframe of the camera that follows the live pan and tilt, with the numbers on top.
         let model = GimbalModel::new(&state.store);
+        if compact { model.widget().set_content_height(120); model.widget().set_content_width(120); }
         let readouts = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         readouts.set_halign(gtk::Align::Fill);
         readouts.set_valign(gtk::Align::End);
@@ -166,10 +174,25 @@ impl Joystick {
         stage.add_css_class("model-frame");
         stage.set_child(Some(model.widget()));
         stage.add_overlay(&readouts);
-        column.append(&stage);
-        column.append(&state.pad);
+        if compact {
+            // Side by side: the model takes what the pad leaves.
+            state.pad.set_content_width(124);
+            state.pad.set_content_height(124);
+            state.pad.set_hexpand(false);
+            state.pad.set_vexpand(false);
+            state.pad.set_halign(gtk::Align::Center);
+            state.pad.set_valign(gtk::Align::Center);
+            stage.set_hexpand(true);
+            let both = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            both.append(&stage);
+            both.append(&state.pad);
+            column.append(&both);
+        } else {
+            column.append(&stage);
+            column.append(&state.pad);
+        }
 
-        column.append(&self.step_row());
+        column.append(&self.step_row(compact));
 
         let speed = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         speed.append(&widgets::line("Speed", &["setting-label"]));
@@ -209,10 +232,10 @@ impl Joystick {
     }
 
     /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
-    fn step_row(&self) -> gtk::Box {
+    fn step_row(&self, compact: bool) -> gtk::Box {
         // The groups sit side by side while there is room and wrap onto a second line when there is not,
         // so the words are never squeezed into dots.
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, if compact { 8 } else { 0 });
         row.set_halign(gtk::Align::Center);
         let flow = gtk::FlowBox::new();
         flow.set_selection_mode(gtk::SelectionMode::None);
@@ -223,7 +246,9 @@ impl Joystick {
         flow.set_row_spacing(6);
         flow.set_halign(gtk::Align::Center);
         flow.set_activate_on_single_click(false);
-        row.append(&flow);
+        // The slim window keeps it on one line; the full window lets it wrap.
+        if !compact { row.append(&flow); }
+        let add = |widget: &gtk::Widget| if compact { row.append(widget) } else { flow.insert(widget, -1) };
         let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
         for (axis, control) in [("Pan", "pan_absolute"), ("Tilt", "tilt_absolute")] {
             let group = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -251,7 +276,7 @@ impl Joystick {
                 group.append(&button);
                 buttons.borrow_mut().push(button);
             }
-            flow.insert(&group, -1);
+            add(group.upcast_ref());
         }
         // Centre: pan 0, tilt 0, straight away.
         let centre = widgets::icon_button("center_focus_strong", "Centre: turn the camera to pan 0°, tilt 0°", true);
@@ -267,7 +292,7 @@ impl Joystick {
             });
         });
         centre.set_halign(gtk::Align::Center);
-        flow.insert(&centre, -1);
+        add(centre.upcast_ref());
         buttons.borrow_mut().push(centre);
         // Only usable when the driver offers working absolute pan and tilt.
         let weak: Vec<_> = buttons.borrow().iter().map(|b| b.downgrade()).collect();
