@@ -560,6 +560,9 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
             let seconds = match options.flag("--seconds").map(str::parse::<f64>).transpose() { Ok(s) => s.unwrap_or(1.0), Err(_) => return usage_error("--seconds needs a number.") };
             if !(0.1..=10.0).contains(&seconds) { return usage_error("--seconds must be between 0.1 and 10."); }
             let (Some(pan_control), Some(tilt_control)) = (snapshot.control("pan_speed"), snapshot.control("tilt_speed")) else { return fail("This video node has no pan/tilt speed controls.") };
+            // Right means the same as on the stick: the picture moves to the right, mirrored or not.
+            let mirrored = registry::find("obsbot:mirror_image").and_then(|s| s.read(snapshot)).is_some_and(|v| v.as_bool());
+            let pan = crate::ui::joystick::stick_pan(pan / 100.0, mirrored, current_config().joystick_follows_mirror) * 100.0;
             let axis_pan = crate::ui::joystick::to_axis((pan / 100.0).clamp(-1.0, 1.0), pan_control.min, pan_control.max);
             let axis_tilt = crate::ui::joystick::to_axis((tilt / 100.0).clamp(-1.0, 1.0), tilt_control.min, tilt_control.max);
             // Whatever happens next, stop on Ctrl-C.

@@ -167,7 +167,7 @@ fn gimbal_move_always_ends_with_a_stop() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let commands = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<&str> = commands.lines().collect();
-    assert!(lines.first().unwrap().contains("pan_speed=40,tilt_speed=-30"), "{commands}");
+    assert!(lines.first().unwrap().contains("pan_speed=-40,tilt_speed=-30"), "{commands}");
     assert!(lines.last().unwrap().ends_with("--set-ctrl=pan_speed=0,tilt_speed=0"), "{commands}");
     // Limits are enforced before anything is sent.
     let out = run.run(&["gimbal", "move", "--pan", "50", "--seconds", "60"]);

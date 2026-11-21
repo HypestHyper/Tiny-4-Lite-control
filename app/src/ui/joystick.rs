@@ -78,9 +78,11 @@ pub fn set_follow_mirror(follow: bool) {
     update_config(|c| c.joystick_follows_mirror = follow);
 }
 
-/// The left-right stick position to send. Mirror image flips the picture, so with it on the camera
-/// has to turn the other way for the picture to move the way the stick is pushed.
-pub fn stick_pan(x: f64, mirrored: bool, follow: bool) -> f64 { if mirrored && follow { -x } else { x } }
+/// The pan speed to send for a left-right stick position, so that pushing the stick right moves the
+/// picture you see to the right. On this camera a positive pan speed shows more of the scene's left
+/// (checked by the user on the live video), so the plain direction is the opposite of the stick.
+/// Mirror image flips the picture, which turns it the other way round again.
+pub fn stick_pan(x: f64, mirrored: bool, follow: bool) -> f64 { if mirrored && follow { x } else { -x } }
 
 /// Map a stick deflection (-1..1) to a fraction of full speed.
 pub fn shape(deflection: f64, sensitivity: f64) -> f64 {
@@ -782,11 +784,13 @@ mod tests {
 
     #[test]
     fn the_stick_turns_the_other_way_with_a_mirrored_picture() {
-        assert_eq!(stick_pan(0.5, false, true), 0.5);
-        assert_eq!(stick_pan(0.5, true, true), -0.5);
-        // Switched off in Settings: the stick is always the camera's own direction.
-        assert_eq!(stick_pan(0.5, true, false), 0.5);
-        assert_eq!(stick_pan(0.0, true, true), 0.0);
+        // Picture not mirrored: right on the stick is a negative pan speed, which shows more on the right.
+        assert_eq!(stick_pan(0.5, false, true), -0.5);
+        // Mirrored: the picture is flipped, so it is the other way round.
+        assert_eq!(stick_pan(0.5, true, true), 0.5);
+        // Switched off in Settings: the mirror is ignored.
+        assert_eq!(stick_pan(0.5, true, false), -0.5);
+        assert_eq!(stick_pan(0.0, true, true).abs(), 0.0);
     }
 
     #[test]

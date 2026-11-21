@@ -109,7 +109,7 @@ shot joystick-released
 stop_app
 LOG="$OUT/joystick.commands.log"
 [[ -s "$LOG" ]] || fail "the joystick sent nothing"
-grep -q 'pan_speed=[1-9]' "$LOG" || fail "dragging right did not send a positive pan speed"
+grep -q 'pan_speed=-[1-9]' "$LOG" || fail "dragging right did not send a negative pan speed (which shows more on the right)"
 grep -q 'tilt_speed=-[1-9]' "$LOG" || fail "dragging down did not send a negative tilt speed"
 [[ "$(tail -n1 "$LOG" | cut -d' ' -f2)" == "--set-ctrl=pan_speed=0,tilt_speed=0" ]] || fail "the last command was not a stop"
 # Updates are rate-limited: never more than 30 in any one second.
@@ -124,8 +124,8 @@ xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y)); sleep 0.3
 xdotool mousemove --window "$WINDOW" $((CENTRE_X + 90)) $((CENTRE_Y)); sleep 0.4
 xdotool mouseup 1; sleep 0.6
 stop_app
-grep -q 'pan_speed=-[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right did not send a negative pan speed"
-! grep -q 'pan_speed=[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right still sent a positive pan speed"
+grep -q 'pan_speed=[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right did not send a positive pan speed"
+! grep -q 'pan_speed=-[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right still sent a negative pan speed"
 echo "ok: the joystick follows the mirror"
 
 # ── 1° step buttons send small signed moves ──
