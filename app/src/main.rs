@@ -2972,10 +2972,7 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn exposure_compensation_maps_all_nineteen_v4l2_positions() {
-        for position in 0..=18 {
-            assert!(position <= 18);
-        }
+    fn exposure_compensation_labels_match_verified_checkpoints() {
         assert_eq!(exposure_compensation_label(0), "-3.0");
         assert_eq!(exposure_compensation_label(9), "0.0");
         assert_eq!(exposure_compensation_label(15), "+2.0");
