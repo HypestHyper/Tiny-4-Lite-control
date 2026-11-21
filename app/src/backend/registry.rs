@@ -496,7 +496,7 @@ fn build() -> Vec<Setting> {
             .info("Face: exposure follows a face the camera finds. Global: exposure follows the whole picture. Works while Exposure mode is Auto, and is separate from autofocus priority."),
         Setting::custom("obsbot:exposure_compensation", Exposure, "Exposure compensation",
             "Make automatic exposure brighter or darker.",
-            resting_at(ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "Centre · 0"), (18.0, "+3")]), 9.0),
+            resting_at(ticked(0.0, 18.0, 1.0, Fmt::Ev, vec![(0.0, "−3"), (9.0, "0"), (18.0, "+3")]), 9.0),
             |s| from_camera(number(s.exposure_comp))
                 .or_else(|| if s.exposure_comp.is_none() { from_saved(number(s.config.exposure_compensation_position)) } else { None }),
             |d, v| set_exposure_compensation(d, v.as_i64().clamp(0, 18) as u8).map(|actual| Some(Value::Int(i64::from(actual)))))
@@ -519,10 +519,10 @@ fn build() -> Vec<Setting> {
             "Lower is warmer, higher is cooler.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
-            "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "Centre")]))
+            "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust red."),
         Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
-            "Fine-tune the blue channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "Centre")]))
+            "Fine-tune the blue channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust blue."),
 
         // ── Focus ──
@@ -560,7 +560,7 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("contrast", "v4l2:contrast", Picture, "Contrast", "Separate light from dark.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("saturation", "v4l2:saturation", Picture, "Saturation", "How vivid colours look.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
-        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Rotate all colours around the colour wheel.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "Centre")])),
+        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Rotate all colours around the colour wheel.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")])),
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,

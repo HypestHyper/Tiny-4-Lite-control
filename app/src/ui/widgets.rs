@@ -318,7 +318,8 @@ impl SettingRow {
                 value.set_valign(gtk::Align::Center);
                 let reset = icon_button("restart_alt", "Reset to default", true);
                 reset.add_css_class("flat-icon");
-                reset.set_visible(false);
+                // Always there, so the slider never changes width; dimmed while there is nothing to reset.
+                reset.set_sensitive(false);
                 (Control::Slider { scale, value, reset }, false)
             }
         }
@@ -500,10 +501,10 @@ impl SettingRow {
                     let snapshot = row.store.snapshot();
                     label.set_text(&row.setting.format(&snapshot, v.as_f64()));
                     let default = row.setting.slider(&snapshot).and_then(|s| s.default);
-                    reset.set_visible(default.is_some_and(|d| (d - v.as_f64()).abs() > f64::EPSILON));
+                    reset.set_sensitive(default.is_some_and(|d| (d - v.as_f64()).abs() > f64::EPSILON));
                 } else {
                     label.set_text("—");
-                    reset.set_visible(false);
+                    reset.set_sensitive(false);
                 }
             }
         }
