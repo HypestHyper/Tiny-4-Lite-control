@@ -70,6 +70,18 @@ struct State {
 #[derive(Clone)]
 pub struct Joystick(Rc<State>);
 
+static FOLLOW_MIRROR: AtomicBool = AtomicBool::new(true);
+
+/// Turn the stick the other way while Mirror image is on (or back), and save the choice.
+pub fn set_follow_mirror(follow: bool) {
+    FOLLOW_MIRROR.store(follow, Ordering::Relaxed);
+    update_config(|c| c.joystick_follows_mirror = follow);
+}
+
+/// The left-right stick position to send. Mirror image flips the picture, so with it on the camera
+/// has to turn the other way for the picture to move the way the stick is pushed.
+pub fn stick_pan(x: f64, mirrored: bool, follow: bool) -> f64 { if mirrored && follow { -x } else { x } }
+
 /// Map a stick deflection (-1..1) to a fraction of full speed.
 pub fn shape(deflection: f64, sensitivity: f64) -> f64 {
     let magnitude = deflection.abs();
@@ -113,6 +125,7 @@ impl Joystick {
         let tilt_value = widgets::line("—", &["readout", "tnum"]);
         let hint = widgets::text("Drag the stick, or focus it and use the arrow keys. The gimbal stops when you let go.", &["small", "dim"]);
 
+        FOLLOW_MIRROR.store(current_config().joystick_follows_mirror, Ordering::Relaxed);
         let sensitivity = (current_config().joystick_sensitivity_percent.clamp(10, 200) as f64) / 100.0;
         let state = Rc::new(State {
             store: store.clone(), pad: pad.clone(), pan_value, tilt_value, hint,
@@ -148,7 +161,8 @@ impl Joystick {
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
             "Speed limits the fastest the stick can go. The readout shows where the camera is pointing, in degrees.".into(),
-            "If the camera model turns the wrong way when the camera pans, you can reverse it in Settings (the Device tab, under Appearance).".into(),
+            "With Mirror image on, the stick turns the camera the other way so the picture still moves the way you push. You can turn that off in Settings (the Device tab, under Appearance).".into(),
+            "If the camera model turns the wrong way when the camera pans, you can reverse it there too.".into(),
         ]));
         column.append(&head);
 
@@ -462,6 +476,10 @@ impl Joystick {
         let (Some(pan), Some(tilt)) = (snapshot.control("pan_speed"), snapshot.control("tilt_speed")) else { return (0, 0) };
         let (x, y) = self.0.stick.get();
         let sensitivity = self.0.sensitivity.get();
+        // The picture is flipped while Mirror image is on, so the stick turns the other way with it.
+        let mirrored = backend::registry::find("obsbot:mirror_image")
+            .and_then(|setting| setting.read(&snapshot)).is_some_and(|value| value.as_bool());
+        let x = stick_pan(x, mirrored, FOLLOW_MIRROR.load(Ordering::Relaxed));
         let (fx, fy) = self.limited(shape(x, sensitivity), shape(y, sensitivity));
         let (rx, ry) = self.0.ramped.get();
         let (rx, ry) = (ramp(rx, fx, RAMP_PER_SEND), ramp(ry, fy, RAMP_PER_SEND));
@@ -761,6 +779,15 @@ impl Joystick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_stick_turns_the_other_way_with_a_mirrored_picture() {
+        assert_eq!(stick_pan(0.5, false, true), 0.5);
+        assert_eq!(stick_pan(0.5, true, true), -0.5);
+        // Switched off in Settings: the stick is always the camera's own direction.
+        assert_eq!(stick_pan(0.5, true, false), 0.5);
+        assert_eq!(stick_pan(0.0, true, true), 0.0);
+    }
 
     #[test]
     fn dead_zone_stops_small_deflections() {

@@ -623,6 +623,21 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
     pan.append(&titles);
     pan.append(&reverse);
     body.append(&pan);
+
+    // With Mirror image on the picture is flipped, so the stick turns the other way to match it.
+    let mirror = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text("Flip the joystick with the mirror", &["setting-label"]));
+    titles.append(&widgets::text("While Mirror image is on, pushing the stick right moves the picture you see to the right.", &["setting-summary"]));
+    let follow = gtk::Switch::new();
+    follow.set_valign(gtk::Align::Center);
+    follow.set_active(current_config().joystick_follows_mirror);
+    widgets::label_accessible(&follow, "Flip the joystick with the mirror");
+    follow.connect_active_notify(|sw| super::joystick::set_follow_mirror(sw.is_active()));
+    mirror.append(&titles);
+    mirror.append(&follow);
+    body.append(&mirror);
     card
 }
 

@@ -52,6 +52,8 @@ Window manager configurations are never edited for you. For the AppImage the uni
 
 If the model swings the wrong way when the camera pans, turn on **Reverse pan on the camera model** in Settings (Device tab, Appearance). It is a one-time choice, and the gimbal info button says where it is.
 
+**Mirror image and the stick.** Mirror image flips the picture, so with it on the stick turns the camera the other way and the picture still moves the way you push it. Turn this off with **Flip the joystick with the mirror** in Settings (Device tab, Appearance). The 1° step buttons and `gimbal move` keep the camera's own direction.
+
 **Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.
 
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's

@@ -87,6 +87,9 @@ pub struct AppConfig {
     pub model_view_yaw: f64,
     /// Draw the model's pan the other way round (for a camera that is mounted or read the other way).
     pub model_pan_reversed: bool,
+    /// With Mirror image on, turn the stick the other way, so pushing it right still moves the picture
+    /// you see to the right.
+    pub joystick_follows_mirror: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -166,6 +169,7 @@ impl Default for AppConfig {
             window_buttons: true,
             model_view_yaw: 180.0,
             model_pan_reversed: false,
+            joystick_follows_mirror: true,
         }
     }
 }

@@ -32,6 +32,7 @@ trap 'stop_app' RETURN
 start() {
     local name="$1"; shift
     export XDG_CONFIG_HOME="$(mktemp -d)" XDG_CACHE_HOME="$(mktemp -d)" XDG_DATA_HOME="$(mktemp -d)"
+    if [[ -n "${START_CONFIG:-}" ]]; then mkdir -p "$XDG_CONFIG_HOME/tiny4lite-control"; printf '%s\n' "$START_CONFIG" > "$XDG_CONFIG_HOME/tiny4lite-control/config.toml"; fi
     export TINY4LITE_UI_TEST_LOG="$OUT/$name.commands.log"
     rm -f "$TINY4LITE_UI_TEST_LOG"
     "$APP" "$@" >"$OUT/$name.log" 2>&1 &
@@ -114,6 +115,18 @@ grep -q 'tilt_speed=-[1-9]' "$LOG" || fail "dragging down did not send a negativ
 # Updates are rate-limited: never more than 30 in any one second.
 awk '{ s=int($1/1000); n[s]++ } END { for (k in n) if (n[k] > 30) { print "second " k " had " n[k]; exit 1 } }' "$LOG" || fail "joystick updates were not rate-limited"
 echo "ok: joystick sends speeds while held and always stops on release"
+
+# ── With Mirror image on, pushing the stick right turns the camera the other way ──
+START_CONFIG='mirror_image_enabled = true' TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick-mirror
+xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
+sleep 0.2
+xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y)); sleep 0.35
+xdotool mousemove --window "$WINDOW" $((CENTRE_X + 90)) $((CENTRE_Y)); sleep 0.4
+xdotool mouseup 1; sleep 0.6
+stop_app
+grep -q 'pan_speed=-[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right did not send a negative pan speed"
+! grep -q 'pan_speed=[1-9]' "$OUT/joystick-mirror.commands.log" || fail "with Mirror image on, pushing right still sent a positive pan speed"
+echo "ok: the joystick follows the mirror"
 
 # ── 1° step buttons send small signed moves ──
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start step
