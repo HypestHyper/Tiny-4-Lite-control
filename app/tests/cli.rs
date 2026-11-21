@@ -130,10 +130,10 @@ fn bad_input_exits_2_and_says_what_is_valid() {
 #[test]
 fn sleeping_the_camera_needs_yes() {
     let run = Run::new("sleep");
-    let out = run.run(&["set", "camera-power", "asleep"]);
+    let out = run.run(&["set", "camera-power", "sleep"]);
     assert_eq!(out.status.code(), Some(4));
     assert!(text(&out.stderr).contains("--yes"));
-    let out = run.run(&["set", "camera-power", "asleep", "--yes"]);
+    let out = run.run(&["set", "camera-power", "sleep", "--yes"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
 

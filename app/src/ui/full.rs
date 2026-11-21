@@ -343,8 +343,9 @@ impl FullWindow {
         // above, with the preview and the gimbal side by side. Tiny puts everything in one column.
         let layout = Rc::new(Cell::new(0_u8));
         let relayout = {
-            let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, layout, ctx, title, chip) =
-                (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), layout.clone(), ctx.clone(), title.clone(), chip.clone());
+            let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, layout, ctx, title, chip, window) =
+                (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), layout.clone(), ctx.clone(), title.clone(), chip.clone(), window.clone());
+            let popped = popped.clone();
             Rc::new(move |width: i32| {
                 ctx.style.report_width(width);
                 // The header gives up its words before its buttons.
@@ -366,6 +367,9 @@ impl FullWindow {
                         stage_scroller.set_size_request(-1, -1);
                         gimbal_card.set_size_request(-1, -1);
                         preview_card.set_hexpand(false);
+                        preview_card.set_vexpand(true);
+                        preview_card.set_valign(gtk::Align::Fill);
+                        popped.set_vexpand(true);
                         preview_card.set_size_request(-1, -1);
                         paned.set_orientation(gtk::Orientation::Horizontal);
                         let saved = current_config().split_position;
@@ -373,23 +377,31 @@ impl FullWindow {
                     }
                     1 => {
                         stage.set_orientation(gtk::Orientation::Horizontal);
-                        stage.set_size_request(-1, 260);
-                        stage_scroller.set_size_request(-1, 260);
+                        stage.set_size_request(-1, -1);
+                        stage_scroller.set_size_request(-1, 120);
                         gimbal_card.set_size_request(250, -1);
+                        // The preview keeps its own shape instead of stretching to the height of the gimbal.
                         preview_card.set_hexpand(true);
-                        preview_card.set_size_request(120, -1);
+                        preview_card.set_vexpand(false);
+                        preview_card.set_valign(gtk::Align::Start);
+                        popped.set_vexpand(false);
+                        preview_card.set_size_request(120, 200);
                         paned.set_orientation(gtk::Orientation::Vertical);
-                        paned.set_position(280);
+                        // Half the window, so the gimbal card fits beside the preview.
+                        paned.set_position((f64::from(window.height().max(480)) * 0.5).clamp(300.0, 470.0) as i32);
                     }
                     _ => {
                         stage.set_orientation(gtk::Orientation::Vertical);
                         stage.set_size_request(-1, -1);
-                        stage_scroller.set_size_request(-1, 260);
+                        stage_scroller.set_size_request(-1, 120);
                         gimbal_card.set_size_request(-1, -1);
                         preview_card.set_hexpand(true);
+                        preview_card.set_vexpand(false);
+                        preview_card.set_valign(gtk::Align::Start);
+                        popped.set_vexpand(false);
                         preview_card.set_size_request(-1, 150);
                         paned.set_orientation(gtk::Orientation::Vertical);
-                        paned.set_position(280);
+                        paned.set_position((f64::from(window.height().max(480)) * 0.45).clamp(260.0, 440.0) as i32);
                     }
                 }
                 paned.set_start_child(Some(&stage_scroller));
@@ -419,7 +431,8 @@ impl FullWindow {
                 for (_, button) in state.tabs.borrow().iter() {
                     if let Some(label) = button.child().and_then(|c| c.last_child()) { label.set_visible(width >= 640); }
                 }
-                let want_two = width >= if two.get() { 800 } else { 860 };
+                // One column of cards at every width: the stage on the left already uses the width.
+                let want_two = false;
                 if want_two != two.get() {
                     two.set(want_two);
                     for masonry in masonries.iter() { masonry.set_columns(if want_two { 2 } else { 1 }); }

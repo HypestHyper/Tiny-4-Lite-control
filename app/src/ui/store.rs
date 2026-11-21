@@ -148,6 +148,8 @@ struct Inner {
     camera: RefCell<Camera>,
     connection: Cell<Connection>,
     snapshot: RefCell<Rc<Snapshot>>,
+    /// How many reads in a row lost something the camera had answered before.
+    read_misses: Cell<u32>,
     listeners: RefCell<Vec<Listener>>,
     toasters: RefCell<Vec<Rc<Toaster>>>,
     dialogs: RefCell<Vec<Rc<Dialogs>>>,
@@ -168,6 +170,7 @@ impl Store {
             camera: RefCell::new(camera),
             connection: Cell::new(connection),
             snapshot: RefCell::new(Rc::new(Snapshot::default())),
+            read_misses: Cell::new(0),
             listeners: RefCell::new(Vec::new()),
             toasters: RefCell::new(Vec::new()),
             dialogs: RefCell::new(Vec::new()),
@@ -201,7 +204,25 @@ impl Store {
         self.0.listeners.borrow_mut().push(Box::new(listener));
     }
 
-    fn publish(&self, snapshot: Snapshot) {
+    fn publish(&self, mut snapshot: Snapshot) {
+        // One missed answer from the camera must not turn every row to Unknown: keep what it said last
+        // time, until it has stayed quiet for several reads in a row.
+        {
+            let previous = self.0.snapshot.borrow().clone();
+            let mut misses = self.0.read_misses.get();
+            let missed = (snapshot.status.is_none() && previous.status.is_some())
+                || (snapshot.exposure_comp.is_none() && previous.exposure_comp.is_some())
+                || (snapshot.focus_priority.is_none() && previous.focus_priority.is_some());
+            if missed && misses < 4 {
+                misses += 1;
+                if snapshot.status.is_none() { snapshot.status = previous.status.clone(); }
+                if snapshot.exposure_comp.is_none() { snapshot.exposure_comp = previous.exposure_comp; }
+                if snapshot.focus_priority.is_none() { snapshot.focus_priority = previous.focus_priority; }
+            } else if !missed {
+                misses = 0;
+            }
+            self.0.read_misses.set(misses);
+        }
         let snapshot = Rc::new(snapshot);
         *self.0.snapshot.borrow_mut() = snapshot.clone();
         self.0.last_refresh.set(Some(Instant::now()));
@@ -227,6 +248,20 @@ impl Store {
             Some(key) => self.camera().submit_keyed(key, run),
             None => self.camera().submit(run),
         }
+        glib::spawn_future_local(async move {
+            if let Ok(value) = receiver.recv().await { done(value); }
+        });
+    }
+
+    /// Run camera work for something the user just pressed: ahead of the polling and reading that
+    /// is waiting, so a button never has to wait for them.
+    pub fn call_now<T: Send + 'static>(&self, job: impl FnOnce(&str) -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let (sender, receiver) = async_channel::bounded::<T>(1);
+        let run = move |device: &str| { let value = job(device); let _ = sender.send_blocking(value); };
+        // A key of its own, so it neither replaces nor is replaced by anything else.
+        self.camera().submit_urgent(&format!("now-{}", NEXT.fetch_add(1, Ordering::Relaxed)), run);
         glib::spawn_future_local(async move {
             if let Ok(value) = receiver.recv().await { done(value); }
         });
@@ -260,11 +295,14 @@ impl Store {
     /// command was sent but cannot be confirmed.
     pub fn write(&self, setting: &'static Setting, value: Value, done: impl FnOnce(Result<Option<Value>, String>) + 'static) {
         let this = self.clone();
-        self.call(Some(setting.id), move |device| setting.write(device, value), move |result| {
+        let run = move |device: &str| setting.write(device, value);
+        let finish = move |result: Result<Option<Value>, String>| {
             if let Err(error) = &result { this.error(&format!("Could not change {}: {error}", setting.label.to_lowercase())); }
             done(result);
             this.refresh_soon();
-        });
+        };
+        // Turning the camera on or off goes ahead of the polling; everything else keeps its place.
+        if setting.id == "obsbot:sleep" { self.call_now(run, finish); } else { self.call(Some(setting.id), run, finish); }
     }
 
     /// The camera's live pan and tilt in degrees, if it has answered recently.

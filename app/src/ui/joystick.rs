@@ -279,9 +279,12 @@ impl Joystick {
                 button.connect_clicked(move |_| {
                     let store = this.0.store.clone();
                     let snapshot = store.snapshot();
-                    let Some(range) = snapshot.control(control).map(|c| (c.min, c.max)) else { return };
+                    let Some(range) = snapshot.control(control).map(|c| (c.min, c.max)) else {
+                        store.error("This camera does not offer pan and tilt steps.");
+                        return;
+                    };
                     let again = this.clone();
-                    store.call(None, move |d| backend::step_gimbal(d, control, degrees, range.0, range.1), move |result| {
+                    store.call_now(move |d| backend::step_gimbal(d, control, degrees, range.0, range.1), move |result| {
                         match result {
                             Ok(target) => again.0.store.toast(&format!("{axis} target {}", backend::angles::format(target))),
                             Err(error) => again.0.store.error(&format!("Could not turn {}: {error}", axis.to_lowercase())),
@@ -299,7 +302,7 @@ impl Joystick {
         let this = self.clone();
         centre.connect_clicked(move |_| {
             let again = this.clone();
-            this.0.store.clone().call(None, |d| backend::centre_gimbal(d), move |result| {
+            this.0.store.clone().call_now(|d| backend::centre_gimbal(d), move |result| {
                 match result {
                     Ok(()) => again.0.store.toast("Centring the camera"),
                     Err(error) => again.0.store.error(&format!("Could not centre the camera: {error}")),

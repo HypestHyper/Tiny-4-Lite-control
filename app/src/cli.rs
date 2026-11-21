@@ -5,7 +5,7 @@
 //! a setting added there gets `get`, `set`, `toggle`, `reset`, `info`, shell
 //! completion and JSON output with no extra code here.
 
-use crate::backend::registry::{self, Fmt, Group, Kind, Origin, Setting, Snapshot, Value};
+use crate::backend::registry::{self, Fmt, Group, Kind, Opt, Origin, Setting, Snapshot, Value};
 use crate::backend::{self, current_config, flush_config, install_config, update_config_checked};
 use crate::{config, presets, video};
 use serde_json::{json, Value as Json};
@@ -277,7 +277,10 @@ fn parse_value(setting: &Setting, snapshot: &Snapshot, text: &str) -> Result<Val
         Kind::Choice(_) | Kind::DriverMenu => {
             let options = setting.options(snapshot);
             let wanted = normalise(text);
+            // A word or number from the label is enough: `wide`, `60`, `normal` for "Normal · 60°".
+            let has_word = |o: &&Opt| o.label.split(|c: char| !c.is_alphanumeric()).any(|w| !w.is_empty() && normalise(w) == wanted);
             let found = options.iter().find(|o| normalise(o.label) == wanted)
+                .or_else(|| options.iter().find(has_word))
                 .or_else(|| text.trim().parse::<i64>().ok().and_then(|n| options.iter().find(|o| o.value == n)));
             found.map(|o| Value::Int(o.value)).ok_or_else(|| format!(
                 "`{text}` is not one of: {}.", options.iter().map(|o| o.label).collect::<Vec<_>>().join(", ")))
@@ -959,6 +962,9 @@ mod tests {
         assert!(parse_value(mode, &snapshot, "hand").is_err(), "hand tracking is not offered");
         assert_eq!(parse_value(mode, &snapshot, "group").unwrap(), Value::Int(6));
         let fov = registry::find("obsbot:fov").unwrap();
+        assert_eq!(parse_value(fov, &snapshot, "wide").unwrap(), Value::Int(0));
+        assert_eq!(parse_value(fov, &snapshot, "Normal").unwrap(), Value::Int(5));
+        assert_eq!(parse_value(fov, &snapshot, "narrow").unwrap(), Value::Int(15));
         assert_eq!(parse_value(fov, &snapshot, "60").unwrap(), Value::Int(5));
     }
 

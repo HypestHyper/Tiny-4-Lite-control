@@ -483,7 +483,6 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
 pub(crate) const UVC_CAMERA_TERMINAL_UNIT: u8 = 1;
 pub(crate) const UVC_CT_PANTILT_ABSOLUTE: u8 = 0x0d;
 // Existing V4L2 PTZ controls use 3600 raw units for a one-degree step.
-pub(crate) use super::angles::RAW_PER_DEGREE as PANTILT_RAW_UNITS_PER_DEGREE;
 
 /// The largest single step the app will send, in degrees. Movement tests start small.
 pub(crate) const MAX_STEP_DEGREES: i64 = 5;
@@ -497,13 +496,21 @@ pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, m
     if degrees == 0 || degrees.abs() > MAX_STEP_DEGREES {
         return Err(format!("A step is between 1 and {MAX_STEP_DEGREES} degrees."));
     }
-    let current = get_control(device, control)?;
+    // Step from where the camera really is, not from the last value the driver remembers (which the
+    // joystick and the tracking do not update). The two agree in sign, so the live degrees map straight
+    // onto the control.
+    let live = get_gimbal_position(device).ok().map(|(pan, tilt)| if control == "pan_absolute" { pan } else { tilt });
+    let current_degrees = match live {
+        Some(degrees) => degrees.round(),
+        None => super::angles::raw_to_degrees(get_control(device, control)?),
+    };
     // Never past the range the camera is driven over, nor past what the driver itself allows.
     let (low, high) = if control == "pan_absolute" { super::angles::PAN_RANGE } else { super::angles::TILT_RANGE };
-    let (min, max) = (min.max(super::angles::degrees_to_raw(low)), max.min(super::angles::degrees_to_raw(high)));
-    let target = (current + degrees * PANTILT_RAW_UNITS_PER_DEGREE as i64).clamp(min, max);
-    if target == current {
-        return Err(format!("Already at the end of the range ({}).", super::angles::format(super::angles::raw_to_degrees(current))));
+    let (low_raw, high_raw) = (min.max(super::angles::degrees_to_raw(low)), max.min(super::angles::degrees_to_raw(high)));
+    let wanted = super::angles::degrees_to_raw(current_degrees + degrees as f64);
+    let target = wanted.clamp(low_raw, high_raw);
+    if target == super::angles::degrees_to_raw(current_degrees) {
+        return Err(format!("Already at the end of the range ({}).", super::angles::format(current_degrees)));
     }
     set_control(device, control, target)?;
     Ok(super::angles::raw_to_degrees(target))

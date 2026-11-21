@@ -204,6 +204,20 @@ pub struct Snapshot {
     pub error: Option<String>,
 }
 
+/// Try a reading up to three times, a moment apart, and say why if it never works.
+fn retry<T>(mut read: impl FnMut() -> Result<T, String>) -> Option<T> {
+    let mut last = String::new();
+    for attempt in 0..3 {
+        match read() {
+            Ok(value) => return Some(value),
+            Err(error) => last = error,
+        }
+        if attempt < 2 && !ui_test_mode() { std::thread::sleep(std::time::Duration::from_millis(120)); }
+    }
+    eprintln!("Could not read the camera: {last}");
+    None
+}
+
 impl Snapshot {
     pub fn read(device: &str) -> Snapshot {
         let mut snapshot = Snapshot { config: current_config(), ..Snapshot::default() };
@@ -211,9 +225,11 @@ impl Snapshot {
             Ok(text) => snapshot.controls = parse_controls(&text),
             Err(error) => snapshot.error = Some(error),
         }
-        snapshot.status = xu_status(device).ok();
-        snapshot.exposure_comp = get_exposure_compensation(device).ok();
-        snapshot.focus_priority = get_face_focus(device).ok();
+        // The camera answers one question at a time and now and then misses one, so ask again before
+        // giving up on a reading.
+        snapshot.status = retry(|| xu_status(device));
+        snapshot.exposure_comp = retry(|| get_exposure_compensation(device));
+        snapshot.focus_priority = retry(|| get_face_focus(device));
         snapshot
     }
 
@@ -549,7 +565,7 @@ fn build() -> Vec<Setting> {
             .info("Zooms in smoothly, from 1× up to 4×."),
         Setting::custom("obsbot:fov", Zoom, "Field of view",
             "Jump to a common angle.",
-            Kind::Choice(vec![opt(0, "67°", "Widest"), opt(5, "60°", "Normal"), opt(15, "48°", "Narrow")]),
+            Kind::Choice(vec![opt(0, "Wide · 67°", "The widest view"), opt(5, "Normal · 60°", "A little closer"), opt(15, "Narrow · 48°", "Closer still")]),
             // A preset is lit only after it is pressed, and only while the zoom stays there, so sliding the
             // zoom through a preset does not make the buttons flicker.
             |s| from_camera(s.control("zoom_absolute").map(|c| Value::Int(lit_preset(c.value)))),
@@ -688,8 +704,8 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:sleep", Power, "Camera power",
             "Put the camera to sleep, or wake it.",
             Kind::Choice(vec![
-                opt(0, "Awake", ""),
-                Opt { value: 1, label: "Asleep", hint: "", confirm: Some(Confirm {
+                opt(0, "Wake", ""),
+                Opt { value: 1, label: "Sleep", hint: "", confirm: Some(Confirm {
                     title: "Put the camera to sleep?",
                     body: "The gimbal will move to its resting position. Clear the space around the camera first.",
                     action: "Sleep",
