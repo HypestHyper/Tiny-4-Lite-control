@@ -248,14 +248,16 @@ impl Joystick {
     }
 
     /// Wake and Sleep: two plain buttons that each send their command, whatever the camera says it is
-    /// doing. The camera's sleep byte is not confirmed as a read-back, so no state is shown.
+    /// doing. The state the camera reports is shown beside the title.
     fn power_row(&self) -> gtk::Box {
         let store = self.0.store.clone();
         let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let title = widgets::line("Camera power", &["setting-label"]);
-        title.set_hexpand(true);
+        let state = widgets::line("", &["small", "dim"]);
+        state.set_hexpand(true);
         head.append(&title);
+        head.append(&state);
         head.append(&widgets::info_button("Camera power", &[
             "Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around it first.".into(),
             "The camera can take a moment to report its new state.".into(),
@@ -295,6 +297,15 @@ impl Joystick {
                 move || send(s.clone(), true));
         });
 
+        // The state the camera reports, beside the title; nothing while it has not said.
+        store.subscribe({
+            let state = state.downgrade();
+            move |snapshot| {
+                let Some(state) = state.upgrade() else { return false };
+                state.set_text(match snapshot.byte(0x02) { Some(0) => "Awake", Some(1) => "Asleep", _ => "" });
+                true
+            }
+        });
         row
     }
 

@@ -271,8 +271,6 @@ pub struct Setting {
     pub deps: Vec<Dep>,
     /// Eligible for the slim window.
     pub quick: bool,
-    /// Never label this row Unknown: it is made of buttons that send a command, not of a state.
-    pub quiet: bool,
     pub readback: Readback,
     /// Shown as experimental in the info dialog.
     pub experimental: bool,
@@ -282,7 +280,7 @@ pub struct Setting {
 impl Setting {
     fn new(id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind, source: Source) -> Setting {
         Setting {
-            id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true, quiet: false,
+            id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true,
             readback: Readback::Camera, experimental: false, source,
         }
     }
@@ -300,7 +298,6 @@ impl Setting {
     fn last_sent(mut self) -> Setting { self.readback = Readback::LastSent; self }
     fn experimental(mut self) -> Setting { self.experimental = true; self }
     fn not_quick(mut self) -> Setting { self.quick = false; self }
-    fn quiet(mut self) -> Setting { self.quiet = true; self }
 
     // Reading
 
@@ -727,12 +724,11 @@ fn build() -> Vec<Setting> {
                     action: "Sleep",
                 }) },
             ]),
-            // Wake and Sleep are two commands. The camera's sleep byte is not confirmed as a read-back, so
-            // neither button is lit by it and both always send.
-            |_| None,
+            // The camera reports whether it is asleep in byte 2 of its status block (confirmed on the
+            // user's camera), and that is what lights Wake or Sleep.
+            |s| from_camera(s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None })),
             |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
-            .quiet()
             .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and the gimbal moves to its resting position, so clear the space around the camera first."),
     ]
 }
@@ -877,6 +873,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn camera_power_is_read_from_the_sleep_byte() {
+        let setting = find("obsbot:sleep").unwrap();
+        let with = |byte: u8| { let mut s = [0u8; 60]; s[0x02] = byte; Snapshot { status: Some(s), ..Snapshot::default() } };
+        assert_eq!(setting.reading(&with(0)), Some((Value::Int(0), Origin::Camera)));
+        assert_eq!(setting.reading(&with(1)), Some((Value::Int(1), Origin::Camera)));
+        assert_eq!(setting.reading(&with(7)), None);
+        assert_eq!(setting.reading(&Snapshot::default()), None);
     }
 
     #[test]

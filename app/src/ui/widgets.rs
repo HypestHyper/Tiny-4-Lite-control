@@ -539,7 +539,7 @@ impl SettingRow {
     fn show_origin(&self, origin: Origin) {
         let row = &self.0;
         // Only an unknown state is worth a label. A value the app remembers just shows, without comment.
-        row.unknown.set_visible(origin == Origin::Unknown && !row.setting.quiet);
+        row.unknown.set_visible(origin == Origin::Unknown);
         match origin {
             Origin::Camera | Origin::Saved => {}
             Origin::Unknown => {
