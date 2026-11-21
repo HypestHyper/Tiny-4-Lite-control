@@ -67,6 +67,9 @@ pub struct AppConfig {
     pub presets: Vec<CameraPreset>,
     /// Last selected capture mode, restored on connect only if still advertised by V4L2.
     pub video_mode: Option<VideoModeConfig>,
+    /// A capture mode chosen while another program was using the camera; the service applies it when
+    /// the camera is free.
+    pub pending_video_mode: Option<VideoModeConfig>,
     /// Accent seed: a family name (mint, sky, lilac, rose, amber, leaf) or `#rrggbb`.
     pub accent: String,
     /// `auto`, `compact`, `default` or `large`.
@@ -106,6 +109,8 @@ pub struct ServiceConfig {
     pub allow_gimbal_move: bool,
     /// Put the camera to sleep when the computer shuts down or the session ends, so it does not stay on.
     pub sleep_on_shutdown: bool,
+    /// Put the camera to sleep when the computer suspends.
+    pub sleep_on_suspend: bool,
 }
 
 impl Default for ServiceConfig {
@@ -116,6 +121,7 @@ impl Default for ServiceConfig {
             connect_preset: None,
             allow_gimbal_move: false,
             sleep_on_shutdown: false,
+            sleep_on_suspend: false,
         }
     }
 }
@@ -161,6 +167,7 @@ impl Default for AppConfig {
             ],
             presets: Vec::new(),
             video_mode: None,
+            pending_video_mode: None,
             accent: "sky".into(),
             ui_scale: "auto".into(),
             reduce_motion: false,

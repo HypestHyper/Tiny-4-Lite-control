@@ -442,3 +442,89 @@ fn without_the_setting_a_stopped_service_leaves_the_camera_alone() {
     assert_eq!(child.wait().unwrap().code(), Some(0));
     assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("sleep="));
 }
+
+#[test]
+fn the_service_puts_the_camera_to_sleep_before_a_suspend() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-suspend");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "suspend", "on"]).status.code(), Some(0));
+    // A stand-in for dbus-monitor: after a few seconds it prints what logind prints before a suspend.
+    let monitor = "sleep 4; echo 'signal time=1.0 sender=:1.4 -> destination=(null destination) serial=9 path=/org/freedesktop/login1; interface=org.freedesktop.login1.Manager; member=PrepareForSleep'; echo '   boolean true'; sleep 30";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("TINY4LITE_TEST_SUSPEND_MONITOR", monitor)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    let slept = loop {
+        if std::fs::read_to_string(&log).unwrap_or_default().contains("sleep=on") { break true; }
+        if started.elapsed() > Duration::from_secs(15) { break false; }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let _ = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    let _ = child.wait();
+    assert!(slept, "no sleep command before the suspend");
+}
+
+#[test]
+fn a_capture_mode_waiting_for_a_free_camera_is_applied_by_the_service() {
+    let run = Run::new("service-pending");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    let dir = run.config.join("tiny4lite-control");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.toml"), "[pending_video_mode]\nwidth = 1280\nheight = 720\npixel_format = \"MJPG\"\nframe_rate_milli = 30000\n").unwrap();
+    let out = service_run(&run, &runtime, &log, &["service", "run", "--once"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let commands = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(commands.contains("--set-fmt-video=width=1280,height=720,pixelformat=MJPG"), "{commands}");
+    // It is done once: the waiting choice is cleared and becomes the saved mode.
+    let saved = std::fs::read_to_string(dir.join("config.toml")).unwrap();
+    assert!(!saved.contains("pending_video_mode"), "{saved}");
+}
+
+#[test]
+fn the_service_can_be_set_up_started_stopped_and_removed_from_the_command_line() {
+    let run = Run::new("service-lifecycle");
+    let (log, runtime) = (run.config.join("c.log"), run.config.join("runtime"));
+    // A PATH with only what the service needs, and no systemctl.
+    let bin = run.config.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for program in ["kill", "sh", "sleep"] {
+        let found = ["/usr/bin", "/bin"].iter().map(|d| std::path::Path::new(d).join(program)).find(|p| p.exists()).unwrap();
+        let _ = std::os::unix::fs::symlink(found, bin.join(program));
+    }
+    let go = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(args)
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        // No systemd user manager here, whatever the machine has: the autostart route is the one tested.
+        .env("PATH", &bin)
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    assert_eq!(go(&["requirements"]).status.code(), Some(0));
+    let setup = go(&["service", "setup", "--yes"]);
+    assert_eq!(setup.status.code(), Some(0), "{}", text(&setup.stderr));
+    let status = go(&["service", "status"]);
+    // Setup either started it (autostart) or the machine's systemd did; either way it is running now.
+    assert_eq!(status.status.code(), Some(0), "{}{}", text(&status.stdout), text(&status.stderr));
+    assert!(text(&status.stdout).contains("Running"));
+    assert_eq!(go(&["service", "stop"]).status.code(), Some(0));
+    assert_eq!(go(&["service", "status"]).status.code(), Some(1));
+    assert_eq!(go(&["service", "start"]).status.code(), Some(0));
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    assert_eq!(go(&["service", "status"]).status.code(), Some(0));
+    assert_eq!(go(&["service", "remove"]).status.code(), Some(0));
+    assert_eq!(go(&["service", "status"]).status.code(), Some(1));
+    assert!(!run.config.join("autostart/tiny4lite-control-service.desktop").exists());
+    assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists());
+}

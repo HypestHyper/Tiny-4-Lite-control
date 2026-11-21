@@ -480,8 +480,17 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
             if !backend::ui_test_mode() {
                 let others = backend::usage::holder_names(&store.device());
                 if !others.is_empty() {
-                    store.error(&format!("{} {} using the camera. Close {} before changing the capture mode.",
-                        others.join(", "), if others.len() == 1 { "is" } else { "are" }, if others.len() == 1 { "it" } else { "them" }));
+                    // Changing the format under a program that is streaming breaks its picture, and the camera
+                    // refuses anyway while a stream is open. So the choice waits: the background service applies
+                    // it the moment nothing has the camera open.
+                    let wanted = config::VideoModeConfig { width: mode.width, height: mode.height, pixel_format: mode.pixel_format.clone(), frame_rate_milli: mode.frame_rate_milli };
+                    let _ = update_config_checked(|c| c.pending_video_mode = Some(wanted));
+                    let who = format!("{} {}", others.join(", "), if others.len() == 1 { "is" } else { "are" });
+                    if crate::service::running_status().is_some() {
+                        store.toast(&format!("{who} using the camera, so the mode changes as soon as it is free."));
+                    } else {
+                        store.error(&format!("{who} using the camera. The change waits for it to be free, but the background service is not running to do it: start it on the Device tab, or close the program and choose again."));
+                    }
                     load();
                     return;
                 }
@@ -553,12 +562,12 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
     card
 }
 
-/// The sleep timer: when the camera is put to sleep so it does not stay on. The background service does it,
+/// The sleep timer: when the camera is put to sleep so it does not stay on. The background service does it
 /// and reads these settings as soon as they change.
 pub fn sleep_timer_card() -> gtk::Box {
     let (card, body) = card("Sleep timer", "bedtime",
         "Puts the camera to sleep when it is not needed, so it does not stay on. The background service does this.");
-    let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> (gtk::Box, gtk::Switch) {
+    let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
         titles.set_hexpand(true);
@@ -571,75 +580,166 @@ pub fn sleep_timer_card() -> gtk::Box {
         switch.connect_active_notify(move |sw| on_change(sw.is_active()));
         row.append(&titles);
         row.append(&switch);
-        (row, switch)
+        row
     };
     let config = current_config();
 
-    // After this long with nothing using the camera.
+    // A box to type minutes in, with arrows to step it.
     let minutes = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    minutes.append(&widgets::line("After", &["setting-label"]));
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 120.0, 1.0);
-    scale.set_draw_value(false);
-    scale.set_hexpand(true);
-    scale.set_value(f64::from(config.service.auto_sleep_timeout_minutes.clamp(1, 120)));
-    widgets::lock_wheel(&scale);
-    widgets::label_accessible(&scale, "Minutes without use before the camera sleeps");
-    let value = widgets::line(&format!("{} min", config.service.auto_sleep_timeout_minutes.clamp(1, 120)), &["setting-value", "tnum"]);
-    value.set_width_chars(7);
-    value.set_xalign(1.0);
-    let save_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
-    {
-        let (value, save_timer) = (value.clone(), save_timer.clone());
-        scale.connect_value_changed(move |scale| {
-            let minutes = scale.value().round() as u32;
-            value.set_text(&format!("{minutes} min"));
-            // Saved once the slider settles, not on every step.
-            if let Some(id) = save_timer.borrow_mut().take() { id.remove(); }
-            let timer = save_timer.clone();
-            let id = glib::timeout_add_local_once(Duration::from_millis(500), move || {
-                timer.borrow_mut().take();
-                update_config(|c| c.service.auto_sleep_timeout_minutes = minutes);
-            });
-            *save_timer.borrow_mut() = Some(id);
-        });
-    }
-    minutes.append(&scale);
-    minutes.append(&value);
+    let caption = widgets::line("Sleep after", &["setting-label"]);
+    caption.set_hexpand(true);
+    minutes.append(&caption);
+    let spin = gtk::SpinButton::with_range(1.0, 1440.0, 1.0);
+    spin.set_numeric(true);
+    spin.set_width_chars(5);
+    spin.set_value(f64::from(config.service.auto_sleep_timeout_minutes.clamp(1, 1440)));
+    widgets::lock_wheel(&spin);
+    widgets::label_accessible(&spin, "Minutes without use before the camera sleeps");
+    minutes.append(&spin);
+    minutes.append(&widgets::line("minutes", &["small", "dim"]));
     minutes.set_sensitive(config.service.auto_sleep_enabled);
+    let save_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    spin.connect_value_changed(move |spin| {
+        let minutes = spin.value().round() as u32;
+        // Saved once typing or stepping settles, not on every keystroke.
+        if let Some(id) = save_timer.borrow_mut().take() { id.remove(); }
+        let timer = save_timer.clone();
+        let id = glib::timeout_add_local_once(Duration::from_millis(600), move || {
+            timer.borrow_mut().take();
+            update_config(|c| c.service.auto_sleep_timeout_minutes = minutes);
+        });
+        *save_timer.borrow_mut() = Some(id);
+    });
 
-    let (idle_row, _) = {
-        let minutes = minutes.clone();
-        switch_row("Sleep when nothing is using the camera",
-            "After the time below with no app using it, and the control window closed. It wakes when an app starts using it.",
-            config.service.auto_sleep_enabled,
-            Box::new(move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); }))
-    };
-    body.append(&idle_row);
+    body.append(&switch_row("Sleep when nothing is using the camera",
+        "After the time below with no app using it and the control window closed.",
+        config.service.auto_sleep_enabled,
+        Box::new({ let minutes = minutes.clone(); move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); } })));
     body.append(&minutes);
-    let (shutdown_row, _) = switch_row("Sleep when the computer shuts down",
+    body.append(&switch_row("Sleep when the computer shuts down",
         "Also when you log out, so the camera is not left on.",
         config.service.sleep_on_shutdown,
-        Box::new(|on| update_config(|c| c.service.sleep_on_shutdown = on)));
-    body.append(&shutdown_row);
+        Box::new(|on| update_config(|c| c.service.sleep_on_shutdown = on))));
+    body.append(&switch_row("Sleep when the computer suspends",
+        "Needs dbus-monitor and systemd-inhibit (or elogind-inhibit). The camera is put to sleep just before the suspend.",
+        config.service.sleep_on_suspend,
+        Box::new(|on| update_config(|c| c.service.sleep_on_suspend = on))));
+    card
+}
 
-    // Whether the service that does all this is running.
-    let status = widgets::text("", &["small", "dim"]);
+/// How long ago, for people: 40 s, 12 min, 3 h 5 min.
+fn how_long(seconds: u64) -> String {
+    match seconds {
+        0..=59 => format!("{seconds} s"),
+        60..=3599 => format!("{} min", seconds / 60),
+        _ => format!("{} h {} min", seconds / 3600, (seconds % 3600) / 60),
+    }
+}
+
+/// The background service: its status, installing it, and starting, stopping and removing it. The status
+/// is watched and refreshed every couple of seconds.
+pub fn service_card(store: &Store) -> gtk::Box {
+    use crate::setup::{self, InstalledAs};
+    let (card, body) = card("Background service", "terminal",
+        "Watches the camera and does the sleep timer, shutdown and suspend sleep, restoring settings and waiting capture changes.");
+    let status = widgets::text("", &["setting-summary"]);
     status.set_wrap(true);
     status.set_xalign(0.0);
-    let show = {
-        let status = status.downgrade();
-        move || -> bool {
-            let Some(status) = status.upgrade() else { return false };
-            match crate::service::running_status() {
-                Some(_) => status.set_text("The background service is running."),
-                None => status.set_text("The background service is not running, so none of this happens yet. Start it with your session by running: tiny4lite-control service install"),
-            }
-            true
-        }
-    };
-    show();
-    glib::timeout_add_local(Duration::from_secs(3), move || if show() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
+    status.set_selectable(true);
     body.append(&status);
+    let needs = widgets::text("", &["small", "dim"]);
+    needs.set_wrap(true);
+    needs.set_xalign(0.0);
+    body.append(&needs);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let install = gtk::Button::with_label("Install…");
+    install.add_css_class("filled");
+    install.set_tooltip_text(Some("Opens a terminal that checks what is needed, installs it (asking for your password) and installs and starts the service"));
+    let start = gtk::Button::with_label("Start");
+    let stop = gtk::Button::with_label("Stop");
+    let remove = gtk::Button::with_label("Remove");
+    remove.add_css_class("danger");
+    let install_missing = gtk::Button::with_label("Install missing programs…");
+    for button in [&install, &start, &stop, &remove, &install_missing] { button.add_css_class("small"); buttons.append(button); }
+    body.append(&buttons);
+
+    let refresh: Rc<dyn Fn()> = {
+        let (status, needs, install, start, stop, remove, install_missing) =
+            (status.downgrade(), needs.downgrade(), install.downgrade(), start.downgrade(), stop.downgrade(), remove.downgrade(), install_missing.downgrade());
+        Rc::new(move || {
+            let (Some(status), Some(needs), Some(install), Some(start), Some(stop), Some(remove), Some(install_missing)) =
+                (status.upgrade(), needs.upgrade(), install.upgrade(), start.upgrade(), stop.upgrade(), remove.upgrade(), install_missing.upgrade()) else { return };
+            let running = crate::service::running_status();
+            let installed = setup::installed();
+            let mut lines = Vec::new();
+            match &running {
+                Some(s) => {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                    lines.push(format!("Running · process {} · up {}", s.pid, how_long(now.saturating_sub(s.started))));
+                    lines.push(format!("Camera: {}", s.camera.as_deref().unwrap_or("not connected")));
+                    lines.push(format!("Last: {} ({} ago)", s.last_event, how_long(now.saturating_sub(s.last_event_at))));
+                }
+                None => lines.push("Not running".to_string()),
+            }
+            lines.push(match installed {
+                Some(InstalledAs::Systemd) => "Starts with your session: systemd user service".to_string(),
+                Some(InstalledAs::Autostart) => "Starts with your session: desktop autostart entry".to_string(),
+                None => "Not installed: it does not start with your session".to_string(),
+            });
+            status.set_text(&lines.join("\n"));
+            install.set_visible(installed.is_none());
+            start.set_visible(installed.is_some());
+            stop.set_visible(installed.is_some());
+            remove.set_visible(installed.is_some());
+            start.set_sensitive(running.is_none());
+            stop.set_sensitive(running.is_some());
+            let missing = setup::missing();
+            if missing.is_empty() {
+                needs.set_visible(false);
+                install_missing.set_visible(false);
+            } else {
+                let names: Vec<String> = missing.iter().map(|r| format!("{} ({})", r.name, if r.required { "needed" } else { "for sleeping on suspend" })).collect();
+                needs.set_text(&format!("Missing: {}", names.join(", ")));
+                needs.set_visible(true);
+                install_missing.set_visible(setup::manager().is_some());
+            }
+        })
+    };
+    refresh();
+    {
+        let refresh = refresh.clone();
+        let weak = status.downgrade();
+        glib::timeout_add_local(Duration::from_secs(2), move || {
+            if weak.upgrade().is_none() { return glib::ControlFlow::Break; }
+            refresh();
+            glib::ControlFlow::Continue
+        });
+    }
+
+    // Start, stop and remove run off the window's thread, then report.
+    let act = {
+        let (store, refresh) = (store.clone(), refresh.clone());
+        Rc::new(move |work: fn() -> Result<String, String>| {
+            let (sender, receiver) = async_channel::bounded::<Result<String, String>>(1);
+            std::thread::spawn(move || { let _ = sender.send_blocking(work()); });
+            let (store, refresh) = (store.clone(), refresh.clone());
+            glib::spawn_future_local(async move {
+                if let Ok(result) = receiver.recv().await {
+                    match result { Ok(message) => store.toast(&message), Err(error) => store.error(&error) }
+                    refresh();
+                }
+            });
+        })
+    };
+    { let act = act.clone(); start.connect_clicked(move |_| act(setup::start)); }
+    { let act = act.clone(); stop.connect_clicked(move |_| act(setup::stop)); }
+    { let act = act.clone(); remove.connect_clicked(move |_| act(setup::remove)); }
+    let terminal = |store: Store, arguments: &'static [&'static str]| move |_: &gtk::Button| {
+        if let Err(error) = setup::run_in_terminal(arguments) { store.error(&error); }
+    };
+    install.connect_clicked(terminal(store.clone(), &["service", "setup"]));
+    install_missing.connect_clicked(terminal(store.clone(), &["requirements", "--install"]));
     card
 }
 

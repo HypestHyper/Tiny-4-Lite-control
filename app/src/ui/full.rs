@@ -198,6 +198,7 @@ impl FullWindow {
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::sleep_timer_card(), 5);
+                        built.masonry.add(&panels::service_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
                         built.masonry.add(&panels::developer_card(&store), 4);
                     }

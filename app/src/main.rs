@@ -4,6 +4,8 @@ mod cli;
 mod config;
 mod presets;
 mod service;
+mod setup;
+mod suspend;
 mod ui;
 mod video;
 
