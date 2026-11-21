@@ -37,6 +37,12 @@ const UNKNOWN_POSITION_CAP: f64 = 0.35;
 const POSITION_FRESH: Duration = Duration::from_millis(1500);
 /// Movement this large, against what the speed asked for, shows a direction is reversed.
 const SIGN_EVIDENCE: f64 = 1.5;
+/// The speed must have kept its direction this long first. Right after a reversal the camera is still
+/// coasting the old way, which is not evidence about which way a speed turns it.
+const SIGN_HOLD: Duration = Duration::from_millis(900);
+
+/// Whether a movement says anything about which way a speed turns the camera.
+pub fn counts_as_evidence(held_for: Duration, moved: f64) -> bool { held_for >= SIGN_HOLD && moved.abs() >= SIGN_EVIDENCE }
 
 struct State {
     store: Store,
@@ -63,6 +69,11 @@ struct State {
     /// +1 when a positive speed raises the angle, −1 if the camera turned out to be the other way.
     axis_sign: Cell<(f64, f64)>,
     send_failed: Arc<AtomicBool>,
+    /// The pointer button is down on the pad. Losing focus then does not end the drag: the button
+    /// still decides.
+    pointer_down: Cell<bool>,
+    /// When the direction of the pan or tilt speed last changed.
+    direction_changed_at: Cell<Instant>,
     poll_error: RefCell<Option<String>>,
     animating: Cell<bool>,
     save_timer: RefCell<Option<glib::SourceId>>,
@@ -137,7 +148,7 @@ impl Joystick {
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
             last_position: Cell::new(None), last_position_at: Cell::new(None), ramped: Cell::new((0.0, 0.0)),
-            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), poll_error: RefCell::default(), animating: Cell::new(false),
+            axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
         let joystick = Joystick(state);
@@ -403,6 +414,7 @@ impl Joystick {
         let begin_origin = origin.clone();
         drag.connect_drag_begin(move |_, x, y| {
             begin_origin.set((x, y));
+            this.0.pointer_down.set(true);
             this.0.pad.grab_focus();
             this.0.pad.set_cursor_from_name(Some("grabbing"));
             this.engage();
@@ -412,10 +424,18 @@ impl Joystick {
         let update_origin = origin.clone();
         drag.connect_drag_update(move |_, dx, dy| {
             let (x, y) = update_origin.get();
+            // If anything stopped the stick while the button is still down (a focus change, a stop from
+            // the keyboard), the next movement takes hold of it again.
+            this.0.pointer_down.set(true);
+            this.engage();
             this.set_from_pointer(x + dx, y + dy);
         });
         let this = self.clone();
-        drag.connect_drag_end(move |_, _, _| { this.0.pad.set_cursor_from_name(Some("grab")); this.release(); });
+        drag.connect_drag_end(move |_, _, _| {
+            this.0.pointer_down.set(false);
+            this.0.pad.set_cursor_from_name(Some("grab"));
+            this.release();
+        });
         pad.add_controller(drag);
 
         // Keyboard
@@ -437,7 +457,7 @@ impl Joystick {
         let this = self.clone();
         keys.connect_key_released(move |_, key, _, _| {
             this.0.keys.borrow_mut().remove(&key);
-            if this.0.keys.borrow().is_empty() { this.release(); } else { this.set_from_keys(); }
+            if this.0.keys.borrow().is_empty() { if !this.0.pointer_down.get() { this.release(); } } else { this.set_from_keys(); }
         });
         pad.add_controller(keys);
 
@@ -448,13 +468,19 @@ impl Joystick {
         pad.connect_map(move |_| this.start_polling());
         let focus = gtk::EventControllerFocus::new();
         let this = self.clone();
-        focus.connect_leave(move |_| { this.0.keys.borrow_mut().clear(); this.release(); });
+        focus.connect_leave(move |_| {
+            this.0.keys.borrow_mut().clear();
+            // With the button still down the drag goes on, even outside the window; its end stops it.
+            if !this.0.pointer_down.get() { this.release(); }
+        });
         pad.add_controller(focus);
         let this = self.clone();
         pad.connect_root_notify(move |pad| {
             if let Some(window) = pad.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
                 let joystick = this.clone();
-                window.connect_is_active_notify(move |window| { if !window.is_active() { joystick.release(); } });
+                window.connect_is_active_notify(move |window| {
+                    if !window.is_active() && !joystick.0.pointer_down.get() { joystick.release(); }
+                });
             }
         });
 
@@ -591,9 +617,10 @@ impl Joystick {
     fn learn_direction(&self, before: Option<(f64, f64)>, after: (f64, f64)) {
         let state = &self.0;
         let (Some(before), (sent_pan, sent_tilt)) = (before, state.sent.get()) else { return };
+        let held = state.direction_changed_at.get().elapsed();
         let (mut sign_pan, mut sign_tilt) = state.axis_sign.get();
         let learn = |sent: i64, moved: f64, sign: &mut f64, name: &str| {
-            if sent != 0 && moved.abs() >= SIGN_EVIDENCE {
+            if sent != 0 && counts_as_evidence(held, moved) {
                 let observed = moved.signum() * (sent as f64).signum();
                 if observed != *sign {
                     eprintln!("{name}: a positive speed turned the camera the other way; the limits follow that now.");
@@ -613,6 +640,10 @@ impl Joystick {
         if self.0.send_failed.swap(false, Ordering::Relaxed) { self.0.sent.set((i64::MIN, i64::MIN)); }
         if want != (0, 0) { camera.hold_motion(); } else { camera.release_motion(); }
         if want == self.0.sent.get() { return; }
+        let before = self.0.sent.get();
+        if want.0.signum() != before.0.signum() || want.1.signum() != before.1.signum() {
+            self.0.direction_changed_at.set(Instant::now());
+        }
         self.0.sent.set(want);
         let failed = self.0.send_failed.clone();
         camera.submit_keyed(KEY, move |device| {
@@ -861,6 +892,17 @@ impl Joystick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_camera_still_coasting_after_a_reversal_is_not_evidence() {
+        let ms = Duration::from_millis;
+        // Right after the stick was flipped the camera keeps going the old way for a moment.
+        assert!(!counts_as_evidence(ms(200), 4.0));
+        assert!(!counts_as_evidence(ms(899), 4.0));
+        // Held steady for a while, a clear movement counts; a tiny one does not.
+        assert!(counts_as_evidence(ms(900), 4.0));
+        assert!(!counts_as_evidence(ms(2000), 0.5));
+    }
 
     #[test]
     fn the_stick_turns_the_other_way_with_a_mirrored_picture() {

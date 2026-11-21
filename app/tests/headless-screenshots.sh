@@ -116,6 +116,21 @@ grep -q 'tilt_speed=-[1-9]' "$LOG" || fail "dragging down did not send a negativ
 awk '{ s=int($1/1000); n[s]++ } END { for (k in n) if (n[k] > 30) { print "second " k " had " n[k]; exit 1 } }' "$LOG" || fail "joystick updates were not rate-limited"
 echo "ok: joystick sends speeds while held and always stops on release"
 
+# ── A quick flip from up to down, with the pointer leaving the window on the way, is not stuck ──
+TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick-flip
+xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
+sleep 0.15
+xdotool mousemove --window "$WINDOW" "$CENTRE_X" $((CENTRE_Y - 80)); sleep 0.5
+xdotool mousemove 1800 300; sleep 0.3                                   # out of the window, button still down
+xdotool mousemove --window "$WINDOW" "$CENTRE_X" $((CENTRE_Y + 80)); sleep 0.6
+xdotool mouseup 1; sleep 0.6
+stop_app
+FLIP="$OUT/joystick-flip.commands.log"
+grep -q 'tilt_speed=[1-9]' "$FLIP" || fail "pushing up did not send a positive tilt speed"
+grep -q 'tilt_speed=-[1-9]' "$FLIP" || fail "pushing down after up did not send a negative tilt speed (stuck?)"
+[[ "$(tail -n1 "$FLIP" | cut -d' ' -f2)" == "--set-ctrl=pan_speed=0,tilt_speed=0" ]] || fail "the flip did not end with a stop"
+echo "ok: a quick up-then-down flip is not stuck"
+
 # ── With Mirror image on, pushing the stick right turns the camera the other way ──
 START_CONFIG='mirror_image_enabled = true' TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick-mirror
 xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
