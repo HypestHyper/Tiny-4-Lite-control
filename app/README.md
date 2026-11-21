@@ -46,6 +46,8 @@ Window manager configurations are never edited for you. For the AppImage the uni
 
 **Angles.** Pan and tilt are shown in whole degrees everywhere. The live position wobbles, sometimes lands between two degrees, and now and then gives one odd value, so the shown degree is the middle of the last five readings and only changes once that is 0.8° or more away from it; a real move (two readings in a row well away) is followed at once. Bumping the desk by a degree still shows.
 
+If the model swings the wrong way when the camera pans, turn on **Reverse pan on the camera model** in Settings (Device tab, Appearance). It is a one-time choice, and the gimbal info button says where it is.
+
 **Joystick safety.** The camera is driven over OBSBOT's published controllable range, pan ±140° and tilt from 30° down to 70° up. Near an end the speed tapers off (from 25° away) and stops 2° short of it; turning back is always allowed. Speed rises over about a fifth of a second but stops at once. If the live position is unknown, the stick is held to 35% speed. If the window freezes while the stick is held, a watchdog stops the gimbal after 0.7 s. A failed send is repeated, and the 1° steps, Centre and presets never go past the range.
 
 **Live camera model.** The gimbal card starts with a wireframe camera on its gimbal that follows the camera's

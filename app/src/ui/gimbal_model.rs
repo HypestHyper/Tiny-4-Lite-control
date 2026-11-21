@@ -44,6 +44,27 @@ const VIEW_PITCH: f64 = 8.0;
 /// The view turned about the vertical, in degrees: 180° looks at the front of the camera at rest, 0° at its back.
 pub const FRONT_YAW: f64 = 180.0;
 
+thread_local! {
+    /// Every model on screen, so a change in Settings reaches all of them.
+    static MODELS: RefCell<Vec<std::rc::Weak<State>>> = const { RefCell::new(Vec::new()) };
+}
+
+static PAN_REVERSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Draw pan the other way round, and save the choice. Every model redraws at once.
+pub fn set_pan_reversed(reversed: bool) {
+    PAN_REVERSED.store(reversed, std::sync::atomic::Ordering::Relaxed);
+    update_config(|c| c.model_pan_reversed = reversed);
+    MODELS.with(|models| {
+        for model in models.borrow().iter().filter_map(std::rc::Weak::upgrade) { model.area.queue_draw(); }
+    });
+}
+
+/// The sign pan is drawn with: `PAN_SIGN`, or its opposite if the user reversed it in Settings.
+fn pan_sign() -> f64 { pan_sign_for(PAN_REVERSED.load(std::sync::atomic::Ordering::Relaxed)) }
+
+fn pan_sign_for(reversed: bool) -> f64 { if reversed { -PAN_SIGN } else { PAN_SIGN } }
+
 /// The camera's pan reading as drawn. Positive pan moved the real camera the other way round from
 /// the drawing (checked by the user on a real camera), so the drawing turns by the opposite angle.
 pub const PAN_SIGN: f64 = -1.0;
@@ -238,7 +259,7 @@ fn slab(outline: &[(f64, f64)], steps: usize, front: impl Fn((f64, f64)) -> V3, 
 
 /// All the lines of the model for a pan and tilt, in drawing units (see `shape::UNIT`).
 fn model(pan: f64, tilt: f64, zoom: f64, yaw: f64) -> Vec<Line> {
-    let pan = PAN_SIGN * pan;
+    let pan = pan_sign() * pan;
     use shape::*;
     let mut lines = Vec::new();
 
@@ -441,6 +462,8 @@ impl GimbalModel {
             area: area.clone(), target: Cell::new(None), shown: Cell::new((0.0, 0.0)), zoom_target: Cell::new(0.0), zoom_shown: Cell::new(0.0),
             animating: Cell::new(false), yaw: Cell::new(normalise_yaw(current_config().model_view_yaw)), drag_from: Cell::new(None), last_frame: Cell::new(0), tick: RefCell::default(),
         });
+        PAN_REVERSED.store(current_config().model_pan_reversed, std::sync::atomic::Ordering::Relaxed);
+        MODELS.with(|models| models.borrow_mut().push(Rc::downgrade(&state)));
         let model = GimbalModel(state);
         let drawer = model.clone();
         area.set_draw_func(move |_, cr, width, height| drawer.draw(cr, width, height));
@@ -633,6 +656,12 @@ mod tests {
         assert_eq!(PAN_RANGE, (-140.0, 140.0));
         assert_eq!(PAN_LIMIT, 150.0);
         assert_eq!(TILT_LIMIT, 90.0);
+    }
+
+    #[test]
+    fn reversing_pan_in_settings_flips_the_drawn_direction() {
+        assert_eq!(pan_sign_for(false), PAN_SIGN);
+        assert_eq!(pan_sign_for(true), -PAN_SIGN);
     }
 
     #[test]

@@ -85,6 +85,8 @@ pub struct AppConfig {
     pub window_buttons: bool,
     /// The view of the gimbal model, turned about the vertical in degrees (180 looks at the front).
     pub model_view_yaw: f64,
+    /// Draw the model's pan the other way round (for a camera that is mounted or read the other way).
+    pub model_pan_reversed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,6 +165,7 @@ impl Default for AppConfig {
             preview_popped_out: false,
             window_buttons: true,
             model_view_yaw: 180.0,
+            model_pan_reversed: false,
         }
     }
 }

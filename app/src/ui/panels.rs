@@ -608,6 +608,21 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
     motion.append(&titles);
     motion.append(&switch);
     body.append(&motion);
+
+    // The wireframe's pan direction, for the few setups where it swings the wrong way.
+    let pan = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text("Reverse pan on the camera model", &["setting-label"]));
+    titles.append(&widgets::text("Turn on if the model swings the wrong way when the camera pans. You only need to set this once.", &["setting-summary"]));
+    let reverse = gtk::Switch::new();
+    reverse.set_valign(gtk::Align::Center);
+    reverse.set_active(current_config().model_pan_reversed);
+    widgets::label_accessible(&reverse, "Reverse pan on the camera model");
+    reverse.connect_active_notify(|sw| super::gimbal_model::set_pan_reversed(sw.is_active()));
+    pan.append(&titles);
+    pan.append(&reverse);
+    body.append(&pan);
     card
 }
 
