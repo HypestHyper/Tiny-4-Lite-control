@@ -64,6 +64,8 @@ struct HubInner {
     mode_listeners: RefCell<Vec<Rc<dyn Fn(&VideoMode)>>>,
     /// Told when the preview is started or paused, from any of its buttons.
     enabled_listeners: RefCell<Vec<Rc<dyn Fn(bool) -> bool>>>,
+    /// Told when the source (camera or Studio) changes, so every window's list shows the same.
+    source_listeners: RefCell<Vec<Rc<dyn Fn(bool) -> bool>>>,
 }
 
 #[derive(Clone)]
@@ -88,6 +90,7 @@ impl PreviewHub {
             retries: Cell::new(0),
             mode_listeners: RefCell::default(),
             enabled_listeners: RefCell::default(),
+            source_listeners: RefCell::default(),
         }))
     }
 
@@ -143,8 +146,31 @@ impl PreviewHub {
 
     /// Show the Studio camera or the camera itself, and start the picture again from the new one.
     pub fn set_denoised(&self, on: bool) {
+        if current_config().preview_denoised == on { return; }
         update_config(|c| c.preview_denoised = on);
-        if self.0.running.get() { self.restart(); }
+        // Every window's list follows.
+        let listeners: Vec<_> = self.0.source_listeners.borrow().clone();
+        let keep: Vec<bool> = listeners.iter().map(|l| l(on)).collect();
+        let mut i = 0;
+        self.0.source_listeners.borrow_mut().retain(|_| { let k = keep.get(i).copied().unwrap_or(true); i += 1; k });
+        self.0.retries.set(0);
+        if self.0.running.get() { self.restart(); } else { self.update_demand(); }
+    }
+
+    /// Why the Studio picture is not coming: what the background service says about it, and what the
+    /// stream reader said.
+    fn studio_problem(&self) -> String {
+        let service = match crate::service::running_status() {
+            None => "The background service is not running, and it runs the Studio camera.".to_string(),
+            Some(status) => match status.denoise {
+                None => "The Studio camera is turned off (Device tab \u{2192} Studio camera).".to_string(),
+                Some(r) if r.detail.is_empty() => format!("The Studio camera is {}.", r.state),
+                Some(r) => r.detail,
+            },
+        };
+        let reader = std::fs::read_to_string(preview_log_path()).unwrap_or_default();
+        let reader = reader.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        if reader.is_empty() { service } else { format!("{service} The stream said: {reader}") }
     }
 
     /// A small list on the preview to pick what it shows: the camera, or the Studio camera. Always
@@ -158,6 +184,12 @@ impl PreviewHub {
         picker.set_selected(u32::from(current_config().preview_denoised));
         let hub = self.clone();
         picker.connect_selected_notify(move |p| hub.set_denoised(p.selected() == 1));
+        // Changed in another window: show the same here.
+        let weak = picker.downgrade();
+        self.0.source_listeners.borrow_mut().push(Rc::new(move |on| match weak.upgrade() {
+            Some(picker) => { if picker.selected() != u32::from(on) { picker.set_selected(u32::from(on)); } true }
+            None => false,
+        }));
         picker
     }
 
@@ -327,9 +359,12 @@ impl PreviewHub {
         let mut child = if super::super::backend::ui_test_mode() {
             None
         } else {
+            // What the reader says goes to a small log, to explain a picture that does not come.
+            let log = std::fs::create_dir_all(crate::service::runtime_dir()).ok()
+                .and_then(|_| std::fs::File::create(preview_log_path()).ok()).map(Stdio::from).unwrap_or_else(Stdio::null);
             match Command::new("v4l2-ctl").arg("-d").arg(&device)
                 .arg("--stream-mmap=4").arg("--stream-count=1000000").arg("--stream-to=-")
-                .stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+                .stdout(Stdio::piped()).stderr(log).spawn()
             {
                 Ok(child) => Some(child),
                 Err(error) => {
@@ -367,8 +402,11 @@ impl PreviewHub {
             }
             if this.0.generation.get() == generation && this.0.running.get() {
                 this.0.running.set(false);
-                // A hiccup in the stream is common, so try again a few times before giving up.
-                if this.0.retries.get() < 3 && this.0.enabled.get() {
+                // A hiccup in the stream is common, so try again a few times before giving up. The Studio
+                // camera changes its writer as it starts (placeholder, then the real picture), which takes
+                // a few seconds, so it gets more tries.
+                let tries = if denoised { 6 } else { 3 };
+                if this.0.retries.get() < tries && this.0.enabled.get() {
                     this.0.retries.set(this.0.retries.get() + 1);
                     this.each_view(|v| v.show_message("The picture stopped. Reconnecting…", "videocam"));
                     let again = this.clone();
@@ -376,7 +414,8 @@ impl PreviewHub {
                         if !again.0.running.get() { again.update_demand(); }
                     });
                 } else {
-                    this.each_view(|v| v.show_message("The picture stopped.", "videocam_off"));
+                    let why = if denoised { format!("The Studio picture stopped. {}", this.studio_problem()) } else { "The picture stopped.".to_string() };
+                    this.each_view(|v| v.show_message(&why, "videocam_off"));
                 }
             }
         });
@@ -609,6 +648,9 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
         }
     }
 }
+
+/// Where the preview's stream reader writes what it says.
+fn preview_log_path() -> std::path::PathBuf { crate::service::runtime_dir().join("preview.log") }
 
 /// Focus peaking: paint the sharpest edges in the picture green, so what is in focus stands out.
 static FOCUS_PEAKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

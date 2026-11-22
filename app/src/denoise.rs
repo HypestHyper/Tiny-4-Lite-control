@@ -28,7 +28,9 @@ pub const DEVICE_NUMBER: u32 = 42;
 /// After the last app lets go, the camera is held this long in case it comes straight back.
 const LINGER: Duration = Duration::from_secs(5);
 /// After a failure, wait this long before trying again.
-const RETRY: Duration = Duration::from_secs(30);
+// Short: the commonest failure is the camera still busy for a moment (the app's own preview letting go of
+// it as the Studio picture starts).
+const RETRY: Duration = Duration::from_secs(6);
 
 // ── What is there ─────────────────────────────────────────────────────────
 
