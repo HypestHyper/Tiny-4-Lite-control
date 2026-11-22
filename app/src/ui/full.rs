@@ -366,7 +366,12 @@ impl FullWindow {
         layout_stack.set_visible_child_name("wide");
 
         let dialogs = Dialogs::new();
-        dialogs.overlay().set_child(Some(&layout_stack));
+        // The offer to set up the background service, above everything else while it is not set up.
+        let main_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        main_column.append(&panels::service_setup_banner(&store));
+        layout_stack.set_vexpand(true);
+        main_column.append(&layout_stack);
+        dialogs.overlay().set_child(Some(&main_column));
         dialogs.install();
         let toaster = Toaster::new();
         dialogs.overlay().add_overlay(toaster.widget());

@@ -628,6 +628,69 @@ pub fn sleep_timer_card() -> gtk::Box {
     card
 }
 
+/// A banner across the top of the window while the background service is not set up: why it is needed,
+/// a button that sets it up, and "Not now", which hides it for good (it can still be set up on the Device
+/// tab). It goes away by itself once the service is installed or running.
+pub fn service_setup_banner(store: &Store) -> gtk::Revealer {
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    let banner = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    banner.add_css_class("setup-banner");
+    banner.set_margin_start(20);
+    banner.set_margin_end(14);
+    banner.set_margin_bottom(12);
+    let glyph = widgets::icon("bedtime");
+    glyph.set_valign(gtk::Align::Start);
+    let words = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    words.set_hexpand(true);
+    words.append(&widgets::text("Set up the background service", &["setting-label"]));
+    words.append(&widgets::text(
+        "Without it the camera stays on after you are done with it: the service puts it to sleep when no app is using it, \
+         when the computer shuts down or suspends, and puts your settings back when it is plugged in. It runs as your user and needs no password, except to install a missing program.",
+        &["setting-summary"]));
+    let setup = gtk::Button::with_label("Set up…");
+    setup.add_css_class("filled");
+    setup.add_css_class("small");
+    setup.set_valign(gtk::Align::Center);
+    let later = gtk::Button::with_label("Not now");
+    later.add_css_class("small");
+    later.set_valign(gtk::Align::Center);
+    banner.append(&glyph);
+    banner.append(&words);
+    banner.append(&setup);
+    banner.append(&later);
+    revealer.set_child(Some(&banner));
+
+    let wanted = || !current_config().service_setup_dismissed
+        && crate::setup::installed().is_none() && crate::service::running_status().is_none()
+        // The screenshot tests keep their layout unless they ask for the banner.
+        && !(backend::ui_test_mode() && std::env::var_os("TINY4LITE_UI_TEST_BANNER").is_none());
+    revealer.set_reveal_child(wanted());
+    {
+        let weak = revealer.downgrade();
+        glib::timeout_add_local(Duration::from_secs(2), move || {
+            let Some(revealer) = weak.upgrade() else { return glib::ControlFlow::Break };
+            if revealer.reveals_child() && !wanted() { revealer.set_reveal_child(false); }
+            glib::ControlFlow::Continue
+        });
+    }
+    {
+        let store = store.clone();
+        setup.connect_clicked(move |_| {
+            if let Err(error) = crate::setup::run_in_terminal(&["service", "setup"]) { store.error(&error); }
+        });
+    }
+    {
+        let (store, weak) = (store.clone(), revealer.downgrade());
+        later.connect_clicked(move |_| {
+            update_config(|c| c.service_setup_dismissed = true);
+            if let Some(revealer) = weak.upgrade() { revealer.set_reveal_child(false); }
+            store.toast("You can set it up any time on the Device tab, under Background service.");
+        });
+    }
+    revealer
+}
+
 /// A warning that shows only while the background service is not running, for the settings that rely
 /// on it. It looks again every couple of seconds.
 pub fn service_needed_notice(message: &str) -> gtk::Box {
@@ -762,7 +825,77 @@ pub fn service_card(store: &Store) -> gtk::Box {
     };
     install.connect_clicked(terminal(store.clone(), &["service", "setup"]));
     install_missing.connect_clicked(terminal(store.clone(), &["requirements", "--install", "--wait"]));
+
+    // How it starts on this system, and every other way, for systems and window managers that Install
+    // does not cover.
+    let systemd = setup::systemd_user_available();
+    let route = widgets::text(if systemd {
+        "This system has a systemd user manager, so Install sets it up as a systemd user service: it starts with your session and systemd restarts it if it fails."
+    } else {
+        "This system has no systemd user manager (for example runit, OpenRC, s6 or dinit), so Install adds a desktop autostart entry and starts the service now. Desktop environments (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt) read that entry when you log in. A window manager on its own usually does not: add the line for yours below."
+    }, &["small", "dim"]);
+    route.set_wrap(true);
+    route.set_xalign(0.0);
+    body.append(&route);
+    body.append(&other_ways_to_start(store, systemd));
     card
+}
+
+/// The line to add for each window manager and init system, with where it goes and a Copy button.
+fn other_ways_to_start(store: &Store, systemd: bool) -> gtk::Expander {
+    let expander = gtk::Expander::new(Some("Other ways to start it"));
+    expander.add_css_class("other-ways");
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    inner.set_margin_top(8);
+    let names: Vec<&str> = crate::service::TARGETS.iter().map(|(name, _)| *name).collect();
+    let list = gtk::StringList::new(&names);
+    let drop = gtk::DropDown::new(Some(list), gtk::Expression::NONE);
+    widgets::label_accessible(&drop, "Window manager or init system");
+    // Start on what this session looks like, so the right line is usually already showing.
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let guess = ["hyprland", "niri", "sway", "i3", "river", "labwc", "openbox", "bspwm", "mango"].into_iter().find(|n| desktop.contains(n))
+        .unwrap_or(if systemd { "systemd" } else { "xdg" });
+    drop.set_selected(names.iter().position(|n| *n == guess).unwrap_or(0) as u32);
+    drop.set_halign(gtk::Align::Start);
+    let what = widgets::text("", &["setting-summary"]);
+    let place = widgets::text("", &["small", "dim"]);
+    place.set_selectable(true);
+    let code = gtk::Label::new(None);
+    code.add_css_class("code");
+    code.set_selectable(true);
+    code.set_wrap(true);
+    code.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    code.set_xalign(0.0);
+    let copy = gtk::Button::with_label("Copy");
+    copy.add_css_class("small");
+    copy.set_halign(gtk::Align::Start);
+    let show = {
+        let (place, code, names, what) = (place.clone(), code.clone(), names.clone(), what.clone());
+        move |index: u32| {
+            let Some(name) = names.get(index as usize) else { return };
+            if let Some((_, description)) = crate::service::TARGETS.get(index as usize) { what.set_text(description); }
+            if let Some((text, where_)) = crate::service::snippet(name, &crate::service::program_path()) {
+                code.set_text(text.trim_end());
+                place.set_text(&format!("Put this in {where_}. This app never edits these files for you."));
+            }
+        }
+    };
+    show(drop.selected());
+    drop.connect_selected_notify(move |d| show(d.selected()));
+    {
+        let (code, store) = (code.clone(), store.clone());
+        copy.connect_clicked(move |button| {
+            button.clipboard().set_text(&code.text());
+            store.toast("Copied.");
+        });
+    }
+    inner.append(&drop);
+    inner.append(&what);
+    inner.append(&place);
+    inner.append(&code);
+    inner.append(&copy);
+    expander.set_child(Some(&inner));
+    expander
 }
 
 pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {

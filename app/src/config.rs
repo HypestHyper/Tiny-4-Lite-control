@@ -105,6 +105,8 @@ pub struct AppConfig {
     /// range, −30 to +70, unless changed.
     pub tilt_limit_low: f64,
     pub tilt_limit_high: f64,
+    /// "Not now" was chosen on the banner that offers to set up the background service.
+    pub service_setup_dismissed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -197,6 +199,7 @@ impl Default for AppConfig {
             tilt_limit: true,
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,
+            service_setup_dismissed: false,
         }
     }
 }

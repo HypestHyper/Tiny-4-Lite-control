@@ -354,6 +354,9 @@ window.t4.csd { border-radius: §18§; }
 .card { background: @t_surface; border-radius: §28§; padding: §20§; }
 .t4 .service-notice { background: alpha(@t_tertiary, 0.14); color: @t_on_surface; border-radius: §12§; padding: §10§ §12§; }
 .t4 .service-notice .icon { color: @t_tertiary; }
+.t4 label.code { font-family: monospace; font-size: ¶12¶; background: @t_surface_high; border-radius: §10§; padding: §10§ §12§; }
+.t4 .setup-banner { background: alpha(@t_primary, 0.14); border-radius: §16§; padding: §12§ §16§; }
+.t4 .setup-banner > .icon { color: @t_primary; font-size: §24§; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }
