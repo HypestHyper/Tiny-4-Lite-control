@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn the_status_file_round_trips() {
-        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false, studio: Some(crate::studio::Report { state: "running".into(), cpu_percent: Some(12.5), ..Default::default() }) };
+        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false, studio: Some(crate::studio::Report { state: "running".into(), cpu_percent: Some(12.5), ..Default::default() }) , version: "0.1.0 \u{b7} local build".into() };
         let text = serde_json::to_string(&status).unwrap();
         assert_eq!(serde_json::from_str::<Status>(&text).unwrap(), status);
     }
