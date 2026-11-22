@@ -32,7 +32,7 @@ pub const ALREADY_RUNNING: i32 = 6;
 
 const COMMANDS: &[&str] = &[
     "list", "get", "set", "toggle", "reset", "info", "deps", "service", "requirements", "status", "gimbal", "preset", "position",
-    "startup", "capture", "studio", "denoise", "completions", "help", "__complete",
+    "startup", "capture", "studio", "denoise", "app", "completions", "help", "__complete",
 ];
 
 /// Should this invocation run the command line instead of opening a window?
@@ -117,6 +117,7 @@ fn dispatch(args: &[String]) -> i32 {
             if flag_on("--wait") { crate::setup::wait_to_close(false); }
             code
         }
+        "app" => crate::install::command(options.positional.first().map(String::as_str)),
         // The Studio camera (`denoise` was its first name).
         "studio" | "denoise" => match options.positional.first().map(String::as_str) {
             Some("setup") => crate::denoise::setup_command(options.yes),

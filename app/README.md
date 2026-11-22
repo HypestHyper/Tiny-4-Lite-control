@@ -24,6 +24,10 @@ follows the window width.
 
 `assets/tiny4lite-control.svg` is the app icon: the camera from the front as a plain outline on a rounded tile, with a red ring round the lens. `assets/tiny4lite-control-symbolic.svg` is the one-colour version for panels and trays. Install both into the icon theme (`share/icons/hicolor/scalable/apps/` and `share/icons/hicolor/symbolic/apps/`), as the AppImage does; the window asks for the icon by the name `tiny4lite-control`.
 
+## Installing the app
+
+Downloaded AppImages are usually just started from the file manager. **Install** on the Device tab (App card), or `Tiny4LiteControl-x86_64.AppImage app install`, keeps the AppImage in `~/Applications` (one started from there is used where it is; one started from elsewhere is copied there) and makes `~/.local/bin/tiny4lite-control` a link to it. That link is the `tiny4lite-control` command, and the app-menu entry (with Quick controls and Preview actions, and the icons) and the background service use it too. To update, start the new download and press **Install this version**: the link, menu entry and service move to it, and the old file can be deleted. **Remove** takes the link, the menu entry and the icons away and leaves the AppImage file where it is. Setting up the background service from an AppImage that is not installed installs it first. If `~/.local/bin` is not on your PATH, the card and `app status` say how to add it (for fish: `fish_add_path ~/.local/bin`). Nothing needs root.
+
 ## Background service
 
 `tiny4lite-control service run` needs no window and no display. It watches for the camera being plugged in and, once the camera has settled, puts the saved capture mode back. That is all it does by default.

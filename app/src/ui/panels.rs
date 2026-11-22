@@ -579,6 +579,54 @@ pub fn sleep_timer_card() -> gtk::Box {
     card
 }
 
+/// The app itself: whether it is installed (AppImage in ~/Applications, the tiny4lite-control command, the
+/// app-menu entry), with Install, Update and Remove.
+pub fn app_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("App", "open_in_full",
+        "Install keeps the AppImage in ~/Applications and adds the tiny4lite-control command and an app menu entry. The background service uses the installed copy.");
+    let status = widgets::text("", &["setting-summary"]);
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    status.set_selectable(true);
+    body.append(&status);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let install = gtk::Button::with_label("Install");
+    install.add_css_class("filled");
+    let remove = gtk::Button::with_label("Remove");
+    for button in [&install, &remove] { button.add_css_class("small"); buttons.append(button); }
+    body.append(&buttons);
+    let refresh: Rc<dyn Fn()> = {
+        let (status, install, remove) = (status.clone(), install.clone(), remove.clone());
+        Rc::new(move || {
+            use crate::install as i;
+            let from = i::running_from().map(|p| p.display().to_string()).unwrap_or_default();
+            let mut lines = Vec::new();
+            match i::installed_target() {
+                Some(target) => {
+                    lines.push(format!("Installed: {}", target.display()));
+                    if i::update_available() {
+                        lines.push(format!("This window runs another file: {from}. Install it to use it from now on (the command, the menu entry and the service move to it)."));
+                    }
+                    if !i::bin_on_path() { lines.push(format!("To use the tiny4lite-control command, add ~/.local/bin to your PATH: {}", i::path_hint())); }
+                }
+                None => lines.push(format!("Not installed. Running from {from}.")),
+            }
+            status.set_text(&lines.join("\n"));
+            install.set_visible(i::installed_target().is_none() || i::update_available());
+            install.set_label(if i::installed_target().is_some() { "Install this version" } else { "Install" });
+            remove.set_visible(i::installed_target().is_some());
+        })
+    };
+    refresh();
+    let act = |store: Store, refresh: Rc<dyn Fn()>, work: fn() -> Result<String, String>| move |_: &gtk::Button| {
+        match work() { Ok(message) => store.toast(&message), Err(error) => store.error(&error) }
+        refresh();
+    };
+    install.connect_clicked(act(store.clone(), refresh.clone(), crate::install::install));
+    remove.connect_clicked(act(store.clone(), refresh.clone(), crate::install::uninstall));
+    card
+}
+
 /// The Studio camera: a second camera with filters (denoise first), run by the background service. Its
 /// switch, each filter with its strength beside it, the graphics-chip choice, what it needs, and what it
 /// is doing and costing right now.

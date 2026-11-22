@@ -644,11 +644,18 @@ pub const TARGETS: &[(&str, &str)] = &[
 
 /// The program to start. An AppImage's own file, not its temporary mount.
 pub fn program_path() -> String {
+    // The installed copy, when there is one: a downloaded AppImage moves or gets replaced, that copy does
+    // not (and installing a new download updates it).
+    let installed = crate::install::bin_path();
+    if installed.is_file() { return installed.to_string_lossy().to_string(); }
     if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()) { return appimage.to_string_lossy().to_string(); }
     std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| "tiny4lite-control".into())
 }
 
 /// Quote for a shell or a config line: plain words stay plain.
+/// A path quoted for a desktop entry or a shell line (left plain when it needs no quotes).
+pub(crate) fn quoted_path(path: &str) -> String { quoted(path) }
+
 fn quoted(path: &str) -> String {
     if path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+@%:,=".contains(c)) { path.to_string() }
     else { format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\"")) }

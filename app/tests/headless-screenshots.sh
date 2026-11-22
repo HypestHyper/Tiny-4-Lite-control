@@ -28,8 +28,12 @@ fi
 # The virtual display on a CI machine has been seen to die by itself between two windows. Start it again
 # (and say so), so the run tests the app and not the display; a window that fails still fails.
 ensure_display() {
-    if [[ -n "$XVFB_PID" ]] && ! kill -0 "$XVFB_PID" 2>/dev/null; then
-        echo "note: the virtual display had stopped; starting it again" >&2
+    [[ -n "$XVFB_PID" ]] || return 0
+    # Gone, or still there but not answering: start it again.
+    if ! kill -0 "$XVFB_PID" 2>/dev/null || ! xdpyinfo >/dev/null 2>&1; then
+        echo "note: the virtual display had stopped answering; starting it again" >&2
+        kill "$XVFB_PID" 2>/dev/null || true
+        sleep 0.5
         start_xvfb
     fi
 }

@@ -182,6 +182,53 @@ pub fn requirements_command(install: bool, yes: bool) -> i32 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstalledAs { Systemd, Autostart }
 
+/// The program the installed service runs, read from its unit or autostart entry.
+pub fn service_program() -> Option<String> {
+    let (path, key) = match installed()? {
+        InstalledAs::Systemd => (service::install_path("systemd")?, "ExecStart="),
+        InstalledAs::Autostart => (service::install_path("xdg")?, "Exec="),
+    };
+    let text = std::fs::read_to_string(path).ok()?;
+    let line = text.lines().find(|l| l.starts_with(key))?;
+    let command = line[key.len()..].trim();
+    let program = match command.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?.to_string(),
+        None => command.split_whitespace().next()?.to_string(),
+    };
+    Some(program)
+}
+
+/// Point the installed background service at `program` (the installed copy) and restart it if it runs.
+/// Says what it did, or nothing when there is no service.
+pub fn move_service_to(program: &str) -> Option<String> {
+    let how = installed()?;
+    if service_program().as_deref() == Some(program) && service::running_status().is_none() { return None; }
+    let was_running = service::running_status().is_some();
+    let result: Result<(), String> = (|| {
+        match how {
+            InstalledAs::Systemd => {
+                let path = service::install_path("systemd").ok_or("No place for the service file.")?;
+                std::fs::write(&path, service::systemd_unit(program)).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+                if systemd_user_available() {
+                    systemctl(&["daemon-reload"])?;
+                    if was_running { systemctl(&["restart", "tiny4lite-control.service"])?; }
+                }
+            }
+            InstalledAs::Autostart => {
+                let path = service::install_path("xdg").ok_or("No place for the autostart entry.")?;
+                std::fs::write(&path, service::desktop_entry(program)).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+                if was_running { stop()?; start()?; }
+            }
+        }
+        Ok(())
+    })();
+    Some(match result {
+        Ok(()) if was_running => "The background service now runs the installed copy (restarted).".into(),
+        Ok(()) => "The background service will run the installed copy.".into(),
+        Err(error) => format!("The background service could not be moved to the installed copy: {error}"),
+    })
+}
+
 pub fn installed() -> Option<InstalledAs> {
     if service::install_path("systemd").is_some_and(|p| p.exists()) { return Some(InstalledAs::Systemd); }
     if service::install_path("xdg").is_some_and(|p| p.exists()) { return Some(InstalledAs::Autostart); }
@@ -305,6 +352,14 @@ pub fn setup_command(yes: bool) -> i32 {
         return crate::cli::FAILED;
     }
     println!("\n2. The service\n");
+    // Run from a downloaded AppImage: install it first (into ~/Applications, with the command and the
+    // menu entry), so the service does not depend on where that download sits.
+    if std::env::var_os("APPIMAGE").is_some_and(|v| !v.is_empty()) && crate::install::installed_target().is_none() {
+        match crate::install::install() {
+            Ok(message) => println!("{message}\n"),
+            Err(error) => println!("The app could not be installed ({error}); the service will run this file where it is.\n"),
+        }
+    }
     let result = install_service();
     match &result { Ok(message) => println!("{message}"), Err(error) => println!("Could not install it: {error}") }
     // An AppImage takes a moment to mount, so give it a while before saying it did not start.
