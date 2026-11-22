@@ -237,7 +237,28 @@ impl Denoiser {
         let loopback = loopback_node();
         if !config.enabled {
             self.watched = false;
-            self.stop();
+            // The virtual camera stays in apps' lists while the module is loaded (only root can unload it).
+            // An app that still has it open would freeze on the last picture, which looks as if turning it
+            // off did nothing: so it gets the dark placeholder until it lets go, and then nothing runs.
+            let still_open = loopback.as_deref().is_some_and(|node| {
+                let ours = self.our_pids();
+                crate::backend::usage::openers(node).iter().any(|pid| !ours.contains(pid))
+            });
+            let format = self.format.as_ref().map(|(_, f)| f.clone());
+            match (still_open, loopback.as_deref(), format) {
+                (true, Some(node), Some(format)) if ffmpeg_found() => {
+                    let args = placeholder_args(node, &format);
+                    let key = args.join(" ");
+                    if self.running.as_ref().map(|r| &r.key) != Some(&key) {
+                        self.stop();
+                        if let Ok(child) = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+                            self.running = Some(Running { child, want: Want::Placeholder, key, gpu: false, started: Instant::now() });
+                        }
+                    }
+                    return Report { state: "off".into(), detail: "Off: an app still has the Studio camera open, so it shows a dark picture until the app lets go.".into(), device: loopback, ..Report::default() };
+                }
+                _ => self.stop(),
+            }
             return Report { state: "off".into(), device: loopback, ..Report::default() };
         }
         if !ffmpeg_found() || loopback.is_none() {

@@ -690,12 +690,13 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
             needs_text.set_text(&format!("Needs {}.", missing.join(" and ")));
             let report = crate::service::running_status().and_then(|s| s.denoise);
             match report {
-                Some(r) if r.state != "off" => {
+                Some(r) if r.state != "off" || !r.detail.is_empty() => {
                     let mut line = match r.state.as_str() {
                         "running" => "In use".to_string(),
                         "waiting" => "Ready".to_string(),
                         "unavailable" => "Not available".to_string(),
                         "error" => "Problem".to_string(),
+                        "off" => "Off".to_string(),
                         other => other.to_string(),
                     };
                     if let Some(cpu) = r.cpu_percent { line.push_str(&format!(" · CPU {cpu:.0}%")); }

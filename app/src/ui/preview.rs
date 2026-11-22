@@ -298,7 +298,11 @@ impl PreviewHub {
         let denoised = self.showing_denoised();
         // Reading the current mode asks the camera, so do it off the UI thread.
         hub.store.call(None, move |device| match &denoised {
-            Some(node) => (node.clone(), video::current_mode(node).or_else(|| video::current_format(node))),
+            // The Studio camera always sends raw 4:2:0 at the camera's own size. It only answers questions
+            // while something writes to it (and the writer changes as the preview opens it), so the size
+            // comes from the camera itself.
+            Some(node) => (node.clone(), video::current_mode(device).map(|mode| VideoMode { pixel_format: "YU12".into(), ..mode })
+                .or_else(|| video::current_format(node))),
             None => (device.to_string(), video::current_mode(device)),
         }, move |(node, mode)| {
             if this.0.generation.get() != generation { return; }
