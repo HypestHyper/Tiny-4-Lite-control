@@ -322,6 +322,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.on-stage { background: alpha(#000000, 0.45); color: @t_on_stage; }
 .t4 button.on-stage:hover { background: alpha(#000000, 0.65); }
 .t4 button.on-stage.lit { background: #28c85a; color: #04210d; }
+.t4 dropdown.on-stage-picker > button { background: alpha(#000000, 0.45); color: @t_on_stage; min-height: §32§; padding: 0 §10§; border-radius: 999px; font-size: ¶13¶; }
 .t4 scale.on-stage-slider { background: alpha(#000000, 0.45); border-radius: 999px; padding: 0 §10§; min-height: §32§; }
 .t4 scale.on-stage-slider trough { min-height: §6§; }
 .t4 scale.on-stage-slider highlight { min-height: §6§; background: #28c85a; }

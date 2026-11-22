@@ -564,7 +564,7 @@ pub fn sleep_timer_card() -> gtk::Box {
     });
 
     body.append(&switch_row("Sleep when nothing is using the camera",
-        "After the time below with no app streaming from it (a paused preview does not count) and no control used in this window.",
+        "After the time below with no app using the camera or the Studio camera (a paused preview does not count) and no control used in this window.",
         config.service.auto_sleep_enabled,
         Box::new({ let minutes = minutes.clone(); move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); } })));
     body.append(&minutes);
@@ -579,20 +579,25 @@ pub fn sleep_timer_card() -> gtk::Box {
     card
 }
 
-/// Denoise: the cleaner second camera, run by the background service. A switch with its strength
-/// beside it, the graphics-chip choice, what it needs, and what it is doing and costing right now.
+/// The Studio camera: a second camera with filters (denoise first), run by the background service. Its
+/// switch, each filter with its strength beside it, the graphics-chip choice, what it needs, and what it
+/// is doing and costing right now.
 pub fn denoise_card(store: &Store) -> gtk::Box {
-    let (card, body) = card("Denoise", "blur_on",
-        "Adds a second camera, \u{201c}Tiny 2 Lite (denoised)\u{201d}, with less grain. Choose it in your video app. It only uses the camera while an app has it open.");
-    body.append(&service_needed_notice("The background service is not running, so the denoised camera is not either. Install or start it under Background service, further down this tab."));
+    let (card, body) = card("Studio camera", "blur_on",
+        "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, with the filters below applied. Choose it in your video app. It only uses the camera while an app has it open.");
+    body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it under Background service, further down this tab."));
     let config = current_config().denoise;
+    body.append(&plain_switch_row("Studio camera",
+        "Make \u{201c}Tiny 2 Lite Studio\u{201d} available to apps.",
+        config.enabled, |on| update_config(|c| c.denoise.enabled = on)));
+    body.append(&widgets::text("Filters", &["small", "dim", "chooser-head"]));
 
     // The switch, and the strength right beside it while it is on.
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
     titles.set_hexpand(true);
     titles.append(&widgets::text("Denoise", &["setting-label"]));
-    titles.append(&widgets::text("Strength: to the right, smoother but softer.", &["setting-summary"]));
+    titles.append(&widgets::text("Less grain. Strength: to the right, smoother but softer.", &["setting-summary"]));
     let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
     strength.set_draw_value(false);
     strength.set_size_request(140, -1);
@@ -609,16 +614,16 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
     let reveal = gtk::Revealer::new();
     reveal.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
     reveal.set_child(Some(&beside));
-    reveal.set_reveal_child(config.enabled);
+    reveal.set_reveal_child(config.denoise);
     let switch = gtk::Switch::new();
     switch.set_valign(gtk::Align::Center);
-    switch.set_active(config.enabled);
+    switch.set_active(config.denoise);
     widgets::label_accessible(&switch, "Denoise");
     {
         let reveal = reveal.clone();
         switch.connect_active_notify(move |sw| {
             let on = sw.is_active();
-            update_config(|c| c.denoise.enabled = on);
+            update_config(|c| c.denoise.denoise = on);
             reveal.set_reveal_child(on);
         });
     }
@@ -653,10 +658,10 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
     let setup = gtk::Button::with_label("Set up…");
     setup.add_css_class("small");
     setup.set_valign(gtk::Align::Center);
-    setup.set_tooltip_text(Some("Opens a terminal that installs ffmpeg and v4l2loopback and makes the denoised camera (asks for your password)"));
+    setup.set_tooltip_text(Some("Opens a terminal that installs ffmpeg and v4l2loopback and makes the Studio camera (asks for your password)"));
     {
         let store = store.clone();
-        setup.connect_clicked(move |_| { if let Err(error) = crate::setup::run_in_terminal(&["denoise", "setup"]) { store.error(&error); } });
+        setup.connect_clicked(move |_| { if let Err(error) = crate::setup::run_in_terminal(&["studio", "setup"]) { store.error(&error); } });
     }
     needs.append(&needs_text);
     needs.append(&setup);
@@ -687,7 +692,7 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
             match report {
                 Some(r) if r.state != "off" => {
                     let mut line = match r.state.as_str() {
-                        "running" => "Denoising".to_string(),
+                        "running" => "In use".to_string(),
                         "waiting" => "Ready".to_string(),
                         "unavailable" => "Not available".to_string(),
                         "error" => "Problem".to_string(),

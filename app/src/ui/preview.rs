@@ -135,6 +135,38 @@ impl PreviewHub {
         button
     }
 
+    /// The Studio camera's node, if the preview shows it and it is there.
+    fn showing_denoised(&self) -> Option<String> {
+        if !current_config().preview_denoised { return None; }
+        crate::denoise::loopback_node()
+    }
+
+    /// Show the Studio camera or the camera itself, and start the picture again from the new one.
+    pub fn set_denoised(&self, on: bool) {
+        update_config(|c| c.preview_denoised = on);
+        if self.0.running.get() { self.restart(); }
+    }
+
+    /// A small list on the preview to pick what it shows: the camera, or the Studio camera. It is only
+    /// there while the Studio camera exists.
+    pub fn source_picker(&self) -> gtk::DropDown {
+        let picker = gtk::DropDown::from_strings(&["Camera", "Studio"]);
+        picker.add_css_class("on-stage-picker");
+        picker.set_valign(gtk::Align::Center);
+        picker.set_tooltip_text(Some("What the preview shows: the camera itself, or the Studio camera (with its filters) that your apps can use"));
+        widgets::label_accessible(&picker, "Preview source");
+        picker.set_selected(u32::from(current_config().preview_denoised));
+        let hub = self.clone();
+        picker.connect_selected_notify(move |p| hub.set_denoised(p.selected() == 1));
+        let show = { let picker = picker.downgrade(); move || match picker.upgrade() {
+            Some(picker) => { picker.set_visible(crate::denoise::loopback_node().is_some()); true }
+            None => false,
+        } };
+        show();
+        glib::timeout_add_local(Duration::from_secs(3), move || if show() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
+        picker
+    }
+
     /// The round button that turns focus peaking on and off, lit while it is on, with its strictness
     /// slider beside it while it is on.
     pub fn peaking_button(&self) -> gtk::Box {
@@ -263,24 +295,32 @@ impl PreviewHub {
         hub.generation.set(generation);
         self.each_view(|v| v.show_message("Starting preview…", "videocam"));
         let this = self.clone();
+        // The Studio camera, if that is what the preview shows and it is there; otherwise the camera.
+        let denoised = self.showing_denoised();
         // Reading the current mode asks the camera, so do it off the UI thread.
-        hub.store.call(None, |device| video::current_mode(device), move |mode| {
+        hub.store.call(None, move |device| match &denoised {
+            Some(node) => (node.clone(), video::current_mode(node).or_else(|| video::current_format(node))),
+            None => (device.to_string(), video::current_mode(device)),
+        }, move |(node, mode)| {
             if this.0.generation.get() != generation { return; }
             let Some(mode) = mode else {
                 this.0.running.set(false);
                 this.each_view(|v| v.show_message("The camera did not report a video mode, so there is nothing to preview.", "videocam_off"));
                 return;
             };
-            this.spawn_stream(mode, generation);
+            this.spawn_stream(mode, generation, node);
         });
     }
 
-    fn spawn_stream(&self, mode: VideoMode, generation: u64) {
+    fn spawn_stream(&self, mode: VideoMode, generation: u64, device: String) {
         let hub = &self.0;
+        let denoised = device != hub.store.device();
         *hub.mode.borrow_mut() = Some(mode.clone());
-        let listeners: Vec<_> = hub.mode_listeners.borrow().clone();
-        for listener in listeners { listener(&mode); }
-        let device = hub.store.device();
+        // The capture mode card follows what the camera itself sends, not the Studio copy.
+        if !denoised {
+            let listeners: Vec<_> = hub.mode_listeners.borrow().clone();
+            for listener in listeners { listener(&mode); }
+        }
         let mut child = if super::super::backend::ui_test_mode() {
             None
         } else {
@@ -315,7 +355,8 @@ impl PreviewHub {
         *hub.child.borrow_mut() = child;
 
         let this = self.clone();
-        let label = format!("{} × {} · {} · {:.0} fps", mode.width, mode.height, mode.pixel_format, mode.frame_rate_milli as f64 / 1000.0);
+        let label = if denoised { format!("Studio · {} × {}", mode.width, mode.height) }
+            else { format!("{} × {} · {} · {:.0} fps", mode.width, mode.height, mode.pixel_format, mode.frame_rate_milli as f64 / 1000.0) };
         glib::spawn_future_local(async move {
             while let Ok(frame) = receiver.recv().await {
                 if this.0.generation.get() != generation { return; }
@@ -535,6 +576,20 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
                     if sender.send_blocking(frame).is_err() { return; }
                 }
             }
+        } else if mode.pixel_format == "YU12" {
+            // Raw 4:2:0 (what the Studio camera sends): a full-size brightness plane, then two
+            // quarter-size colour planes.
+            let size = mode.width as usize * mode.height as usize * 3 / 2;
+            while size > 0 && buffer.len() >= size {
+                let raw: Vec<u8> = buffer.drain(..size).collect();
+                if last_decode.elapsed() < min_gap || sender.is_full() { continue; }
+                last_decode = Instant::now();
+                if let Some(mut frame) = decode_i420(&raw, &mode) {
+                    if FOCUS_PEAKING.load(Ordering::Relaxed) { focus_peaking(&mut frame); }
+                    if sender.send_blocking(frame).is_err() { return; }
+                }
+            }
+            if buffer.len() > size.saturating_mul(3) { buffer.drain(..buffer.len() - size); }
         } else if mode.pixel_format == "YUYV" {
             while raw_frame_size > 0 && buffer.len() >= raw_frame_size {
                 let raw: Vec<u8> = buffer.drain(..raw_frame_size).collect();
@@ -637,6 +692,28 @@ fn decode_jpeg(data: &[u8], target_width: u32) -> Option<Frame> {
     Some(Frame { width: width as i32, height: height as i32, rgb })
 }
 
+/// Raw 4:2:0 to RGB, at half size each way: plenty for a preview, and a quarter of the work.
+fn decode_i420(frame: &[u8], mode: &VideoMode) -> Option<Frame> {
+    let (w, h) = (mode.width as usize, mode.height as usize);
+    if w < 2 || h < 2 || frame.len() < w * h * 3 / 2 { return None; }
+    let (luma, rest) = frame.split_at(w * h);
+    let (u_plane, v_plane) = rest.split_at(w * h / 4);
+    let (out_w, out_h) = (w / 2, h / 2);
+    let mut rgb = Vec::with_capacity(out_w * out_h * 3);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let c = i32::from(luma[(y * 2) * w + x * 2]) - 16;
+            let u = i32::from(u_plane[y * (w / 2) + x]) - 128;
+            let v = i32::from(v_plane[y * (w / 2) + x]) - 128;
+            let c = c.max(0);
+            rgb.push(((298 * c + 409 * v + 128) >> 8).clamp(0, 255) as u8);
+            rgb.push(((298 * c - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8);
+            rgb.push(((298 * c + 516 * u + 128) >> 8).clamp(0, 255) as u8);
+        }
+    }
+    Some(Frame { width: out_w as i32, height: out_h as i32, rgb })
+}
+
 fn decode_yuyv(frame: &[u8], mode: &VideoMode) -> Option<Frame> {
     if mode.width % 2 != 0 { return None; }
     let (width, height) = (mode.width as usize, mode.height as usize);
@@ -681,6 +758,18 @@ mod peaking_tests {
     }
 
     fn green(f: &Frame) -> usize { f.rgb.chunks_exact(3).filter(|p| *p == PEAK_COLOUR).count() }
+
+    #[test]
+    fn raw_4_2_0_from_the_studio_camera_is_shown_at_half_size() {
+        let mode = VideoMode { width: 4, height: 2, pixel_format: "YU12".into(), frame_rate_milli: 30_000 };
+        // White brightness, neutral colour: comes out white, 2 × 1 pixels.
+        let mut raw = vec![235u8; 8];
+        raw.extend([128u8; 4]);
+        let frame = decode_i420(&raw, &mode).expect("a frame");
+        assert_eq!((frame.width, frame.height), (2, 1));
+        assert!(frame.rgb.iter().all(|v| *v >= 250), "{:?}", frame.rgb);
+        assert!(decode_i420(&raw[..10], &mode).is_none(), "a short frame is skipped");
+    }
 
     #[test]
     fn a_sharp_edge_is_painted_and_a_flat_or_soft_picture_is_not() {

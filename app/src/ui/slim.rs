@@ -90,6 +90,7 @@ impl SlimWindow {
         pop.add_css_class("on-stage");
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
+        pause_row.append(&ctx.hub.source_picker());
         pause_row.append(&ctx.hub.peaking_button());
         pause_row.append(&ctx.hub.pause_button());
         pause_row.append(&pop);

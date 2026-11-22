@@ -1,11 +1,12 @@
-//! Denoise: a second camera, "Tiny 2 Lite (denoised)", with a cleaner picture, for any video app.
+//! The Studio camera: a second camera, "Tiny 2 Lite Studio", with filters applied (denoise first; more can
+//! follow), for any video app.
 //!
 //! The camera itself has no noise reduction, and Linux cannot change what other programs read from the
 //! real camera. So the background service writes a cleaned copy into a virtual camera made by the
 //! `v4l2loopback` kernel module, and apps choose that camera instead.
 //!
 //! It is kept as light as it can be:
-//! * Nothing runs on the real camera until an app opens the denoised one. Until then a tiny placeholder
+//! * Nothing runs on the real camera until an app opens the Studio camera. Until then a tiny placeholder
 //!   (a dark frame, five times a second, at the camera's size) keeps the virtual camera visible to apps
 //!   (browsers only list it while something writes to it), and the real camera stays free to sleep.
 //! * When an app opens it, `ffmpeg` reads the camera, denoises and writes. A few seconds after the last
@@ -21,7 +22,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// The name the virtual camera has in every app.
-pub const LABEL: &str = "Tiny 2 Lite (denoised)";
+pub const LABEL: &str = "Tiny 2 Lite Studio";
 /// Its device number, out of the way of real cameras.
 pub const DEVICE_NUMBER: u32 = 42;
 /// After the last app lets go, the camera is held this long in case it comes straight back.
@@ -94,8 +95,10 @@ fn base_args() -> Vec<String> {
     ["-hide_banner", "-loglevel", "error", "-nostdin"].iter().map(|s| s.to_string()).collect()
 }
 
-/// Real camera in, denoised picture out to the virtual camera.
-pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, strength: u8, gpu: Option<&str>) -> Vec<String> {
+/// Real camera in, the filtered picture out to the Studio camera. No filter on: the picture as it is.
+pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, denoise: Option<u8>, gpu: Option<&str>) -> Vec<String> {
+    // The graphics chip is only worth setting up when there is a filter for it to run.
+    let gpu = gpu.filter(|_| denoise.is_some());
     let mut args = base_args();
     if let Some(node) = gpu {
         args.extend(["-init_hw_device".into(), format!("vaapi=va:{node}"), "-filter_hw_device".into(), "va".into()]);
@@ -105,9 +108,10 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, strength: u8
         "-video_size".into(), format!("{}x{}", format.width, format.height),
         "-framerate".into(), format!("{:.3}", format.fps), "-i".into(), camera.into(),
     ]);
-    let filter = match gpu {
-        Some(_) => format!("format=nv12,hwupload,denoise_vaapi=denoise={},hwdownload,format=nv12,format=yuv420p", gpu_level(strength)),
-        None => format!("{},format=yuv420p", cpu_filter(strength)),
+    let filter = match (denoise, gpu) {
+        (Some(strength), Some(_)) => format!("format=nv12,hwupload,denoise_vaapi=denoise={},hwdownload,format=nv12,format=yuv420p", gpu_level(strength)),
+        (Some(strength), None) => format!("{},format=yuv420p", cpu_filter(strength)),
+        (None, _) => "format=yuv420p".to_string(),
     };
     args.extend(["-vf".into(), filter, "-f".into(), "v4l2".into(), loopback.into()]);
     args
@@ -166,6 +170,8 @@ struct Running {
 #[derive(Default)]
 pub struct Denoiser {
     running: Option<Running>,
+    /// An app had the Studio camera open at the last look.
+    watched: bool,
     idle_since: Option<Instant>,
     retry_after: Option<Instant>,
     gpu_failed: bool,
@@ -211,6 +217,10 @@ impl Denoiser {
 
     pub fn stop_all(&mut self) { self.stop(); }
 
+    /// Whether an app was watching the Studio camera at the last look: the camera is in use then, for
+    /// the sleep timer, even in the moment before the Studio camera starts reading it.
+    pub fn watched(&self) -> bool { self.watched }
+
     fn our_pids(&self) -> Vec<u32> { self.running.as_ref().map(|r| vec![r.child.id()]).unwrap_or_default() }
 
     /// The camera's format, read once per camera (it is only read while nothing streams).
@@ -226,6 +236,7 @@ impl Denoiser {
     pub fn step(&mut self, config: &crate::config::DenoiseConfig, camera: Option<&str>) -> Report {
         let loopback = loopback_node();
         if !config.enabled {
+            self.watched = false;
             self.stop();
             return Report { state: "off".into(), device: loopback, ..Report::default() };
         }
@@ -234,7 +245,7 @@ impl Denoiser {
             let detail = if !ffmpeg_found() { "ffmpeg is not installed." }
                 else if !module_loaded() { "The v4l2loopback module is not loaded." }
                 else { "The virtual camera is missing (v4l2loopback is loaded without it)." };
-            return Report { state: "unavailable".into(), detail: format!("{detail} Use Set up… on the Denoise card."), ..Report::default() };
+            return Report { state: "unavailable".into(), detail: format!("{detail} Use Set up… on the Studio camera card."), ..Report::default() };
         }
         let loopback = loopback.unwrap_or_default();
 
@@ -258,6 +269,7 @@ impl Denoiser {
         // Is an app watching the virtual camera (anyone but our own ffmpeg)?
         let ours = self.our_pids();
         let watched = crate::backend::usage::openers(&loopback).iter().any(|pid| !ours.contains(pid));
+        self.watched = watched;
         let pipeline_running = self.running.as_ref().is_some_and(|r| r.want == Want::Pipeline);
         if watched { self.idle_since = None; } else if pipeline_running { self.idle_since.get_or_insert(Instant::now()); }
         let want = decide(true, true, camera.is_some(), watched, pipeline_running, self.idle_since.map(|at| at.elapsed()));
@@ -268,7 +280,7 @@ impl Denoiser {
         let target = match (want, camera) {
             (Want::Nothing, _) | (_, None) => None,
             (want, Some(camera)) => self.format_for(camera).map(|format| {
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, config.strength, gpu.as_deref()) }
+                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, config.denoise.then_some(config.strength), gpu.as_deref()) }
                     else { placeholder_args(&loopback, &format) };
                 (want, args)
             }),
@@ -282,7 +294,7 @@ impl Denoiser {
                     let log = std::fs::File::create(log_path()).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
                     match Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log).spawn() {
                         Ok(child) => {
-                            crate::service::note(&format!("Denoise: {}.", if want == Want::Pipeline { "an app opened the denoised camera; denoising" } else { "waiting for an app to open the denoised camera" }));
+                            crate::service::note(&format!("Studio camera: {}.", if want == Want::Pipeline { "an app opened it; running" } else { "waiting for an app to open it" }));
                             self.running = Some(Running { child, want, key, gpu: want == Want::Pipeline && gpu.is_some(), started: Instant::now() });
                             if want == Want::Pipeline { self.last_error = None; }
                         }
@@ -313,10 +325,11 @@ impl Denoiser {
                 }
                 if running.want == Want::Pipeline {
                     report.state = "running".into();
-                    report.detail = if running.gpu { "Denoising on the graphics chip.".into() } else { "Denoising on the processor.".into() };
+                    report.detail = if !config.denoise { "Passing the picture through (no filter on).".into() }
+                        else if running.gpu { "Denoising on the graphics chip.".into() } else { "Denoising on the processor.".into() };
                 } else {
                     report.state = "waiting".into();
-                    report.detail = "Ready: choose \u{201c}Tiny 2 Lite (denoised)\u{201d} in an app. The camera is not used until then.".into();
+                    report.detail = "Ready: choose \u{201c}Tiny 2 Lite Studio\u{201d} in an app. The camera is not used until then.".into();
                 }
             }
             None => {
@@ -338,11 +351,11 @@ pub fn module_options() -> String {
     format!("options v4l2loopback devices=1 video_nr={DEVICE_NUMBER} card_label=\"{LABEL}\" exclusive_caps=1\n")
 }
 
-/// `tiny4lite-control denoise setup`: install ffmpeg and v4l2loopback, make the module load at boot with
+/// `tiny4lite-control studio setup`: install ffmpeg and v4l2loopback, make the module load at boot with
 /// the virtual camera, and load it now. Asks before each step that needs a password.
 pub fn setup_command(yes: bool) -> i32 {
     use crate::setup::{confirm, install_command, manager, program_found, wait_to_close};
-    println!("Tiny 2 Lite Control: denoise setup\n");
+    println!("Tiny 2 Lite Control: Studio camera setup\n");
     let Some(manager) = manager() else {
         println!("No package manager was recognised, so nothing is installed from here.");
         if Path::new("/etc/NIXOS").exists() {
@@ -411,7 +424,7 @@ pub fn setup_command(yes: bool) -> i32 {
     std::thread::sleep(Duration::from_millis(500));
     let ok = loaded && loopback_node().is_some();
     if ok {
-        println!("\nDone: \u{201c}{LABEL}\u{201d} is ready. Turn Denoise on in the app and choose that camera in your video app.");
+        println!("\nDone: \u{201c}{LABEL}\u{201d} is ready. Turn the Studio camera on in the app (Device tab) and choose it in your video app.");
     } else {
         println!("\nThe virtual camera did not appear. With Secure Boot on, an unsigned module cannot load; the kernel log says more:");
         println!("  journalctl -k -b | grep -i v4l2loopback");
@@ -453,21 +466,24 @@ mod tests {
 
     #[test]
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
-        let cpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), 50, None).join(" ");
+        let cpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), None).join(" ");
         assert!(cpu.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{cpu}");
         assert!(cpu.contains("-vf hqdn3d=4.00:3.00:6.00:4.50,format=yuv420p -f v4l2 /dev/video42"), "{cpu}");
-        let gpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), 50, Some("/dev/dri/renderD128")).join(" ");
+        let gpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Some("/dev/dri/renderD128")).join(" ");
         assert!(gpu.contains("-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va"), "{gpu}");
         assert!(gpu.contains("denoise_vaapi=denoise=32"), "{gpu}");
         let wait = placeholder_args("/dev/video42", &fmt()).join(" ");
         assert!(wait.contains("color=c=0x101418:s=1920x1080:r=5") && wait.ends_with("-f v4l2 /dev/video42"), "{wait}");
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");
+        // No filter on: the picture passes through, and no graphics chip is set up for nothing.
+        let plain = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, Some("/dev/dri/renderD128")).join(" ");
+        assert!(plain.contains("-vf format=yuv420p -f v4l2") && !plain.contains("vaapi") && !plain.contains("hqdn3d"), "{plain}");
     }
 
     #[test]
     fn the_module_makes_one_camera_with_this_name_that_browsers_list() {
         let options = module_options();
-        assert!(options.contains("video_nr=42") && options.contains("card_label=\"Tiny 2 Lite (denoised)\"") && options.contains("exclusive_caps=1"));
+        assert!(options.contains("video_nr=42") && options.contains("card_label=\"Tiny 2 Lite Studio\"") && options.contains("exclusive_caps=1"));
     }
 
     #[test]

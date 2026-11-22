@@ -32,7 +32,7 @@ pub const ALREADY_RUNNING: i32 = 6;
 
 const COMMANDS: &[&str] = &[
     "list", "get", "set", "toggle", "reset", "info", "deps", "service", "requirements", "status", "gimbal", "preset", "position",
-    "startup", "capture", "denoise", "completions", "help", "__complete",
+    "startup", "capture", "studio", "denoise", "completions", "help", "__complete",
 ];
 
 /// Should this invocation run the command line instead of opening a window?
@@ -117,17 +117,18 @@ fn dispatch(args: &[String]) -> i32 {
             if flag_on("--wait") { crate::setup::wait_to_close(false); }
             code
         }
-        "denoise" => match options.positional.first().map(String::as_str) {
+        // The Studio camera (`denoise` was its first name).
+        "studio" | "denoise" => match options.positional.first().map(String::as_str) {
             Some("setup") => crate::denoise::setup_command(options.yes),
             Some("status") | None => {
                 match crate::service::running_status().and_then(|s| s.denoise) {
                     Some(r) => println!("{}: {}{}", r.state, r.detail, r.cpu_percent.map(|c| format!(" (CPU {c:.0}%, {:.0} MB)", r.memory_mb.unwrap_or(0.0))).unwrap_or_default()),
-                    None => println!("The background service is not running, so denoise is not either."),
+                    None => println!("The background service is not running, so the Studio camera is not either."),
                 }
-                println!("Virtual camera: {}", crate::denoise::loopback_node().unwrap_or_else(|| "not there (run: tiny4lite-control denoise setup)".into()));
+                println!("Virtual camera: {}", crate::denoise::loopback_node().unwrap_or_else(|| "not there (run: tiny4lite-control studio setup)".into()));
                 OK
             }
-            Some(other) => { eprintln!("denoise takes setup or status, not `{other}`."); USAGE }
+            Some(other) => { eprintln!("studio takes setup or status, not `{other}`."); USAGE }
         },
         "service" => {
             let flag_on = |name: &str| options.flags.iter().any(|(n, _)| n == name);

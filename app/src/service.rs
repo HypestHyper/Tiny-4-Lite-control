@@ -208,7 +208,7 @@ pub struct Status {
     pub last_event_at: u64,
     pub restored: bool,
     pub asleep_by_service: bool,
-    /// The denoised virtual camera: what runs and what it costs.
+    /// The Studio camera: what runs and what it costs.
     #[serde(default)]
     pub denoise: Option<crate::denoise::Report>,
 }
@@ -368,7 +368,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     // The camera's node, shared with the suspend watcher, which runs on its own thread.
     let shared_device: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let mut watcher: Option<crate::suspend::Watcher> = None;
-    // The denoised virtual camera, run while it is turned on.
+    // The Studio camera (virtual, with filters), run while it is turned on.
     let mut denoiser = crate::denoise::Denoiser::new();
     let mut watching_suspend = false;
     let mut suspend_retry_at: Option<Instant> = None;
@@ -436,8 +436,11 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             *shared_device.lock().unwrap_or_else(|e| e.into_inner()) = camera.clone();
             // In use: a program streaming from the camera (this app's preview counts), or a control used in the
             // window just now. An open window on its own does not keep the camera awake.
+            // Both ways in count: the camera itself, and the Studio camera (an app watching it keeps the
+            // camera awake too, while the Studio camera reads it for that app).
             let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode()
                 && (!backend::usage::streaming_holders(c).is_empty()
+                    || denoiser.watched()
                     || backend::usage::seconds_since_activity().is_some_and(|s| s < ACTIVITY_SECONDS)));
             let sight = Sight { camera: camera.as_deref(), in_use, window_open: false };
             for action in brain.step(Instant::now(), &sight) {

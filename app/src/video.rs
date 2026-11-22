@@ -68,6 +68,24 @@ pub fn capabilities(device: &str) -> Result<Vec<VideoCapability>, String> {
     }
 }
 
+/// The format alone, for a device that does not report a frame rate (the denoised virtual camera).
+pub fn current_format(device: &str) -> Option<VideoMode> {
+    let format = run_v4l2(device, "--get-fmt-video").ok()?;
+    let mut size = None;
+    let mut pixel_format = None;
+    for line in format.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Width/Height") {
+            let (w, h) = trimmed.split_once(':')?.1.trim().split_once('/')?;
+            size = Some((w.trim().parse().ok()?, h.trim().parse().ok()?));
+        } else if trimmed.starts_with("Pixel Format") {
+            pixel_format = trimmed.split('\'').nth(1).map(str::to_string);
+        }
+    }
+    let (width, height) = size?;
+    Some(VideoMode { width, height, pixel_format: pixel_format?, frame_rate_milli: 30_000 })
+}
+
 pub fn current_mode(device: &str) -> Option<VideoMode> {
     let format = run_v4l2(device, "--get-fmt-video").ok()?;
     let mut width = None;

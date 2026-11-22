@@ -153,10 +153,10 @@ pub fn requirements_command(install: bool, yes: bool) -> i32 {
             if requirement.required { "" } else { " (optional)" });
         if !present && requirement.required { code = crate::cli::FAILED; }
     }
-    // Denoise needs more, and is set up on its own (tiny4lite-control denoise setup).
+    // The Studio camera needs more, and is set up on its own (tiny4lite-control studio setup).
     let ffmpeg = program_found("ffmpeg");
     let camera = crate::denoise::loopback_node();
-    println!("\nFor Denoise (optional, set up with: tiny4lite-control denoise setup):");
+    println!("\nFor the Studio camera (optional, set up with: tiny4lite-control studio setup):");
     println!("{} {:<36} {}", if ffmpeg { "ok     " } else { "missing" }, "ffmpeg", "reads, cleans and writes the picture");
     println!("{} {:<36} {}", if camera.is_some() { "ok     " } else { "missing" }, "v4l2loopback (the virtual camera)", "the second camera that apps choose");
     if !install { return code; }

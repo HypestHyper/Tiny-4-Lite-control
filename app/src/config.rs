@@ -56,7 +56,7 @@ pub struct AppConfig {
     // Service policy is persisted with the rest of the user's preferences.
     // Auto-sleep is opt-in and must remain inert unless explicitly enabled.
     pub service: ServiceConfig,
-    /// The denoised virtual camera.
+    /// The Studio camera: a virtual camera with filters.
     pub denoise: DenoiseConfig,
     // Reserved for a future explicit restore-on-connect feature. False is
     // deliberately the default: loading config must never move the camera.
@@ -104,6 +104,8 @@ pub struct AppConfig {
     pub preview_focus_peaking: bool,
     /// How strict focus peaking is, 0–100: higher marks only the very sharpest edges.
     pub preview_peaking_strictness: u8,
+    /// Show the Studio camera in the preview instead of the camera itself (when it is there).
+    pub preview_denoised: bool,
     /// Keep the gimbal inside OBSBOT's published tilt range (30° down to 70° up). Off, it can be driven to
     /// the mechanical ends.
     pub tilt_limit: bool,
@@ -121,19 +123,22 @@ pub struct AppConfig {
     pub service_setup_dismissed: bool,
 }
 
-/// The denoised virtual camera, run by the background service.
+/// The Studio camera (a second, virtual camera with filters), run by the background service.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DenoiseConfig {
+    /// The Studio camera is there for apps.
     pub enabled: bool,
-    /// 1 to 100.
+    /// The denoise filter is on.
+    pub denoise: bool,
+    /// Denoise strength, 1 to 100.
     pub strength: u8,
     /// Denoise on the graphics chip (VA-API) when there is one.
     pub use_gpu: bool,
 }
 
 impl Default for DenoiseConfig {
-    fn default() -> DenoiseConfig { DenoiseConfig { enabled: false, strength: 40, use_gpu: true } }
+    fn default() -> DenoiseConfig { DenoiseConfig { enabled: false, denoise: true, strength: 40, use_gpu: true } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
@@ -236,6 +241,7 @@ impl Default for AppConfig {
             preview_on_start: false,
             preview_focus_peaking: false,
             preview_peaking_strictness: 60,
+            preview_denoised: false,
             tilt_limit: true,
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,
