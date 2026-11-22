@@ -14,13 +14,25 @@ mkdir -p "$OUT"
 
 export TINY4LITE_UI_TEST=1 GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
 
-if [[ -z "${DISPLAY:-}" ]]; then
+XVFB_PID=""
+start_xvfb() {
     Xvfb :97 -screen 0 1920x1100x24 >/dev/null 2>&1 &
     XVFB_PID=$!
-    trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
     export DISPLAY=:97
     sleep 1
+}
+if [[ -z "${DISPLAY:-}" ]]; then
+    start_xvfb
+    trap 'kill "$XVFB_PID" 2>/dev/null || true' EXIT
 fi
+# The virtual display on a CI machine has been seen to die by itself between two windows. Start it again
+# (and say so), so the run tests the app and not the display; a window that fails still fails.
+ensure_display() {
+    if [[ -n "$XVFB_PID" ]] && ! kill -0 "$XVFB_PID" 2>/dev/null; then
+        echo "note: the virtual display had stopped; starting it again" >&2
+        start_xvfb
+    fi
+}
 
 APP_PID=""
 stop_app() {
@@ -35,6 +47,7 @@ start() {
     if [[ -n "${START_CONFIG:-}" ]]; then mkdir -p "$XDG_CONFIG_HOME/tiny4lite-control"; printf '%s\n' "$START_CONFIG" > "$XDG_CONFIG_HOME/tiny4lite-control/config.toml"; fi
     export TINY4LITE_UI_TEST_LOG="$OUT/$name.commands.log"
     rm -f "$TINY4LITE_UI_TEST_LOG"
+    ensure_display
     "$APP" "$@" >"$OUT/$name.log" 2>&1 &
     APP_PID=$!
     WINDOW=""

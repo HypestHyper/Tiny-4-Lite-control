@@ -147,8 +147,8 @@ impl PreviewHub {
         if self.0.running.get() { self.restart(); }
     }
 
-    /// A small list on the preview to pick what it shows: the camera, or the Studio camera. It is only
-    /// there while the Studio camera exists.
+    /// A small list on the preview to pick what it shows: the camera, or the Studio camera. Always
+    /// there; picking Studio before it is set up says how to set it up.
     pub fn source_picker(&self) -> gtk::DropDown {
         let picker = gtk::DropDown::from_strings(&["Camera", "Studio"]);
         picker.add_css_class("on-stage-picker");
@@ -158,12 +158,6 @@ impl PreviewHub {
         picker.set_selected(u32::from(current_config().preview_denoised));
         let hub = self.clone();
         picker.connect_selected_notify(move |p| hub.set_denoised(p.selected() == 1));
-        let show = { let picker = picker.downgrade(); move || match picker.upgrade() {
-            Some(picker) => { picker.set_visible(crate::denoise::loopback_node().is_some()); true }
-            None => false,
-        } };
-        show();
-        glib::timeout_add_local(Duration::from_secs(3), move || if show() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
         picker
     }
 
@@ -296,6 +290,11 @@ impl PreviewHub {
         self.each_view(|v| v.show_message("Starting preview…", "videocam"));
         let this = self.clone();
         // The Studio camera, if that is what the preview shows and it is there; otherwise the camera.
+        if current_config().preview_denoised && crate::denoise::loopback_node().is_none() {
+            hub.running.set(false);
+            self.each_view(|v| v.show_message("The Studio camera is not set up yet. Device tab \u{2192} Studio camera \u{2192} Set up\u{2026}, or pick Camera above.", "videocam_off"));
+            return;
+        }
         let denoised = self.showing_denoised();
         // Reading the current mode asks the camera, so do it off the UI thread.
         hub.store.call(None, move |device| match &denoised {
