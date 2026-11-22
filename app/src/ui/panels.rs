@@ -579,6 +579,138 @@ pub fn sleep_timer_card() -> gtk::Box {
     card
 }
 
+/// Denoise: the cleaner second camera, run by the background service. A switch with its strength
+/// beside it, the graphics-chip choice, what it needs, and what it is doing and costing right now.
+pub fn denoise_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("Denoise", "blur_on",
+        "Adds a second camera, \u{201c}Tiny 2 Lite (denoised)\u{201d}, with less grain. Choose it in your video app. It only uses the camera while an app has it open.");
+    body.append(&service_needed_notice("The background service is not running, so the denoised camera is not either. Install or start it under Background service, further down this tab."));
+    let config = current_config().denoise;
+
+    // The switch, and the strength right beside it while it is on.
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text("Denoise", &["setting-label"]));
+    titles.append(&widgets::text("Strength: to the right, smoother but softer.", &["setting-summary"]));
+    let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
+    strength.set_draw_value(false);
+    strength.set_size_request(140, -1);
+    strength.set_value(f64::from(config.strength));
+    strength.set_valign(gtk::Align::Center);
+    widgets::lock_wheel(&strength);
+    widgets::label_accessible(&strength, "Denoise strength");
+    let amount = widgets::line(&config.strength.to_string(), &["setting-value", "tnum"]);
+    amount.set_width_chars(3);
+    amount.set_valign(gtk::Align::Center);
+    let beside = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    beside.append(&strength);
+    beside.append(&amount);
+    let reveal = gtk::Revealer::new();
+    reveal.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
+    reveal.set_child(Some(&beside));
+    reveal.set_reveal_child(config.enabled);
+    let switch = gtk::Switch::new();
+    switch.set_valign(gtk::Align::Center);
+    switch.set_active(config.enabled);
+    widgets::label_accessible(&switch, "Denoise");
+    {
+        let reveal = reveal.clone();
+        switch.connect_active_notify(move |sw| {
+            let on = sw.is_active();
+            update_config(|c| c.denoise.enabled = on);
+            reveal.set_reveal_child(on);
+        });
+    }
+    {
+        // Saved once the slider settles: a change restarts the denoising for a moment.
+        let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+        let amount = amount.clone();
+        strength.connect_value_changed(move |s| {
+            let value = s.value().round() as u8;
+            amount.set_text(&value.to_string());
+            if let Some(id) = timer.borrow_mut().take() { id.remove(); }
+            let slot = timer.clone();
+            *timer.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(500), move || {
+                slot.borrow_mut().take();
+                update_config(|c| c.denoise.strength = value);
+            }));
+        });
+    }
+    row.append(&titles);
+    row.append(&reveal);
+    row.append(&switch);
+    body.append(&row);
+
+    body.append(&plain_switch_row("Use the graphics chip",
+        "Denoise on the GPU (VA-API) when there is one: almost no processor time. Off, or without one, the processor does it.",
+        config.use_gpu, |on| update_config(|c| c.denoise.use_gpu = on)));
+
+    // What it needs, with a way to set it up.
+    let needs = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let needs_text = widgets::text("", &["small", "dim"]);
+    needs_text.set_hexpand(true);
+    let setup = gtk::Button::with_label("Set up…");
+    setup.add_css_class("small");
+    setup.set_valign(gtk::Align::Center);
+    setup.set_tooltip_text(Some("Opens a terminal that installs ffmpeg and v4l2loopback and makes the denoised camera (asks for your password)"));
+    {
+        let store = store.clone();
+        setup.connect_clicked(move |_| { if let Err(error) = crate::setup::run_in_terminal(&["denoise", "setup"]) { store.error(&error); } });
+    }
+    needs.append(&needs_text);
+    needs.append(&setup);
+    body.append(&needs);
+
+    // What it is doing, and what it costs.
+    let state = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    state.add_css_class("denoise-state");
+    let glyph = widgets::icon("memory");
+    glyph.set_valign(gtk::Align::Start);
+    let state_text = widgets::text("", &["small"]);
+    state_text.set_hexpand(true);
+    state_text.set_selectable(true);
+    state.append(&glyph);
+    state.append(&state_text);
+    body.append(&state);
+
+    let refresh = {
+        let (needs, needs_text, state, state_text) = (needs.downgrade(), needs_text.downgrade(), state.downgrade(), state_text.downgrade());
+        move || -> bool {
+            let (Some(needs), Some(needs_text), Some(state), Some(state_text)) = (needs.upgrade(), needs_text.upgrade(), state.upgrade(), state_text.upgrade()) else { return false };
+            let mut missing = Vec::new();
+            if !crate::denoise::ffmpeg_found() { missing.push("ffmpeg"); }
+            if crate::denoise::loopback_node().is_none() { missing.push("the virtual camera (v4l2loopback)"); }
+            needs.set_visible(!missing.is_empty());
+            needs_text.set_text(&format!("Needs {}.", missing.join(" and ")));
+            let report = crate::service::running_status().and_then(|s| s.denoise);
+            match report {
+                Some(r) if r.state != "off" => {
+                    let mut line = match r.state.as_str() {
+                        "running" => "Denoising".to_string(),
+                        "waiting" => "Ready".to_string(),
+                        "unavailable" => "Not available".to_string(),
+                        "error" => "Problem".to_string(),
+                        other => other.to_string(),
+                    };
+                    if let Some(cpu) = r.cpu_percent { line.push_str(&format!(" · CPU {cpu:.0}%")); }
+                    if let Some(mb) = r.memory_mb { line.push_str(&format!(" · {mb:.0} MB")); }
+                    if r.gpu { line.push_str(" · graphics chip"); }
+                    if let Some(device) = &r.device { line.push_str(&format!(" · {device}")); }
+                    if !r.detail.is_empty() { line.push_str(&format!("\n{}", r.detail)); }
+                    state_text.set_text(&line);
+                    state.set_visible(true);
+                }
+                _ => state.set_visible(false),
+            }
+            true
+        }
+    };
+    refresh();
+    glib::timeout_add_local(Duration::from_secs(2), move || if refresh() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
+    card
+}
+
 /// A banner across the top of the window while the background service is not set up: why it is needed,
 /// a button that sets it up, and "Not now", which hides it for good (it can still be set up on the Device
 /// tab). It goes away by itself once the service is installed or running.

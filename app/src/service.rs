@@ -208,6 +208,9 @@ pub struct Status {
     pub last_event_at: u64,
     pub restored: bool,
     pub asleep_by_service: bool,
+    /// The denoised virtual camera: what runs and what it costs.
+    #[serde(default)]
+    pub denoise: Option<crate::denoise::Report>,
 }
 
 /// The running service's status, if one is running: for the window to show.
@@ -249,6 +252,9 @@ pub fn restore_preset(config: &crate::config::AppConfig) -> Option<CameraPreset>
 }
 
 fn log(message: &str) { eprintln!("[tiny4lite-control service] {message}"); }
+
+/// Write a line to the service's log (for the parts of the service that live in other files).
+pub(crate) fn note(message: &str) { log(message); }
 
 fn perform(action: &Action, device: &str, status: &mut Status) {
     let note = match action {
@@ -362,6 +368,8 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     // The camera's node, shared with the suspend watcher, which runs on its own thread.
     let shared_device: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let mut watcher: Option<crate::suspend::Watcher> = None;
+    // The denoised virtual camera, run while it is turned on.
+    let mut denoiser = crate::denoise::Denoiser::new();
     let mut watching_suspend = false;
     let mut suspend_retry_at: Option<Instant> = None;
     // When the computer last woke from suspend, until the camera has been put back to sleep.
@@ -472,6 +480,9 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                 }
             }
             if camera.is_some() { last_device = camera.clone(); }
+            let denoise_config = current_config().denoise;
+            status.denoise = (denoise_config.enabled || status.denoise.is_some())
+                .then(|| denoiser.step(&denoise_config, if backend::ui_test_mode() { None } else { camera.as_deref() }));
             status.camera = camera;
             write_status(&status);
             if once && restored_once { break; }
@@ -480,6 +491,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
         slice = slice.wrapping_add(1);
     }
     drop(watcher);
+    denoiser.stop_all();
     // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep.
     if stop.load(std::sync::atomic::Ordering::Relaxed) && current_config().service.sleep_on_shutdown {
         if let Some(device) = last_device.as_deref().filter(|d| Path::new(d).exists() || backend::ui_test_mode()) {
@@ -914,7 +926,7 @@ mod tests {
 
     #[test]
     fn the_status_file_round_trips() {
-        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false };
+        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false, denoise: Some(crate::denoise::Report { state: "running".into(), cpu_percent: Some(12.5), ..Default::default() }) };
         let text = serde_json::to_string(&status).unwrap();
         assert_eq!(serde_json::from_str::<Status>(&text).unwrap(), status);
     }

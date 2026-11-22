@@ -2,6 +2,7 @@ mod backend;
 mod capture;
 mod cli;
 mod config;
+mod denoise;
 mod presets;
 mod service;
 mod setup;

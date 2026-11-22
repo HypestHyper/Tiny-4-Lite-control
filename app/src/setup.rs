@@ -82,6 +82,48 @@ pub fn install_command(manager: Manager, packages: &[&str]) -> Vec<String> {
     command
 }
 
+/// What gives a command root rights here: sudo, doas or pkexec, or nothing when already root.
+pub fn gain_program() -> Option<&'static str> {
+    if is_root() { return None; }
+    ["sudo", "doas", "pkexec"].into_iter().find(|p| program_found(p))
+}
+
+/// The kernel headers a module built on this machine (DKMS) needs, for the running kernel, where the
+/// package manager does not pull them in itself.
+pub fn kernel_headers_package(manager: Manager) -> Option<String> {
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").ok()?.trim().to_string();
+    match manager {
+        // The kernel's own package (linux, linux-lts, linux-zen, linux-cachyos…) and its -headers.
+        Manager::Pacman => {
+            let image = format!("/usr/lib/modules/{release}/vmlinuz");
+            let owner = Command::new("pacman").args(["-Qoq", &image]).output().ok()?;
+            let kernel = String::from_utf8_lossy(&owner.stdout).trim().to_string();
+            (!kernel.is_empty()).then(|| format!("{kernel}-headers"))
+        }
+        Manager::Apt => Some(format!("linux-headers-{release}")),
+        Manager::Xbps => Some("linux-headers".into()),
+        // akmods (Fedora), KMPs (openSUSE) and Portage bring what they need.
+        _ => None,
+    }
+}
+
+/// The package for what denoise needs (`ffmpeg`, `v4l2loopback`) on a package manager, if it has one.
+pub fn denoise_package(what: &str, manager: Manager) -> Option<&'static str> {
+    Some(match (what, manager) {
+        ("ffmpeg", Manager::Portage) => "media-video/ffmpeg",
+        // Fedora's own build (RPM Fusion's "ffmpeg" replaces it if that is wanted); both have the filters used.
+        ("ffmpeg", Manager::Dnf) => "ffmpeg-free",
+        ("ffmpeg", _) => "ffmpeg",
+        ("v4l2loopback", Manager::Apt) => "v4l2loopback-dkms",
+        ("v4l2loopback", Manager::Pacman) => "v4l2loopback-dkms",
+        ("v4l2loopback", Manager::Dnf) => "akmod-v4l2loopback",
+        ("v4l2loopback", Manager::Zypper) => "v4l2loopback-kmp-default",
+        ("v4l2loopback", Manager::Xbps) => "v4l2loopback",
+        ("v4l2loopback", Manager::Portage) => "media-video/v4l2loopback",
+        _ => return None,
+    })
+}
+
 fn is_root() -> bool {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata("/proc/self").map(|m| m.uid() == 0).unwrap_or(false)
@@ -93,7 +135,7 @@ fn installable(manager: Manager) -> Vec<(&'static Requirement, &'static str)> {
 }
 
 /// Ask a yes/no question on the terminal; the default is yes.
-fn confirm(question: &str, yes: bool) -> bool {
+pub fn confirm(question: &str, yes: bool) -> bool {
     if yes { return true; }
     use std::io::{BufRead, Write};
     print!("{question} [Y/n] ");
@@ -111,6 +153,12 @@ pub fn requirements_command(install: bool, yes: bool) -> i32 {
             if requirement.required { "" } else { " (optional)" });
         if !present && requirement.required { code = crate::cli::FAILED; }
     }
+    // Denoise needs more, and is set up on its own (tiny4lite-control denoise setup).
+    let ffmpeg = program_found("ffmpeg");
+    let camera = crate::denoise::loopback_node();
+    println!("\nFor Denoise (optional, set up with: tiny4lite-control denoise setup):");
+    println!("{} {:<36} {}", if ffmpeg { "ok     " } else { "missing" }, "ffmpeg", "reads, cleans and writes the picture");
+    println!("{} {:<36} {}", if camera.is_some() { "ok     " } else { "missing" }, "v4l2loopback (the virtual camera)", "the second camera that apps choose");
     if !install { return code; }
     let Some(manager) = manager() else {
         println!("\nNo package manager was recognised, so nothing can be installed from here. Install the missing programs with your system's tools.");
@@ -388,6 +436,20 @@ mod tests {
             let words: Vec<String> = command.get_args().map(|a| a.to_string_lossy().to_string()).collect();
             assert!(words.ends_with(&args), "{words:?}");
         }
+    }
+
+    #[test]
+    fn denoise_packages_are_named_for_every_package_manager() {
+        for manager in [Manager::Apt, Manager::Dnf, Manager::Pacman, Manager::Zypper, Manager::Apk, Manager::Xbps, Manager::Portage] {
+            assert!(denoise_package("ffmpeg", manager).is_some(), "{manager:?}");
+        }
+        assert_eq!(denoise_package("ffmpeg", Manager::Dnf), Some("ffmpeg-free"));
+        assert_eq!(denoise_package("v4l2loopback", Manager::Pacman), Some("v4l2loopback-dkms"));
+        assert_eq!(denoise_package("v4l2loopback", Manager::Dnf), Some("akmod-v4l2loopback"));
+        // Alpine has none: setup says so instead of trying.
+        assert_eq!(denoise_package("v4l2loopback", Manager::Apk), None);
+        assert!(kernel_headers_package(Manager::Apt).is_some_and(|p| p.starts_with("linux-headers-")));
+        assert_eq!(kernel_headers_package(Manager::Zypper), None);
     }
 
     #[test]

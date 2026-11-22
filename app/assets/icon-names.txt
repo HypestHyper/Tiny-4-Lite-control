@@ -47,3 +47,5 @@ front_hand
 pan_tool_alt
 pinch_zoom_out
 filter_center_focus
+blur_on
+memory

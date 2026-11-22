@@ -87,7 +87,16 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **A sleeping camera wakes for a move.** The stick, the 1° steps, Centre, the shortcut buttons, Apply on a preset and Go on a camera position all send Wake first when the camera reports it is asleep; a position or preset then waits a moment for the camera to come up.
 
-**Focus peaking.** The focus button on the preview (beside pause, in every window) outlines what is in focus in green: each frame's sharpest edges, the strongest few per cent, but never the soft edges of a picture that is out of focus. It works on the picture as the preview shows it, so it costs little, and the choice is remembered.
+**Focus peaking.** The focus button on the preview (beside pause, in every window) outlines what is in focus in green. While it is on, a strictness slider sits beside it: to the right, only the very sharpest edges are marked (from the sharpest 12% of edges at the left end to the sharpest 1% at the right, and never weak edges). It works on the picture as the preview shows it, so it costs little, and both choices are remembered.
+
+**Denoise.** The camera has no noise reduction of its own, and other programs cannot be handed a changed picture from the real camera. So Denoise (Device tab) adds a second camera, **Tiny 2 Lite (denoised)**, made by the `v4l2loopback` kernel module; choose it in your video app. The background service runs it, as lightly as it can:
+
+* nothing touches the real camera until an app opens the denoised one; until then a dark placeholder at five frames a second keeps the virtual camera listed (browsers only list it while something writes to it), and the camera stays free to sleep;
+* when an app opens it, `ffmpeg` reads the camera, denoises and writes; five seconds after the last app lets go it stops;
+* the denoise runs on the graphics chip (VA-API `denoise_vaapi`) when there is one, and falls back to the processor (`hqdn3d`) by itself if that fails; measured here, the processor route at 1080p30 takes about a third of one core, about 67 MB;
+* the card shows what runs and what it costs (CPU, memory, graphics chip or processor), refreshed every two seconds; the strength slider sits beside the switch.
+
+**Set up…** on the card opens a terminal that installs `ffmpeg` and `v4l2loopback` (with the kernel headers DKMS needs on Arch, CachyOS, Debian, Ubuntu and Void; Fedora's from RPM Fusion; openSUSE's KMP; Gentoo's ebuild), writes `/etc/modprobe.d/tiny4lite-denoise.conf` and `/etc/modules-load.d/tiny4lite-denoise.conf` so the virtual camera comes back at every start, and loads it. On NixOS it prints the configuration lines instead; Alpine has no package for the module. With Secure Boot on, an unsigned module may not load. If OBS's virtual camera already uses `v4l2loopback`, loading it with this app's settings replaces OBS's camera until OBS is restarted. `tiny4lite-control denoise status` shows what runs; `requirements` lists what Denoise needs. While the denoised camera is in use, the app's own preview cannot open the camera at the same time.
 
 **Capture mode.** One list of every mode the camera offers (for example "3840 × 2160 (4K) · 30 fps · MJPG"), largest first, so a size and a frame rate that do not go together cannot be chosen.
 

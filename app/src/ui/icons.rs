@@ -4,6 +4,7 @@
 pub fn glyph(name: &str) -> Option<char> {
     let code = match name {
         "bedtime" => 0xf159,
+        "blur_on" => 0xe3a5,
         "bookmarks" => 0xe98b,
         "center_focus_strong" => 0xe3b4,
         "check" => 0xe668,
@@ -19,6 +20,7 @@ pub fn glyph(name: &str) -> Option<char> {
         "info" => 0xe88e,
         "lightbulb" => 0xe90f,
         "lock" => 0xe899,
+        "memory" => 0xe322,
         "mic" => 0xe31d,
         "more_horiz" => 0xe5d3,
         "open_in_full" => 0xf1ce,
@@ -58,6 +60,7 @@ pub fn glyph(name: &str) -> Option<char> {
 #[allow(dead_code)]
 pub const NAMES: &[&str] = &[
     "bedtime",
+    "blur_on",
     "bookmarks",
     "center_focus_strong",
     "check",
@@ -73,6 +76,7 @@ pub const NAMES: &[&str] = &[
     "info",
     "lightbulb",
     "lock",
+    "memory",
     "mic",
     "more_horiz",
     "open_in_full",

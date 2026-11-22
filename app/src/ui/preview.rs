@@ -72,6 +72,7 @@ pub struct PreviewHub(Rc<HubInner>);
 impl PreviewHub {
     pub fn new(store: &Store) -> PreviewHub {
         FOCUS_PEAKING.store(current_config().preview_focus_peaking, Ordering::Relaxed);
+        PEAKING_STRICTNESS.store(current_config().preview_peaking_strictness.min(100), Ordering::Relaxed);
         PreviewHub(Rc::new(HubInner {
             store: store.clone(),
             views: RefCell::default(),
@@ -134,19 +135,40 @@ impl PreviewHub {
         button
     }
 
-    /// The round button that turns focus peaking on and off, lit while it is on.
-    pub fn peaking_button(&self) -> gtk::Button {
+    /// The round button that turns focus peaking on and off, lit while it is on, with its strictness
+    /// slider beside it while it is on.
+    pub fn peaking_button(&self) -> gtk::Box {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let slider = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+        slider.set_draw_value(false);
+        slider.set_size_request(110, -1);
+        slider.set_value(f64::from(PEAKING_STRICTNESS.load(Ordering::Relaxed)));
+        slider.add_css_class("on-stage-slider");
+        slider.set_tooltip_text(Some("Strictness: to the right, only the sharpest edges are outlined"));
+        widgets::label_accessible(&slider, "Focus peaking strictness");
+        slider.connect_value_changed(|s| set_peaking_strictness(s.value().round() as u8));
+        let reveal = gtk::Revealer::new();
+        reveal.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
+        reveal.set_child(Some(&slider));
+        reveal.set_valign(gtk::Align::Center);
+        reveal.set_reveal_child(focus_peaking_on());
         let button = widgets::icon_button("filter_center_focus", "Focus peaking: outline what is in focus in green", true);
         button.add_css_class("on-stage");
         let show = |button: &gtk::Button| {
             if focus_peaking_on() { button.add_css_class("lit"); } else { button.remove_css_class("lit"); }
         };
         show(&button);
-        button.connect_clicked(move |button| {
-            set_focus_peaking(!focus_peaking_on());
-            show(button);
-        });
-        button
+        {
+            let reveal = reveal.clone();
+            button.connect_clicked(move |button| {
+                set_focus_peaking(!focus_peaking_on());
+                show(button);
+                reveal.set_reveal_child(focus_peaking_on());
+            });
+        }
+        row.append(&reveal);
+        row.append(&button);
+        row
     }
 
     /// Start the stream again after it stopped or failed.
@@ -535,6 +557,23 @@ static FOCUS_PEAKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 
 pub fn focus_peaking_on() -> bool { FOCUS_PEAKING.load(Ordering::Relaxed) }
 
+/// How strict focus peaking is, 0–100.
+static PEAKING_STRICTNESS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(60);
+
+pub fn set_peaking_strictness(value: u8) {
+    PEAKING_STRICTNESS.store(value.min(100), Ordering::Relaxed);
+    update_config(|c| c.preview_peaking_strictness = value.min(100));
+}
+
+/// What strictness means: the share of the picture's edges that are marked (12% at 0, 1% at 100), and
+/// the smallest step in brightness that can count as an edge at all (30 at 0, 140 at 100).
+fn peaking_levels(strictness: u8) -> (u32, u16) {
+    let s = u32::from(strictness.min(100));
+    let per_thousand = 120 - s * 110 / 100;
+    let floor = 30 + (s * 110 / 100) as u16;
+    (per_thousand, floor)
+}
+
 pub fn set_focus_peaking(on: bool) {
     FOCUS_PEAKING.store(on, Ordering::Relaxed);
     update_config(|c| c.preview_focus_peaking = on);
@@ -562,15 +601,17 @@ fn focus_peaking(frame: &mut Frame) {
             histogram[usize::from(s)] += 1;
         }
     }
-    // The threshold: the strongest 7% of edges, and at least a clear step in brightness.
-    let wanted = ((w - 2) * (h - 2)) as u32 * 7 / 100;
+    // The threshold: the strongest few per cent of edges, and at least a clear step in brightness, both
+    // set by the strictness.
+    let (per_thousand, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
+    let wanted = ((w - 2) * (h - 2)) as u32 * per_thousand / 1000;
     let mut count = 0u32;
     let mut threshold = 511u16;
     for level in (0..512).rev() {
         count += histogram[level];
         if count >= wanted { threshold = level as u16; break; }
     }
-    let threshold = threshold.max(48);
+    let threshold = threshold.max(floor);
     for (i, s) in strength.iter().enumerate() {
         if *s >= threshold { frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR); }
     }

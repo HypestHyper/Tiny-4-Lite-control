@@ -193,6 +193,7 @@ impl FullWindow {
                     if tab == Tab::Device {
                         // Extra cards that are not registry settings.
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
+                        built.masonry.add(&panels::denoise_card(&store), 5);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::gimbal_limits_card(&store), 3);
                         built.masonry.add(&panels::sleep_timer_card(), 5);

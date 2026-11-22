@@ -21,6 +21,18 @@ pub fn holders(node: &str) -> Vec<(u32, String)> {
     found
 }
 
+/// Every process (other than this one) that has `node` open.
+pub fn openers(node: &str) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let me = std::process::id();
+    entries.flatten().filter_map(|entry| {
+        let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+        if pid == me { return None; }
+        let fds = std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?;
+        fds.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|t| t == Path::new(node))).then_some(pid)
+    }).collect()
+}
+
 /// The programs really using the camera, for the background service: any program that has it open,
 /// except this one, the control window (which only opens it for a moment per command), and `v4l2-ctl`
 /// runs that are not streaming. A preview stream, from this app or any other, counts.

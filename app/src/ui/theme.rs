@@ -322,6 +322,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.on-stage { background: alpha(#000000, 0.45); color: @t_on_stage; }
 .t4 button.on-stage:hover { background: alpha(#000000, 0.65); }
 .t4 button.on-stage.lit { background: #28c85a; color: #04210d; }
+.t4 scale.on-stage-slider { background: alpha(#000000, 0.45); border-radius: 999px; padding: 0 §10§; min-height: §32§; }
+.t4 scale.on-stage-slider trough { min-height: §6§; }
+.t4 scale.on-stage-slider highlight { min-height: §6§; background: #28c85a; }
 .t4 button.on-stage.lit:hover { background: #3ad66b; }
 .t4 button.close-button:hover { background: @t_error_hover; color: #ffffff; }
 .t4 button > box { }
@@ -383,6 +386,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 .warning-text { color: @t_error; }
 .t4 .gesture-icon { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: 999px; }
 .t4 .gesture-icon .icon { font-size: §24§; }
+.t4 .denoise-state { background: @t_surface_high; border-radius: §12§; padding: §10§ §12§; }
+.t4 .denoise-state .icon { color: @t_primary; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }
