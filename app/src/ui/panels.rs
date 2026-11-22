@@ -696,8 +696,11 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
     body.append(&row);
 
     body.append(&plain_switch_row("Use the graphics chip",
-        "Denoise on the GPU (VA-API) when there is one: almost no processor time. Off, or without one, the processor does it.",
+        "Denoise on the GPU when it can: VA-API (Intel) or Vulkan (AMD, Intel, NVIDIA), with the best-looking filter and almost no processor time. Off, or without one, the processor does it.",
         config.use_gpu, |on| update_config(|c| c.denoise.use_gpu = on)));
+    body.append(&plain_switch_row("Limit to 30 fps",
+        "A camera set to 60 fps gives the Studio camera 30: half the work, and plenty for calls.",
+        config.limit_fps, |on| update_config(|c| c.denoise.limit_fps = on)));
 
     // What it needs, with a way to set it up.
     let needs = gtk::Box::new(gtk::Orientation::Horizontal, 10);

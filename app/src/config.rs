@@ -133,12 +133,14 @@ pub struct DenoiseConfig {
     pub denoise: bool,
     /// Denoise strength, 1 to 100.
     pub strength: u8,
-    /// Denoise on the graphics chip (VA-API) when there is one.
+    /// Denoise on the graphics chip (VA-API or Vulkan) when there is one.
     pub use_gpu: bool,
+    /// Bring a 60 fps camera down to 30 for the Studio camera: half the work.
+    pub limit_fps: bool,
 }
 
 impl Default for DenoiseConfig {
-    fn default() -> DenoiseConfig { DenoiseConfig { enabled: false, denoise: true, strength: 40, use_gpu: true } }
+    fn default() -> DenoiseConfig { DenoiseConfig { enabled: false, denoise: true, strength: 40, use_gpu: true, limit_fps: true } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.

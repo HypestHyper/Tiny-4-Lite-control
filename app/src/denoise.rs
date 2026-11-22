@@ -11,8 +11,9 @@
 //!   (browsers only list it while something writes to it), and the real camera stays free to sleep.
 //! * When an app opens it, `ffmpeg` reads the camera, denoises and writes. A few seconds after the last
 //!   app lets go, it stops again.
-//! * The denoise runs on the graphics chip (VA-API `denoise_vaapi`) when there is one, otherwise on the
-//!   processor with `hqdn3d`, the cheapest good filter (it also compares neighbouring frames).
+//! * The denoise runs on the graphics chip when it can: VA-API's own noise reduction (Intel), else Vulkan's
+//!   non-local means (AMD, Intel, NVIDIA; the best-looking filter). Otherwise on the processor with
+//!   `atadenoise` (light, and it does not smear moving things). A camera at 60 fps is brought to 30 first.
 //!
 //! CPU and memory of the running `ffmpeg` are measured and shown in the window.
 
@@ -55,13 +56,39 @@ pub fn render_node() -> Option<String> {
 }
 
 /// Whether this ffmpeg has the VA-API denoise filter (asked once).
-fn ffmpeg_has_vaapi_denoise() -> bool {
+/// The filters this ffmpeg has (asked once).
+fn ffmpeg_filters() -> &'static str {
     use std::sync::OnceLock;
-    static HAS: OnceLock<bool> = OnceLock::new();
-    *HAS.get_or_init(|| {
+    static FILTERS: OnceLock<String> = OnceLock::new();
+    FILTERS.get_or_init(|| {
         Command::new("ffmpeg").args(["-hide_banner", "-filters"]).stdin(Stdio::null()).stderr(Stdio::null()).output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("denoise_vaapi")).unwrap_or(false)
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
     })
+}
+
+/// Where the denoising runs. Tried in this order; one that fails is not tried again until the service
+/// restarts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Route {
+    /// The graphics chip through VA-API's own noise reduction: Intel's driver has it, AMD's (Mesa) does not.
+    Vaapi,
+    /// The graphics chip through Vulkan (non-local means): AMD, Intel and NVIDIA.
+    Vulkan,
+    /// The processor (atadenoise).
+    Cpu,
+}
+
+impl Route {
+    pub fn name(self) -> &'static str {
+        match self { Route::Vaapi => "graphics chip (VA-API)", Route::Vulkan => "graphics chip (Vulkan)", Route::Cpu => "processor" }
+    }
+}
+
+/// The Vulkan denoiser's strength (1 to 100 in, its own 1 to 10 out). Its patch and search sizes are kept
+/// small, which is plenty for a webcam and light on the graphics chip.
+pub fn vulkan_filter(strength: u8) -> String {
+    let s = 1.0 + f64::from(strength.clamp(1, 100) - 1) * 9.0 / 99.0;
+    format!("nlmeans_vulkan=s={s:.2}:p=5:r=7")
 }
 
 // ── The commands ──────────────────────────────────────────────────────────
@@ -83,11 +110,14 @@ impl Format {
     }
 }
 
-/// The processor filter for a strength from 1 to 100: `hqdn3d` with its usual proportions, from barely
-/// there to strong (50 is ffmpeg's own default).
+/// The processor filter for a strength from 1 to 100: `atadenoise`, which averages each pixel with the
+/// frames around it only while it barely changes, so grain goes and moving things do not smear or ghost
+/// (as `hqdn3d` did). Measured at 1080p30: about a quarter of one core, less than `hqdn3d`. 50 is ffmpeg's
+/// own default thresholds.
 pub fn cpu_filter(strength: u8) -> String {
     let k = f64::from(strength.clamp(1, 100)) / 50.0;
-    format!("hqdn3d={:.2}:{:.2}:{:.2}:{:.2}", 4.0 * k, 3.0 * k, 6.0 * k, 4.5 * k)
+    let (a, b) = (0.02 * k, 0.04 * k);
+    format!("atadenoise=0a={a:.4}:0b={b:.4}:1a={a:.4}:1b={b:.4}:2a={a:.4}:2b={b:.4}:s=9")
 }
 
 /// The graphics-chip level for a strength from 1 to 100 (VA-API takes 0 to 64).
@@ -98,22 +128,27 @@ fn base_args() -> Vec<String> {
 }
 
 /// Real camera in, the filtered picture out to the Studio camera. No filter on: the picture as it is.
-pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, denoise: Option<u8>, gpu: Option<&str>) -> Vec<String> {
+pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, denoise: Option<u8>, route: Route, render: Option<&str>, max_fps: Option<f64>) -> Vec<String> {
     // The graphics chip is only worth setting up when there is a filter for it to run.
-    let gpu = gpu.filter(|_| denoise.is_some());
+    let route = if denoise.is_some() { route } else { Route::Cpu };
     let mut args = base_args();
-    if let Some(node) = gpu {
-        args.extend(["-init_hw_device".into(), format!("vaapi=va:{node}"), "-filter_hw_device".into(), "va".into()]);
+    match (route, render) {
+        (Route::Vaapi, Some(node)) => args.extend(["-init_hw_device".into(), format!("vaapi=va:{node}"), "-filter_hw_device".into(), "va".into()]),
+        (Route::Vulkan, _) => args.extend(["-init_hw_device".into(), "vulkan=vk".into(), "-filter_hw_device".into(), "vk".into()]),
+        _ => {}
     }
     args.extend([
         "-f".into(), "v4l2".into(), "-input_format".into(), format.input.clone(),
         "-video_size".into(), format!("{}x{}", format.width, format.height),
         "-framerate".into(), format!("{:.3}", format.fps), "-i".into(), camera.into(),
     ]);
-    let filter = match (denoise, gpu) {
-        (Some(strength), Some(_)) => format!("format=nv12,hwupload,denoise_vaapi=denoise={},hwdownload,format=nv12,format=yuv420p", gpu_level(strength)),
-        (Some(strength), None) => format!("{},format=yuv420p", cpu_filter(strength)),
-        (None, _) => "format=yuv420p".to_string(),
+    // A camera set to 60 fps is brought down first, which halves all the work after it.
+    let limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
+    let filter = match (denoise, route) {
+        (Some(strength), Route::Vaapi) => format!("{limit}format=nv12,hwupload,denoise_vaapi=denoise={},hwdownload,format=nv12,format=yuv420p", gpu_level(strength)),
+        (Some(strength), Route::Vulkan) => format!("{limit}format=yuv420p,hwupload,{},hwdownload,format=yuv420p", vulkan_filter(strength)),
+        (Some(strength), Route::Cpu) => format!("{limit}{},format=yuv420p", cpu_filter(strength)),
+        (None, _) => format!("{limit}format=yuv420p"),
     };
     args.extend(["-vf".into(), filter, "-f".into(), "v4l2".into(), loopback.into()]);
     args
@@ -165,7 +200,7 @@ struct Running {
     want: Want,
     /// What it was started with; a change (strength, size, GPU) restarts it.
     key: String,
-    gpu: bool,
+    route: Route,
     started: Instant,
 }
 
@@ -176,7 +211,8 @@ pub struct Denoiser {
     watched: bool,
     idle_since: Option<Instant>,
     retry_after: Option<Instant>,
-    gpu_failed: bool,
+    /// Routes that failed here, with what ffmpeg said, so the next one is used and the card says why.
+    failed: Vec<(Route, String)>,
     last_error: Option<String>,
     cpu_sample: Option<(Instant, u64)>,
     format: Option<(String, Format)>,
@@ -254,7 +290,7 @@ impl Denoiser {
                     if self.running.as_ref().map(|r| &r.key) != Some(&key) {
                         self.stop();
                         if let Ok(child) = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-                            self.running = Some(Running { child, want: Want::Placeholder, key, gpu: false, started: Instant::now() });
+                            self.running = Some(Running { child, want: Want::Placeholder, key, route: Route::Cpu, started: Instant::now() });
                         }
                     }
                     return Report { state: "off".into(), detail: "Off: an app still has the Studio camera open, so it shows a dark picture until the app lets go.".into(), device: loopback, ..Report::default() };
@@ -275,13 +311,12 @@ impl Denoiser {
         // Has what runs ended by itself?
         if let Some(running) = self.running.as_mut() {
             if let Ok(Some(status)) = running.child.try_wait() {
-                let (want, gpu, lived) = (running.want, running.gpu, running.started.elapsed());
+                let (want, route, lived) = (running.want, running.route, running.started.elapsed());
                 self.running = None;
                 let said = last_lines(&log_path(), 3);
-                if want == Want::Pipeline && gpu {
-                    // The graphics chip did not manage it: use the processor from now on.
-                    self.gpu_failed = true;
-                    self.last_error = Some(format!("The graphics chip could not denoise ({said}); using the processor."));
+                if want == Want::Pipeline && route != Route::Cpu {
+                    // This route did not work here: the next one is used, and the card says why.
+                    self.failed.push((route, if said.is_empty() { format!("ffmpeg stopped ({status})") } else { said }));
                 } else if lived < Duration::from_secs(5) || !status.success() {
                     self.last_error = Some(if said.is_empty() { format!("ffmpeg stopped ({status}).") } else { said });
                     self.retry_after = Some(Instant::now() + RETRY);
@@ -299,11 +334,18 @@ impl Denoiser {
         if want != Want::Pipeline { self.idle_since = None; }
 
         let waiting = self.retry_after.is_some_and(|at| Instant::now() < at);
-        let gpu = if self.gpu_failed || !config.use_gpu || !ffmpeg_has_vaapi_denoise() { None } else { render_node() };
+        // The first route that can work here and has not failed.
+        let render = render_node();
+        let failed = |route: Route| self.failed.iter().any(|(r, _)| *r == route);
+        let route = if !config.use_gpu { Route::Cpu }
+            else if !failed(Route::Vaapi) && render.is_some() && ffmpeg_filters().contains("denoise_vaapi") { Route::Vaapi }
+            else if !failed(Route::Vulkan) && ffmpeg_filters().contains("nlmeans_vulkan") { Route::Vulkan }
+            else { Route::Cpu };
+        let max_fps = config.limit_fps.then_some(30.0);
         let target = match (want, camera) {
             (Want::Nothing, _) | (_, None) => None,
             (want, Some(camera)) => self.format_for(camera).map(|format| {
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, config.denoise.then_some(config.strength), gpu.as_deref()) }
+                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, config.denoise.then_some(config.strength), route, render.as_deref(), max_fps) }
                     else { placeholder_args(&loopback, &format) };
                 (want, args)
             }),
@@ -318,7 +360,8 @@ impl Denoiser {
                     match Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log).spawn() {
                         Ok(child) => {
                             crate::service::note(&format!("Studio camera: {}.", if want == Want::Pipeline { "an app opened it; running" } else { "waiting for an app to open it" }));
-                            self.running = Some(Running { child, want, key, gpu: want == Want::Pipeline && gpu.is_some(), started: Instant::now() });
+                            let route = if want == Want::Pipeline && config.denoise { route } else { Route::Cpu };
+                            self.running = Some(Running { child, want, key, route, started: Instant::now() });
                             if want == Want::Pipeline { self.last_error = None; }
                         }
                         Err(error) => {
@@ -336,7 +379,7 @@ impl Denoiser {
             Some(running) => {
                 let pid = running.child.id();
                 report.pid = Some(pid);
-                report.gpu = running.gpu;
+                report.gpu = running.route != Route::Cpu;
                 report.memory_mb = memory_mb(pid);
                 if let Some(ticks) = cpu_ticks(pid) {
                     if let Some((at, before)) = self.cpu_sample {
@@ -349,7 +392,18 @@ impl Denoiser {
                 if running.want == Want::Pipeline {
                     report.state = "running".into();
                     report.detail = if !config.denoise { "Passing the picture through (no filter on).".into() }
-                        else if running.gpu { "Denoising on the graphics chip.".into() } else { "Denoising on the processor.".into() };
+                        else { format!("Denoising on the {}.", running.route.name()) };
+                    // Why not on the graphics chip: turned off, or what the routes tried here said.
+                    if config.denoise && running.route == Route::Cpu {
+                        let why = if !config.use_gpu { "Use the graphics chip is off.".to_string() }
+                            else if self.failed.is_empty() { "This ffmpeg has no graphics-chip denoise filter.".to_string() }
+                            else { self.failed.iter().map(|(r, said)| format!("The {} did not work: {said}", r.name())).collect::<Vec<_>>().join(" ") };
+                        report.detail = format!("{} {why}", report.detail);
+                    } else if config.denoise && running.route == Route::Vulkan {
+                        if let Some((_, said)) = self.failed.iter().find(|(r, _)| *r == Route::Vaapi) {
+                            report.detail = format!("{} (VA-API has no denoise on this graphics chip: {said})", report.detail);
+                        }
+                    }
                 } else {
                     report.state = "waiting".into();
                     report.detail = "Ready: choose \u{201c}Tiny 2 Lite Studio\u{201d} in an app. The camera is not used until then.".into();
@@ -482,25 +536,33 @@ mod tests {
 
     #[test]
     fn strength_maps_onto_each_filter() {
-        assert_eq!(cpu_filter(50), "hqdn3d=4.00:3.00:6.00:4.50");
+        assert_eq!(cpu_filter(50), "atadenoise=0a=0.0200:0b=0.0400:1a=0.0200:1b=0.0400:2a=0.0200:2b=0.0400:s=9");
         assert_eq!(cpu_filter(0), cpu_filter(1));
         assert_eq!((gpu_level(1), gpu_level(50), gpu_level(100)), (1, 32, 64));
     }
 
     #[test]
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
-        let cpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), None).join(" ");
+        let cpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Route::Cpu, None, None).join(" ");
         assert!(cpu.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{cpu}");
-        assert!(cpu.contains("-vf hqdn3d=4.00:3.00:6.00:4.50,format=yuv420p -f v4l2 /dev/video42"), "{cpu}");
-        let gpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Some("/dev/dri/renderD128")).join(" ");
+        assert!(cpu.contains("-vf atadenoise=0a=0.0200:0b=0.0400:1a=0.0200:1b=0.0400:2a=0.0200:2b=0.0400:s=9,format=yuv420p -f v4l2 /dev/video42"), "{cpu}");
+        let gpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Route::Vaapi, Some("/dev/dri/renderD128"), None).join(" ");
         assert!(gpu.contains("-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va"), "{gpu}");
         assert!(gpu.contains("denoise_vaapi=denoise=32"), "{gpu}");
         let wait = placeholder_args("/dev/video42", &fmt()).join(" ");
         assert!(wait.contains("color=c=0x101418:s=1920x1080:r=5") && wait.ends_with("-f v4l2 /dev/video42"), "{wait}");
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");
         // No filter on: the picture passes through, and no graphics chip is set up for nothing.
-        let plain = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, Some("/dev/dri/renderD128")).join(" ");
-        assert!(plain.contains("-vf format=yuv420p -f v4l2") && !plain.contains("vaapi") && !plain.contains("hqdn3d"), "{plain}");
+        let plain = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, Route::Vaapi, Some("/dev/dri/renderD128"), None).join(" ");
+        assert!(plain.contains("-vf format=yuv420p -f v4l2") && !plain.contains("vaapi") && !plain.contains("atadenoise"), "{plain}");
+        // Vulkan (AMD and the rest): uploaded, denoised, downloaded.
+        let vulkan = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Route::Vulkan, None, None).join(" ");
+        assert!(vulkan.contains("-init_hw_device vulkan=vk -filter_hw_device vk"), "{vulkan}");
+        assert!(vulkan.contains("format=yuv420p,hwupload,nlmeans_vulkan=s=5.45:p=5:r=7,hwdownload,format=yuv420p"), "{vulkan}");
+        // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
+        let sixty = Format { fps: 60.0, ..fmt() };
+        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(50), Route::Cpu, None, Some(30.0)).join(" ").contains("-vf fps=30,atadenoise"));
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Route::Cpu, None, Some(30.0)).join(" ").contains("fps=30,"));
     }
 
     #[test]
