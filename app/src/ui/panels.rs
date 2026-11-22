@@ -637,9 +637,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
     let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
     titles.set_hexpand(true);
     titles.append(&widgets::text("LUT", &["setting-label"]));
-    let file = widgets::text(&config.lut.clone().unwrap_or_else(|| "No .cube file chosen yet.".into()), &["setting-summary"]);
-    file.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    titles.append(&file);
+    titles.append(&widgets::text("A colour look applied to the picture.", &["setting-summary"]));
     let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     strength.set_draw_value(false);
     strength.set_size_request(120, -1);
@@ -691,37 +689,77 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
     row.append(&switch);
     section.append(&row);
 
-    let choose = gtk::Button::with_label("Choose .cube\u{2026}");
-    choose.add_css_class("small");
-    choose.set_halign(gtk::Align::Start);
+    // The LUTs added so far, to pick from; Add puts another in the list, Remove takes the picked one out.
+    let picker = gtk::DropDown::from_strings(&[]);
+    picker.set_hexpand(true);
+    widgets::lock_wheel(&picker);
+    widgets::label_accessible(&picker, "LUT");
+    let names: Rc<RefCell<Vec<String>>> = Rc::default();
+    let filling = Rc::new(Cell::new(false));
+    let fill: Rc<dyn Fn(Option<&str>)> = {
+        let (picker, names, filling, switch) = (picker.clone(), names.clone(), filling.clone(), switch.clone());
+        Rc::new(move |select: Option<&str>| {
+            filling.set(true);
+            let list = crate::lut::list();
+            // Shown without the .cube ending.
+            let labels: Vec<String> = if list.is_empty() { vec!["No LUTs added yet".into()] } else {
+                list.iter().map(|n| n.strip_suffix(".cube").or_else(|| n.strip_suffix(".CUBE")).unwrap_or(n).to_string()).collect() };
+            picker.set_model(Some(&gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>())));
+            picker.set_sensitive(!list.is_empty());
+            let at = select.and_then(|name| list.iter().position(|n| n == name));
+            picker.set_selected(at.map(|i| i as u32).unwrap_or(0));
+            switch.set_sensitive(at.is_some());
+            *names.borrow_mut() = list;
+            filling.set(false);
+        })
+    };
+    fill(config.lut.as_deref());
     {
-        let (store, file, switch) = (store.clone(), file.clone(), switch.clone());
-        choose.connect_clicked(move |button| {
+        let (names, filling, switch, store) = (names.clone(), filling.clone(), switch.clone(), store.clone());
+        picker.connect_selected_notify(move |picker| {
+            if filling.get() { return; }
+            let Some(name) = names.borrow().get(picker.selected() as usize).cloned() else { return };
+            update_config(|c| c.studio.lut = Some(name.clone()));
+            switch.set_sensitive(true);
+            if current_config().studio.lut_on { store.toast(&format!("LUT {name}")); }
+        });
+    }
+    let add = gtk::Button::with_label("Add .cube\u{2026}");
+    add.add_css_class("small");
+    add.set_valign(gtk::Align::Center);
+    {
+        let (store, fill, switch) = (store.clone(), fill.clone(), switch.clone());
+        add.connect_clicked(move |button| {
             let window = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
             #[allow(deprecated)]
-            let dialog = gtk::FileChooserNative::new(Some("Choose a LUT"), window.as_ref(), gtk::FileChooserAction::Open, Some("Choose"), Some("Cancel"));
+            let dialog = gtk::FileChooserNative::new(Some("Add LUTs"), window.as_ref(), gtk::FileChooserAction::Open, Some("Add"), Some("Cancel"));
+            #[allow(deprecated)]
+            dialog.set_select_multiple(true);
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("3D LUT (.cube)"));
             filter.add_pattern("*.cube");
             filter.add_pattern("*.CUBE");
             #[allow(deprecated)]
             dialog.add_filter(&filter);
-            let (store, file, switch) = (store.clone(), file.clone(), switch.clone());
+            let (store, fill, switch) = (store.clone(), fill.clone(), switch.clone());
             #[allow(deprecated)]
             dialog.connect_response(move |dialog, response| {
-                if response == gtk::ResponseType::Accept {
-                    if let Some(path) = dialog.file().and_then(|f| f.path()) {
-                        match crate::lut::import(&path) {
-                            Ok(name) => {
-                                file.set_text(&name);
-                                update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
-                                switch.set_sensitive(true);
-                                switch.set_active(true);
-                                store.toast(&format!("LUT {name} is ready"));
-                            }
-                            Err(error) => store.error(&error),
-                        }
+                if response != gtk::ResponseType::Accept { return; }
+                // Several can be added at once; the last one added is picked.
+                let files = dialog.files();
+                let mut last = None;
+                for index in 0..files.n_items() {
+                    let Some(path) = files.item(index).and_downcast::<gtk::gio::File>().and_then(|f| f.path()) else { continue };
+                    match crate::lut::import(&path) {
+                        Ok(name) => last = Some(name),
+                        Err(error) => store.error(&format!("{}: {error}", path.display())),
                     }
+                }
+                if let Some(name) = last {
+                    update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
+                    fill(Some(&name));
+                    switch.set_active(true);
+                    store.toast(&format!("LUT {name} added"));
                 }
             });
             #[allow(deprecated)]
@@ -730,6 +768,29 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
             unsafe { button.set_data("lut-dialog", dialog); }
         });
     }
+    let remove = widgets::icon_button("delete", "Remove the picked LUT from the list", true);
+    remove.add_css_class("flat-icon");
+    remove.set_valign(gtk::Align::Center);
+    {
+        let (store, fill, names, picker, switch) = (store.clone(), fill.clone(), names.clone(), picker.clone(), switch.clone());
+        remove.connect_clicked(move |_| {
+            let Some(name) = names.borrow().get(picker.selected() as usize).cloned() else { return };
+            match crate::lut::remove(&name) {
+                Ok(()) => {
+                    let next = crate::lut::list().into_iter().next();
+                    update_config(|c| { c.studio.lut = next.clone(); if next.is_none() { c.studio.lut_on = false; } });
+                    if next.is_none() { switch.set_active(false); }
+                    fill(next.as_deref());
+                    store.toast(&format!("Removed {name}"));
+                }
+                Err(error) => store.error(&error),
+            }
+        });
+    }
+    let choose = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    choose.append(&picker);
+    choose.append(&remove);
+    choose.append(&add);
     section.append(&choose);
     section.append(&plain_switch_row("Use the graphics chip",
         "Apply the LUT on the GPU (Vulkan, through libplacebo) when it can: light. Otherwise the processor does it, which is heavy.",

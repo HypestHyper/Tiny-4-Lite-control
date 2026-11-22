@@ -106,6 +106,21 @@ pub fn import(path: &Path) -> Result<String, String> {
     Ok(name)
 }
 
+/// The LUTs added so far, by name, in order.
+pub fn list() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(lut_dir()).map(|entries| entries.flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.to_lowercase().ends_with(".cube")).collect()).unwrap_or_default();
+    names.sort_by_key(|n| n.to_lowercase());
+    names
+}
+
+/// Take a LUT out of the list (its kept copy; the original file is left alone).
+pub fn remove(name: &str) -> Result<(), String> {
+    if name.contains('/') { return Err("Not a LUT name.".into()); }
+    std::fs::remove_file(lut_dir().join(name)).map_err(|e| format!("Could not remove {name}: {e}"))
+}
+
 /// The kept LUT blended to `strength`, written where ffmpeg can read it; the path (with nothing in it that
 /// a filter graph would have to escape).
 pub fn prepared(name: &str, strength: u8) -> Result<PathBuf, String> {
