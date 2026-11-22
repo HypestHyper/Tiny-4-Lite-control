@@ -590,7 +590,7 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("contrast", "v4l2:contrast", Picture, "Contrast", "Separate light from dark.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("saturation", "v4l2:saturation", Picture, "Saturation", "How vivid colours look.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
-        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Rotate all colours around the colour wheel.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")])),
+        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Shift the tint of the picture, from bluish to reddish.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")])),
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,
