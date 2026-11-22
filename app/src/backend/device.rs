@@ -507,7 +507,7 @@ pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, m
         None => super::angles::raw_to_degrees(get_control(device, control)?),
     };
     // Never past the range the camera is driven over, nor past what the driver itself allows.
-    let (low, high) = if control == "pan_absolute" { super::angles::PAN_RANGE } else { super::angles::TILT_RANGE };
+    let (low, high) = if control == "pan_absolute" { super::angles::PAN_RANGE } else { super::angles::tilt_range() };
     let (low_raw, high_raw) = (min.max(super::angles::degrees_to_raw(low)), max.min(super::angles::degrees_to_raw(high)));
     let wanted = super::angles::degrees_to_raw(current_degrees + degrees as f64);
     let target = wanted.clamp(low_raw, high_raw);

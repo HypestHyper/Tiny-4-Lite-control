@@ -25,8 +25,20 @@ pub const TILT_RANGE: (f64, f64) = (-30.0, 70.0);
 
 /// Keep a pan angle inside the range the camera is driven over.
 pub fn clamp_pan(degrees: f64) -> f64 { degrees.clamp(PAN_RANGE.0, PAN_RANGE.1) }
+static TILT_LIMITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Keep tilt inside the published range (on), or allow the mechanical ends (off). Follows the
+/// `tilt_limit` setting.
+pub fn set_tilt_limit(on: bool) { TILT_LIMITED.store(on, std::sync::atomic::Ordering::Relaxed); }
+
+/// The tilt range the camera is driven over now: the published one, or the mechanical one with the
+/// limit turned off.
+pub fn tilt_range() -> (f64, f64) {
+    if TILT_LIMITED.load(std::sync::atomic::Ordering::Relaxed) { TILT_RANGE } else { (-TILT_LIMIT, TILT_LIMIT) }
+}
+
 /// Keep a tilt angle inside the range the camera is driven over.
-pub fn clamp_tilt(degrees: f64) -> f64 { degrees.clamp(TILT_RANGE.0, TILT_RANGE.1) }
+pub fn clamp_tilt(degrees: f64) -> f64 { let (low, high) = tilt_range(); degrees.clamp(low, high) }
 
 /// Within this many degrees of an end, driving further is refused.
 pub const END_MARGIN: f64 = 2.0;

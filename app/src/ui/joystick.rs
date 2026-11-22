@@ -206,25 +206,38 @@ impl Joystick {
         // A wireframe of the camera that follows the live pan and tilt, with the numbers on top.
         let model = GimbalModel::new(&state.store);
         if compact { model.widget().set_content_height(120); model.widget().set_content_width(120); }
-        let readouts = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-        readouts.set_halign(gtk::Align::Fill);
-        readouts.set_valign(gtk::Align::End);
-        readouts.set_margin_start(14);
-        readouts.set_margin_end(14);
-        readouts.set_margin_bottom(8);
+        // Pan, tilt and zoom listed small down one side of the card, clear of the model.
+        let readouts = gtk::Grid::new();
+        readouts.set_row_spacing(2);
+        readouts.set_column_spacing(8);
+        readouts.set_halign(gtk::Align::End);
+        readouts.set_valign(gtk::Align::Center);
+        readouts.set_margin_end(12);
         readouts.set_can_target(false);
-        for (name, value, align) in [("Pan", &state.pan_value, gtk::Align::Start), ("Tilt", &state.tilt_value, gtk::Align::End)] {
-            let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            cell.set_hexpand(true);
-            cell.set_halign(align);
-            cell.append(&widgets::text(name, &["small", "dim"]));
-            cell.append(value);
-            readouts.append(&cell);
+        readouts.add_css_class("model-readouts");
+        let mut values: Vec<(&str, &gtk::Label)> = vec![("Pan", &state.pan_value), ("Tilt", &state.tilt_value)];
+        // The slim window keeps the zoom in its heading.
+        if !compact { values.push(("Zoom", &state.zoom_value)); }
+        for (row, (name, value)) in values.into_iter().enumerate() {
+            let caption = widgets::text(name, &["small", "dim"]);
+            caption.set_xalign(1.0);
+            value.set_xalign(1.0);
+            readouts.attach(&caption, 0, row as i32, 1, 1);
+            readouts.attach(value, 1, row as i32, 1, 1);
         }
-        let stage = gtk::Overlay::new();
+        // Beside the model, not over it, so the numbers never cover the drawing.
+        let stage = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         stage.add_css_class("model-frame");
-        stage.set_child(Some(model.widget()));
-        stage.add_overlay(&readouts);
+        model.widget().set_hexpand(true);
+        // An empty twin of the readouts on the other side keeps the model in the middle of the card.
+        let balance = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        balance.set_margin_start(12);
+        let sides = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+        sides.add_widget(&balance);
+        sides.add_widget(&readouts);
+        stage.append(&balance);
+        stage.append(model.widget());
+        stage.append(&readouts);
         if compact {
             // Side by side: the model takes what the pad leaves.
             state.pad.set_content_width(124);
@@ -712,10 +725,10 @@ impl Joystick {
             return (pan.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP), tilt.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP));
         };
         let (sign_pan, sign_tilt) = state.axis_sign.get();
-        use backend::angles::{speed_allowance, PAN_RANGE, TILT_RANGE};
+        use backend::angles::{speed_allowance, tilt_range, PAN_RANGE};
         (
             pan * speed_allowance(at_pan, pan.signum() * sign_pan, PAN_RANGE),
-            tilt * speed_allowance(at_tilt, tilt.signum() * sign_tilt, TILT_RANGE),
+            tilt * speed_allowance(at_tilt, tilt.signum() * sign_tilt, tilt_range()),
         )
     }
 

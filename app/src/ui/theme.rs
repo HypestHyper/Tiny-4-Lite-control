@@ -426,8 +426,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 scrollbar.horizontal slider { min-width: §32§; }
 .t4 scrollbar slider:hover { background: alpha(@t_on_surface, 0.5); }
 /* The scrollbar keeps one size, hovered or not: where it takes room, changing it would move the page. */
-.t4 paned > separator { min-width: §10§; min-height: §10§; background: transparent; }
-.t4 paned > separator:hover { background: alpha(@t_primary, 0.18); border-radius: §5§; }
+.t4 paned > separator { min-width: §6§; min-height: §6§; background: transparent;
+  background-image: linear-gradient(to right, transparent §2§, alpha(@t_outline, 0.35) §2§, alpha(@t_outline, 0.35) §4§, transparent §4§); }
+.t4 paned > separator:hover { background-image: linear-gradient(to right, transparent §2§, @t_primary §2§, @t_primary §4§, transparent §4§); }
 
 /* Toast */
 .toast { background: @t_inverse_surface; color: @t_inverse_on_surface; border-radius: §14§; padding: §12§ §18§; box-shadow: 0 6px 20px alpha(#000000, 0.45); }
@@ -459,6 +460,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 .compact button.small { min-height: §24§; padding: 0 §6§; font-size: ¶12¶; border-radius: §12§; }
 .t4 .compact button.round.small { min-height: §26§; min-width: §26§; padding: 0; }
 .readout { font-size: ¶20¶; font-weight: 700; font-feature-settings: "tnum"; min-width: §72§; }
+.t4 .model-readouts .readout, .t4 .model-readouts .setting-value { font-size: ¶14¶; font-weight: 700; min-width: §40§; color: @t_on_surface; }
 
 /* Preset list items */
 .list-item { background: @t_surface_high; border-radius: §20§; padding: §12§ §16§; }

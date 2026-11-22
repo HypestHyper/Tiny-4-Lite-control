@@ -72,7 +72,8 @@ impl PreviewHub {
             child: RefCell::default(),
             generation: Cell::new(0),
             running: Cell::new(false),
-            enabled: Cell::new(!current_config().preview_paused),
+            // Only running from the start when asked for, and then only if it was not left paused.
+            enabled: Cell::new({ let c = current_config(); c.preview_on_start && !c.preview_paused }),
             mode: RefCell::default(),
             target_width: Arc::new(AtomicU32::new(640)),
             stop_timer: RefCell::default(),
@@ -376,7 +377,11 @@ impl PreviewView {
         }
         let restart_hub = hub.clone();
         retry.connect_clicked(move |_| restart_hub.restart());
-        if !hub.is_enabled() { inner.show_message("Preview paused", "pause_circle"); }
+        if !hub.is_enabled() {
+            // Paused with its button, or simply not started yet when the app opened.
+            if current_config().preview_paused { inner.show_message("Preview paused", "pause_circle"); }
+            else { inner.show_message("Press play to start the preview", "play_arrow"); }
+        }
         hub.0.views.borrow_mut().push(Rc::downgrade(&inner));
         if let Some(texture) = hub.0.last_texture.borrow().as_ref() {
             inner.picture.set_paintable(Some(texture));

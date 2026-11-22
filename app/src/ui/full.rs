@@ -108,8 +108,8 @@ impl FullWindow {
         let joystick = Joystick::new(&store);
         let stage = gtk::Box::new(gtk::Orientation::Vertical, 16);
         stage.set_size_request(320, -1);
-        // The preview and the gimbal scroll together when the window is short, so the window can
-        // always be made smaller than they are.
+        // The camera controls scroll when the window is short, so the window can always be made smaller
+        // than they are; the preview stays pinned above them.
         let stage_scroller = gtk::ScrolledWindow::new();
         stage_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         stage_scroller.set_propagate_natural_height(false);
@@ -178,8 +178,16 @@ impl FullWindow {
         gimbal_card.add_css_class("card");
         gimbal_card.set_vexpand(true);
         gimbal_card.append(&joystick.widget());
-        stage.append(&preview_card);
         stage.append(&gimbal_card);
+        // The preview is pinned above whatever scrolls: in the wide layout above the camera controls, and
+        // in the stacked one above the whole page.
+        let preview_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        preview_slot.append(&preview_card);
+        let left = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        left.set_size_request(320, -1);
+        left.append(&preview_slot);
+        left.append(&stage_scroller);
+        stage_scroller.set_vexpand(true);
 
         // ── Settings (right) ──
         let rows: Rows = Rc::default();
@@ -197,6 +205,7 @@ impl FullWindow {
                         // Extra cards that are not registry settings.
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
+                        built.masonry.add(&panels::gimbal_limits_card(), 2);
                         built.masonry.add(&panels::sleep_timer_card(), 5);
                         built.masonry.add(&panels::service_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
@@ -339,12 +348,13 @@ impl FullWindow {
         paned.set_wide_handle(false);
         paned.set_resize_start_child(false);
         paned.set_resize_end_child(true);
-        paned.set_shrink_start_child(true);
+        // The left panel never gets narrower than its contents, so nothing in it is cut off.
+        paned.set_shrink_start_child(false);
         paned.set_shrink_end_child(true);
         paned.set_margin_start(20);
         paned.set_margin_end(14);
         paned.set_margin_bottom(20);
-        paned.set_start_child(Some(&stage_scroller));
+        paned.set_start_child(Some(&left));
         paned.set_end_child(Some(&right));
         let stacked = Rc::new(Cell::new(false));
         paned.set_position(if current_config().split_position >= 320 { current_config().split_position } else { 420 });
@@ -356,9 +366,17 @@ impl FullWindow {
         let outer_scroll = gtk::ScrolledWindow::new();
         outer_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         outer_scroll.set_child(Some(&outer_box));
+        outer_scroll.set_vexpand(true);
+        // Stacked: the pinned preview, then the page that scrolls.
+        let stacked_column = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let stacked_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        stacked_slot.set_margin_start(20);
+        stacked_slot.set_margin_end(14);
+        stacked_column.append(&stacked_slot);
+        stacked_column.append(&outer_scroll);
         let layout_stack = gtk::Stack::new();
         layout_stack.add_named(&paned, Some("wide"));
-        layout_stack.add_named(&outer_scroll, Some("stacked"));
+        layout_stack.add_named(&stacked_column, Some("stacked"));
         layout_stack.set_visible_child_name("wide");
 
         let dialogs = Dialogs::new();
@@ -381,6 +399,7 @@ impl FullWindow {
         let apply_layout = {
             let (paned, stage, stage_scroller, right, preview_card, gimbal_card, stacked, outer_box, layout_stack, stack, scrollers, popped) =
                 (paned.clone(), stage.clone(), stage_scroller.clone(), right.clone(), preview_card.clone(), gimbal_card.clone(), stacked.clone(), outer_box.clone(), layout_stack.clone(), stack.clone(), page_scrollers.clone(), popped.clone());
+            let (left, preview_slot, stacked_slot) = (left.clone(), preview_slot.clone(), stacked_slot.clone());
             Rc::new(move |mode: u8, width: i32, first: bool| {
                 let now_stacked = mode != 0;
                 if first || now_stacked != stacked.get() {
@@ -390,13 +409,17 @@ impl FullWindow {
                         stage_scroller.set_child(None::<&gtk::Widget>);
                         if stage.parent().is_none() { outer_box.append(&stage); }
                         if right.parent().is_none() { outer_box.append(&right); }
+                        if preview_card.parent().as_ref() == Some(preview_slot.upcast_ref()) { preview_slot.remove(&preview_card); }
+                        if preview_card.parent().is_none() { stacked_slot.append(&preview_card); }
                         layout_stack.set_visible_child_name("stacked");
                     } else {
                         for widget in [stage.upcast_ref::<gtk::Widget>(), right.upcast_ref()] {
                             if widget.parent().as_ref() == Some(outer_box.upcast_ref()) { outer_box.remove(widget); }
                         }
+                        if preview_card.parent().as_ref() == Some(stacked_slot.upcast_ref()) { stacked_slot.remove(&preview_card); }
+                        if preview_card.parent().is_none() { preview_slot.append(&preview_card); }
                         stage_scroller.set_child(Some(&stage));
-                        paned.set_start_child(Some(&stage_scroller));
+                        paned.set_start_child(Some(&left));
                         paned.set_end_child(Some(&right));
                         let saved = current_config().split_position;
                         paned.set_position(if saved >= 320 { saved } else { 420 });
@@ -426,6 +449,8 @@ impl FullWindow {
                     stage.set_size_request(320, -1);
                     stage.set_halign(gtk::Align::Fill);
                     preview_card.set_hexpand(false);
+                    preview_card.set_halign(gtk::Align::Fill);
+                    preview_card.set_size_request(-1, -1);
                     gimbal_card.set_hexpand(false);
                     gimbal_card.set_vexpand(true);
                 } else {
@@ -434,6 +459,9 @@ impl FullWindow {
                     stage.set_size_request((width - MARGINS).clamp(300, 560), -1);
                     stage.set_halign(gtk::Align::Center);
                     preview_card.set_hexpand(true);
+                    // The pinned preview is as wide as the column under it, so it does not fill the height.
+                    preview_card.set_halign(gtk::Align::Center);
+                    preview_card.set_size_request((width - MARGINS).clamp(300, 440), -1);
                     gimbal_card.set_hexpand(true);
                     gimbal_card.set_vexpand(false);
                 }
@@ -514,6 +542,7 @@ impl FullWindow {
                     paned.set_position(furthest);
                     return;
                 }
+                if position < 320 { paned.set_position(320); return; }
                 if position >= 320 { glib::idle_add_local_once(move || update_config(|c| c.split_position = position)); }
             }
         });

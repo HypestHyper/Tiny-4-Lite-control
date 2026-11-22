@@ -846,6 +846,41 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
     mirror.append(&titles);
     mirror.append(&follow);
     body.append(&mirror);
+
+    body.append(&plain_switch_row("Start the preview when the app opens",
+        "Off, the preview waits for its play button, so opening the app does not turn the camera on.",
+        current_config().preview_on_start,
+        |on| update_config(|c| c.preview_on_start = on)));
+    card
+}
+
+/// A switch row with a title and a line under it.
+fn plain_switch_row(title: &str, summary: &str, active: bool, changed: impl Fn(bool) + 'static) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text(title, &["setting-label"]));
+    let line = widgets::text(summary, &["setting-summary"]);
+    line.set_wrap(true);
+    line.set_xalign(0.0);
+    titles.append(&line);
+    let switch = gtk::Switch::new();
+    switch.set_valign(gtk::Align::Center);
+    switch.set_active(active);
+    widgets::label_accessible(&switch, title);
+    switch.connect_active_notify(move |sw| changed(sw.is_active()));
+    row.append(&titles);
+    row.append(&switch);
+    row
+}
+
+/// Limits on where the joystick, the steps and presets may turn the camera.
+pub fn gimbal_limits_card() -> gtk::Box {
+    let (card, body) = card("Gimbal limits", "open_with", "How far the camera may be turned from this app.");
+    body.append(&plain_switch_row("Limit tilt",
+        "Keep tilt between 30° down and 70° up, OBSBOT's published range. Turn off to reach the ends of the mechanism; the camera stops itself there.",
+        current_config().tilt_limit,
+        |on| update_config(|c| c.tilt_limit = on)));
     card
 }
 

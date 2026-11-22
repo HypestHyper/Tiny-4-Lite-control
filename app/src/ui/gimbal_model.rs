@@ -416,9 +416,9 @@ pub fn snap_yaw(yaw: f64) -> f64 {
 
 /// At this tilt and below the camera is going to or in its sleeping pose, looking at nothing, so the
 /// view cone goes.
-pub const SLEEP_TILT: f64 = -30.0;
+pub const SLEEP_TILT: f64 = -32.0;
 /// The cone fades in over this many degrees above the sleeping pose (and out again going down).
-pub const CONE_FADE_DEGREES: f64 = 4.0;
+pub const CONE_FADE_DEGREES: f64 = 1.5;
 
 /// How much of the view cone to draw, 0 to 1, at a tilt: none at the sleeping tilt or lower, all of it
 /// a few degrees above, and a smooth fade between.
@@ -707,10 +707,11 @@ mod tests {
     #[test]
     fn the_view_cone_fades_out_towards_the_sleeping_pose_and_back() {
         assert_eq!(cone_visibility(-60.0), 0.0);
-        assert_eq!(cone_visibility(-30.0), 0.0);
-        assert_eq!(cone_visibility(-26.0), 1.0);
+        assert_eq!(cone_visibility(-32.0), 0.0);
+        // Still all there at the -30 end of the driven range.
+        assert_eq!(cone_visibility(-30.0), 1.0);
         assert_eq!(cone_visibility(0.0), 1.0);
-        assert!((cone_visibility(-28.0) - 0.5).abs() < 1e-9);
+        assert!((cone_visibility(-31.25) - 0.5).abs() < 1e-9);
         // Smooth and one-way: it never dips as the tilt rises through the fade.
         let mut last = 0.0;
         for tenth in -320..=-250 {

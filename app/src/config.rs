@@ -95,6 +95,12 @@ pub struct AppConfig {
     pub joystick_follows_mirror: bool,
     /// The live preview was paused with its button; it stays paused until it is resumed.
     pub preview_paused: bool,
+    /// Start the live preview when the app opens. Off, it waits for its play button, so opening the app
+    /// does not turn the camera on.
+    pub preview_on_start: bool,
+    /// Keep the gimbal inside OBSBOT's published tilt range (30° down to 70° up). Off, it can be driven to
+    /// the mechanical ends.
+    pub tilt_limit: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,6 +189,8 @@ impl Default for AppConfig {
             model_pan_reversed: false,
             joystick_follows_mirror: true,
             preview_paused: false,
+            preview_on_start: false,
+            tilt_limit: true,
         }
     }
 }
