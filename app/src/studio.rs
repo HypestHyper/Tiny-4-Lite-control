@@ -74,11 +74,12 @@ pub const OUTPUT_FORMAT: &str = "yuyv422";
 pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>) -> Vec<String> {
     let mut args = base_args();
     if let Some((route, _)) = lut { args.extend(crate::lut::hw_args(route)); }
-    // Low delay: no input buffering or probing (the format is known), the camera's frames unpacked on one
+    // Low delay (only options every ffmpeg takes for an input: newer ones refuse -thread_queue_size here):
+    // no input buffering or probing (the format is known), the camera's frames unpacked on one
     // core (unpacking spread over cores holds a frame back per core), and frames passed on as they come
     // rather than re-timed (re-timing duplicates or drops frames, and catching up builds lag).
     args.extend(["-fflags".into(), "nobuffer".into(), "-flags".into(), "low_delay".into(), "-probesize".into(), "32".into(),
-        "-analyzeduration".into(), "0".into(), "-thread_queue_size".into(), "2".into(), "-threads".into(), "1".into()]);
+        "-analyzeduration".into(), "0".into(), "-threads".into(), "1".into()]);
     args.extend([
         "-f".into(), "v4l2".into(), "-input_format".into(), format.input.clone(),
         "-video_size".into(), format!("{}x{}", format.width, format.height),
@@ -290,7 +291,7 @@ impl Studio {
                 let (lived, lut) = (running.started.elapsed(), running.lut);
                 self.running = None;
                 let said = last_lines(&log_path(), 3);
-                if lut == Some(crate::lut::Route::Gpu) {
+                if lut == Some(crate::lut::Route::Gpu) && crate::lut::blames_gpu(&said) {
                     // The graphics chip did not manage it on the real picture: the processor from now on.
                     self.lut_gpu = Some(Err(format!("it stopped on the real picture: {said}")));
                 } else if lived < Duration::from_secs(5) || !status.success() {

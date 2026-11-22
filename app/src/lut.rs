@@ -216,6 +216,13 @@ pub fn probe_gpu() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether what ffmpeg said when it stopped is about the graphics chip (so the LUT should move to the
+/// processor), rather than something else that would stop either route.
+pub fn blames_gpu(said: &str) -> bool {
+    let said = said.to_lowercase();
+    ["vulkan", "libplacebo", "placebo", "hwupload", "hwdownload", "hw_device", "hwdevice", "hardware device", "vk_", "gpu"].iter().any(|k| said.contains(k))
+}
+
 /// Whether a LUT looks made for flat log footage (from a cinema camera) rather than a normal picture, by
 /// its name and title. Such a LUT makes a webcam picture darker and more contrasty.
 pub fn looks_like_log(name: &str) -> bool {
@@ -263,6 +270,13 @@ mod tests {
         let plain = test_brightness(Route::Cpu, "format=yuyv422").unwrap();
         let through = test_brightness(Route::Cpu, &filter(Route::Cpu, &test, "yuyv422")).unwrap();
         assert!((through - plain).abs() / plain < 0.02, "{plain} -> {through}");
+    }
+
+    #[test]
+    fn only_a_graphics_chip_problem_moves_the_lut_to_the_processor() {
+        assert!(blames_gpu("[libplacebo @ 0x55] Failed initializing vulkan device"));
+        assert!(!blames_gpu("Option thread_queue_size (set the maximum number of queued packets per stream on the muxer) cannot be applied to input url /dev/video0"));
+        assert!(!blames_gpu("/dev/video0: Device or resource busy"));
     }
 
     #[test]
