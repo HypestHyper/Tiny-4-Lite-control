@@ -212,6 +212,9 @@ pub struct Status {
     #[serde(default)]
     #[serde(alias = "denoise")]
     pub studio: Option<crate::studio::Report>,
+    /// The version the service runs, so the window can tell when it is an older one.
+    #[serde(default)]
+    pub version: String,
 }
 
 /// The running service's status, if one is running: for the window to show.
@@ -361,7 +364,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let (auto, minutes, on_shutdown, on_suspend) = policy(&config);
     let mut brain = Brain::new(auto, minutes);
     let mut stamp = config_stamp();
-    let mut status = Status { pid: std::process::id(), started: now_unix(), last_event: "Started.".into(), last_event_at: now_unix(), ..Status::default() };
+    let mut status = Status { pid: std::process::id(), started: now_unix(), last_event: "Started.".into(), last_event_at: now_unix(), version: crate::cli::build_label(), ..Status::default() };
     let words = |on: bool| if on { "on" } else { "off" };
     log(&format!("Started. Restore on connect: {}. Idle sleep: {}. Sleep at shutdown: {}. Sleep at suspend: {}.",
         words(config.apply_on_connect), if auto { format!("after {minutes} min") } else { "off".into() }, words(on_shutdown), words(on_suspend)));

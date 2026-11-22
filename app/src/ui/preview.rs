@@ -618,7 +618,9 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
     let mut buffer = Vec::<u8>::new();
     let mut chunk = [0u8; 64 * 1024];
     let raw_frame_size = mode.width as usize * mode.height as usize * 2;
-    let min_gap = Duration::from_millis(1000 / MAX_FPS);
+    // Frames of a 30 fps stream arrive about 33 ms apart, a little early or late; a gap of a full 33 ms
+    // threw away every early one. Three quarters of it shows every frame at 30 fps and every other at 60.
+    let min_gap = Duration::from_millis(1000 / MAX_FPS * 3 / 4);
     let mut last_decode = Instant::now() - min_gap;
     loop {
         let count = match reader.read(&mut chunk) { Ok(0) | Err(_) => return, Ok(count) => count };

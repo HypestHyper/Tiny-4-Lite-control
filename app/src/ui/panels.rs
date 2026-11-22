@@ -1010,18 +1010,20 @@ pub fn service_card(store: &Store) -> gtk::Box {
     install.set_tooltip_text(Some("Opens a terminal that checks what is needed, installs it (asking for your password) and installs and starts the service"));
     let start = gtk::Button::with_label("Start");
     let stop = gtk::Button::with_label("Stop");
+    let restart = gtk::Button::with_label("Restart");
+    restart.set_tooltip_text(Some("Stop the service and start it again, from the installed copy"));
     let remove = gtk::Button::with_label("Remove");
     remove.add_css_class("danger");
     let install_missing = gtk::Button::with_label("Install missing programs…");
-    for button in [&install, &start, &stop, &remove, &install_missing] { button.add_css_class("small"); buttons.append(button); }
+    for button in [&install, &start, &stop, &restart, &remove, &install_missing] { button.add_css_class("small"); buttons.append(button); }
     body.append(&buttons);
 
     let refresh: Rc<dyn Fn()> = {
-        let (status, needs, install, start, stop, remove, install_missing) =
-            (status.downgrade(), needs.downgrade(), install.downgrade(), start.downgrade(), stop.downgrade(), remove.downgrade(), install_missing.downgrade());
+        let (status, needs, install, start, stop, remove, install_missing, restart) =
+            (status.downgrade(), needs.downgrade(), install.downgrade(), start.downgrade(), stop.downgrade(), remove.downgrade(), install_missing.downgrade(), restart.downgrade());
         Rc::new(move || {
-            let (Some(status), Some(needs), Some(install), Some(start), Some(stop), Some(remove), Some(install_missing)) =
-                (status.upgrade(), needs.upgrade(), install.upgrade(), start.upgrade(), stop.upgrade(), remove.upgrade(), install_missing.upgrade()) else { return };
+            let (Some(status), Some(needs), Some(install), Some(start), Some(stop), Some(remove), Some(install_missing), Some(restart)) =
+                (status.upgrade(), needs.upgrade(), install.upgrade(), start.upgrade(), stop.upgrade(), remove.upgrade(), install_missing.upgrade(), restart.upgrade()) else { return };
             let running = crate::service::running_status();
             let installed = setup::installed();
             let mut lines = Vec::new();
@@ -1029,6 +1031,11 @@ pub fn service_card(store: &Store) -> gtk::Box {
                 Some(s) => {
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                     lines.push(format!("Running · process {} · up {}", s.pid, how_long(now.saturating_sub(s.started))));
+                    // A service started from an older file keeps running it until it is restarted.
+                    if s.version != crate::cli::build_label() {
+                        let theirs = if s.version.is_empty() { "an older version".to_string() } else { format!("version {}", s.version) };
+                        lines.push(format!("It runs {theirs}, not this one ({}): press Restart to run this one.", crate::cli::build_label()));
+                    }
                     lines.push(format!("Camera: {}", s.camera.as_deref().unwrap_or("not connected")));
                     lines.push(format!("Last: {} ({} ago)", s.last_event, how_long(now.saturating_sub(s.last_event_at))));
                 }
@@ -1044,6 +1051,9 @@ pub fn service_card(store: &Store) -> gtk::Box {
             start.set_visible(installed.is_some());
             // One started by hand can be stopped here too.
             stop.set_visible(installed.is_some() || running.is_some());
+            restart.set_visible(running.is_some());
+            // Lit when the running service is an older version than this window.
+            if running.as_ref().is_some_and(|s| s.version != crate::cli::build_label()) { restart.add_css_class("filled"); } else { restart.remove_css_class("filled"); }
             remove.set_visible(installed.is_some());
             start.set_sensitive(running.is_none());
             stop.set_sensitive(running.is_some());
@@ -1087,6 +1097,7 @@ pub fn service_card(store: &Store) -> gtk::Box {
     };
     { let act = act.clone(); start.connect_clicked(move |_| act(setup::start)); }
     { let act = act.clone(); stop.connect_clicked(move |_| act(setup::stop)); }
+    { let act = act.clone(); restart.connect_clicked(move |_| act(setup::restart)); }
     { let act = act.clone(); remove.connect_clicked(move |_| act(setup::remove)); }
     let terminal = |store: Store, arguments: &'static [&'static str]| move |_: &gtk::Button| {
         if let Err(error) = setup::run_in_terminal(arguments) { store.error(&error); }
