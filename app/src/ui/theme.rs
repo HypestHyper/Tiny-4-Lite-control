@@ -303,6 +303,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.preset { min-width: §38§; min-height: §38§; padding: 0; border-radius: §10§; background: transparent; border: 2px solid @t_outline; font-weight: 700; color: @t_on_surface; }
 .t4 button.preset:hover { background: alpha(@t_primary, 0.14); }
 .t4 button.preset:disabled { opacity: 0.4; }
+.t4 button.preset.worded { padding: 0 §8§; font-size: ¶11¶; border-radius: §12§; }
 .t4 button.preset.empty { border-style: dashed; color: @t_on_surface_variant; opacity: 0.7; }
 .t4 button.preset.memory { border-color: @t_tertiary; }
 .t4 .quick-chooser button.flat-item { background: transparent; border-radius: §8§; padding: §6§ §10§; min-height: 0; }

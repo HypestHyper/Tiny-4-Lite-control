@@ -121,6 +121,8 @@ pub struct AppConfig {
 pub struct QuickPreset {
     pub app: Option<String>,
     pub camera: Option<u8>,
+    /// What the button shows instead of its number: a short word, a letter or an emoji (up to 8 characters).
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

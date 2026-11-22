@@ -93,6 +93,9 @@ struct State {
     save_timer: RefCell<Option<glib::SourceId>>,
 }
 
+/// The longest label a shortcut button takes.
+const LABEL_MAX: usize = 8;
+
 /// How many shortcut buttons sit beside the joystick, half on each side.
 const QUICK_COUNT: usize = 6;
 
@@ -116,17 +119,38 @@ fn quick_slot(index: usize) -> Option<QuickTarget> {
 
 /// Save what shortcut `index` does. The first choice turns the defaults into a list of their own.
 fn set_quick_slot(index: usize, target: Option<QuickTarget>) {
+    update_quick_slots(|slots| {
+        let label = slots[index].label.take();
+        slots[index] = match target {
+            Some(QuickTarget::App(name)) => crate::config::QuickPreset { app: Some(name), camera: None, label },
+            Some(QuickTarget::Camera(slot)) => crate::config::QuickPreset { app: None, camera: Some(slot), label },
+            None => crate::config::QuickPreset { label, ..Default::default() },
+        };
+    });
+}
+
+/// Change the saved shortcuts. The first change turns the defaults (the first app presets) into a list of
+/// their own.
+fn update_quick_slots(change: impl FnOnce(&mut Vec<crate::config::QuickPreset>)) {
     update_config(|c| {
         let mut slots = c.quick_presets.clone().unwrap_or_else(|| (0..QUICK_COUNT).map(|i| crate::config::QuickPreset {
-            app: c.presets.get(i).map(|p| p.name.clone()), camera: None }).collect());
+            app: c.presets.get(i).map(|p| p.name.clone()), ..Default::default() }).collect());
         slots.resize(QUICK_COUNT, crate::config::QuickPreset::default());
-        slots[index] = match target {
-            Some(QuickTarget::App(name)) => crate::config::QuickPreset { app: Some(name), camera: None },
-            Some(QuickTarget::Camera(slot)) => crate::config::QuickPreset { app: None, camera: Some(slot) },
-            None => crate::config::QuickPreset::default(),
-        };
+        change(&mut slots);
         c.quick_presets = Some(slots);
     });
+}
+
+/// The label of shortcut `index`: its own, or its number.
+fn quick_label(index: usize) -> String {
+    current_config().quick_presets.as_ref().and_then(|s| s.get(index)).and_then(|s| s.label.as_deref().and_then(clean_label))
+        .unwrap_or_else(|| (index + 1).to_string())
+}
+
+/// Keep a label to a short word (whole characters, so an emoji or an accented letter is not cut).
+fn clean_label(text: &str) -> Option<String> {
+    let text: String = text.trim().chars().take(LABEL_MAX).collect();
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// A small menu beside a shortcut button: the app presets, the camera's memory positions, or empty.
@@ -137,6 +161,27 @@ fn open_quick_chooser(button: &gtk::Button, index: usize, store: &Store, camera_
     let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
     list.set_margin_top(6); list.set_margin_bottom(6); list.set_margin_start(6); list.set_margin_end(6);
     list.append(&widgets::line(&format!("Shortcut {}", index + 1), &["setting-label"]));
+    // What the button shows: a short word, a letter or an emoji, or its number when left empty.
+    let label_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    label_row.append(&widgets::line("Label", &["small", "dim"]));
+    let label = gtk::Entry::new();
+    label.set_max_length(LABEL_MAX as i32);
+    label.set_width_chars(9);
+    label.set_placeholder_text(Some(&(index + 1).to_string()));
+    label.set_text(&current_config().quick_presets.as_ref().and_then(|s| s.get(index)).and_then(|s| s.label.clone()).unwrap_or_default());
+    label.set_tooltip_text(Some("A short word, a letter or an emoji (up to 8 characters). Empty shows the number."));
+    widgets::label_accessible(&label, "Button label");
+    {
+        let refresh = refresh.clone();
+        label.connect_changed(move |entry| {
+            let text = clean_label(&entry.text());
+            update_quick_slots(|slots| slots[index].label = text);
+            refresh();
+        });
+    }
+    { let popover = popover.clone(); label.connect_activate(move |_| popover.popdown()); }
+    label_row.append(&label);
+    list.append(&label_row);
     let current = quick_slot(index);
     let choice = |label: &str, target: Option<QuickTarget>| {
         let item = gtk::Button::with_label(label);
@@ -429,6 +474,8 @@ impl Joystick {
             let side = |first: usize| {
                 let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
                 column.set_valign(gtk::Align::Center);
+                // Every button in a column as wide as the widest, so labelled ones line up.
+                column.set_homogeneous(true);
                 for button in &buttons[first..first + QUICK_COUNT / 2] { column.append(button); }
                 column
             };
@@ -512,6 +559,10 @@ impl Joystick {
                         }, true),
                         None => ("Empty".to_string(), false),
                     };
+                    let text = quick_label(index);
+                    // A word makes the button a pill with smaller text; a letter or a number keeps it square.
+                    if text.chars().count() > 2 { button.add_css_class("worded"); } else { button.remove_css_class("worded"); }
+                    button.set_label(&text);
                     if set { button.remove_css_class("empty"); } else { button.add_css_class("empty"); }
                     if matches!(quick_slot(index), Some(QuickTarget::Camera(_))) { button.add_css_class("memory"); } else { button.remove_css_class("memory"); }
                     button.set_tooltip_text(Some(&format!("{tip}\nRight-click (or press and hold) to choose what this button does.")));
@@ -1189,6 +1240,19 @@ impl Joystick {
             cr.arc(px, py, 5.0, 0.0, tau);
             let _ = cr.fill();
         });
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::clean_label;
+
+    #[test]
+    fn labels_are_trimmed_to_a_short_word_without_cutting_characters() {
+        assert_eq!(clean_label("  Desk "), Some("Desk".into()));
+        assert_eq!(clean_label("Whiteboard"), Some("Whiteboa".into()));
+        assert_eq!(clean_label("🎥🎥🎥🎥🎥🎥🎥🎥🎥"), Some("🎥🎥🎥🎥🎥🎥🎥🎥".into()));
+        assert_eq!(clean_label("   "), None);
     }
 }
 
