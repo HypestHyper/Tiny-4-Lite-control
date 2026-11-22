@@ -154,6 +154,8 @@ impl PreviewHub {
         let mut i = 0;
         self.0.source_listeners.borrow_mut().retain(|_| { let k = keep.get(i).copied().unwrap_or(true); i += 1; k });
         self.0.retries.set(0);
+        // Back to the camera: ask the service to let go of it now, not after its usual pause.
+        if !on { crate::denoise::request_release(); }
         if self.0.running.get() { self.restart(); } else { self.update_demand(); }
     }
 
@@ -356,7 +358,7 @@ impl PreviewHub {
             // The Studio camera always sends raw 4:2:0 at the camera's own size. It only answers questions
             // while something writes to it (and the writer changes as the preview opens it), so the size
             // comes from the camera itself.
-            Some(node) => (node.clone(), video::current_mode(device).map(|mode| VideoMode { pixel_format: "YU12".into(), ..mode })
+            Some(node) => (node.clone(), video::current_mode(device).map(|mode| VideoMode { pixel_format: "YUYV".into(), ..mode })
                 .or_else(|| video::current_format(node))),
             None => (device.to_string(), video::current_mode(device)),
         }, move |(node, mode)| {
@@ -760,6 +762,28 @@ fn decode_jpeg(data: &[u8], target_width: u32) -> Option<Frame> {
     Some(Frame { width: width as i32, height: height as i32, rgb })
 }
 
+/// YUYV to RGB at half size each way, averaging each 2 × 2 block (one YUYV pair holds two pixels across, so
+/// a block is two pairs, one above the other).
+fn decode_yuyv_half(frame: &[u8], width: usize, height: usize) -> Frame {
+    let (out_w, out_h) = (width / 2, height / 2);
+    let stride = width * 2;
+    let mut rgb = Vec::with_capacity(out_w * out_h * 3);
+    for y in 0..out_h {
+        let (top, bottom) = (&frame[(y * 2) * stride..(y * 2 + 1) * stride], &frame[(y * 2 + 1) * stride..(y * 2 + 2) * stride]);
+        for x in 0..out_w {
+            let (a, b) = (&top[x * 4..x * 4 + 4], &bottom[x * 4..x * 4 + 4]);
+            let luma = (i32::from(a[0]) + i32::from(a[2]) + i32::from(b[0]) + i32::from(b[2]) + 2) / 4;
+            let u = (i32::from(a[1]) + i32::from(b[1]) + 1) / 2 - 128;
+            let v = (i32::from(a[3]) + i32::from(b[3]) + 1) / 2 - 128;
+            let c = (luma - 16).max(0);
+            rgb.push(((298 * c + 409 * v + 128) >> 8).clamp(0, 255) as u8);
+            rgb.push(((298 * c - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8);
+            rgb.push(((298 * c + 516 * u + 128) >> 8).clamp(0, 255) as u8);
+        }
+    }
+    Frame { width: out_w as i32, height: out_h as i32, rgb }
+}
+
 /// Raw 4:2:0 to RGB, at half size each way: plenty for a preview, and a quarter of the work.
 fn decode_i420(frame: &[u8], mode: &VideoMode) -> Option<Frame> {
     let (w, h) = (mode.width as usize, mode.height as usize);
@@ -786,6 +810,9 @@ fn decode_yuyv(frame: &[u8], mode: &VideoMode) -> Option<Frame> {
     if mode.width % 2 != 0 { return None; }
     let (width, height) = (mode.width as usize, mode.height as usize);
     if frame.len() < width * height * 2 { return None; }
+    // A big picture (the Studio camera at 1080p or 4K) is shown at half size, each pixel the average of
+    // the four it covers: smooth edges, a quarter of the work.
+    if width >= 1280 && height % 2 == 0 { return Some(decode_yuyv_half(frame, width, height)); }
     let mut rgb = Vec::with_capacity(width * height * 3);
     for pair in frame[..width * height * 2].chunks_exact(4) {
         let u = i32::from(pair[1]) - 128;
@@ -826,6 +853,17 @@ mod peaking_tests {
     }
 
     fn green(f: &Frame) -> usize { f.rgb.chunks_exact(3).filter(|p| *p == PEAK_COLOUR).count() }
+
+    #[test]
+    fn a_big_yuyv_picture_is_shown_at_half_size_with_averaged_pixels() {
+        let mode = VideoMode { width: 1280, height: 2, pixel_format: "YUYV".into(), frame_rate_milli: 30_000 };
+        // Alternating black and white columns, neutral colour: averaged to grey, not jagged.
+        let mut raw = Vec::new();
+        for _ in 0..2 { for _ in 0..640 { raw.extend([16u8, 128, 235, 128]); } }
+        let frame = decode_yuyv(&raw, &mode).expect("a frame");
+        assert_eq!((frame.width, frame.height), (640, 1));
+        assert!(frame.rgb.iter().all(|v| (120..=136).contains(v)), "{:?}", &frame.rgb[..6]);
+    }
 
     #[test]
     fn raw_4_2_0_from_the_studio_camera_is_shown_at_half_size() {

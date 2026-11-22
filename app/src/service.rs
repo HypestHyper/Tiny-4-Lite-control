@@ -380,7 +380,8 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // Looking around takes a round of slices: the wait is cut into small ones so a stop is answered
         // within a fifth of a second.
-        if slice % ROUND_SLICES == 0 {
+        // A round every two seconds, or at once when the app's preview lets go of the Studio camera.
+        if slice % ROUND_SLICES == 0 || crate::denoise::release_requested() {
             // Settings edited in the window take effect at once, without restarting the service.
             let now_stamp = config_stamp();
             if now_stamp != stamp {
