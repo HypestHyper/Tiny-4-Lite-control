@@ -417,6 +417,30 @@ pub fn snap_yaw(yaw: f64) -> f64 {
 /// At this tilt and below the camera is going to or in its sleeping pose, looking at nothing, so the
 /// view cone goes.
 pub const SLEEP_TILT: f64 = -32.0;
+
+/// The drawing area's height, and the narrowest it gets: the model's own size at its fixed scale, with a
+/// little room each side.
+const MODEL_HEIGHT: i32 = 185;
+const MIN_WIDTH: i32 = 230;
+/// Pixels per model unit at the full height.
+const FIXED_SCALE: f64 = 185.0 / 3.15;
+/// The view cone ends this far inside the edge of the drawing.
+const CONE_MARGIN: f64 = 6.0;
+
+/// How much of the cone fits: the largest share (up to all of it) of each line from the lens that stays
+/// inside the box, the same for every line so the cone keeps its shape.
+pub fn cone_fit(apex: (f64, f64), points: &[(f64, f64)], bounds: (f64, f64, f64, f64)) -> f64 {
+    let (left, top, right, bottom) = bounds;
+    let mut fit: f64 = 1.0;
+    for &(x, y) in points {
+        let (dx, dy) = (x - apex.0, y - apex.1);
+        if dx > 0.0 && x > right { fit = fit.min((right - apex.0) / dx); }
+        if dx < 0.0 && x < left { fit = fit.min((left - apex.0) / dx); }
+        if dy > 0.0 && y > bottom { fit = fit.min((bottom - apex.1) / dy); }
+        if dy < 0.0 && y < top { fit = fit.min((top - apex.1) / dy); }
+    }
+    fit.clamp(0.0, 1.0)
+}
 /// The cone fades in over this many degrees above the sleeping pose (and out again going down).
 pub const CONE_FADE_DEGREES: f64 = 1.5;
 
@@ -475,8 +499,8 @@ impl GimbalModel {
     pub fn new(store: &Store) -> GimbalModel {
         let area = gtk::DrawingArea::new();
         area.add_css_class("model");
-        area.set_content_height(185);
-        area.set_content_width(200);
+        area.set_content_height(MODEL_HEIGHT);
+        area.set_content_width(MIN_WIDTH);
         area.set_hexpand(true);
         area.set_accessible_role(gtk::AccessibleRole::Img);
         area.update_property(&[gtk::accessible::Property::Label("Gimbal model showing where the camera points")]);
@@ -602,7 +626,9 @@ impl GimbalModel {
         let state = &self.0;
         let known = state.target.get().is_some();
         let (pan, tilt) = state.shown.get();
-        let scale = (f64::from(height) / 3.15).min(f64::from(width) / 3.9);
+        // One size always: the model never shrinks with the window. The area is never narrower than the
+        // model needs (see MIN_WIDTH), and the view cone is shortened to stay inside it.
+        let scale = FIXED_SCALE;
         let (cx, cy) = (f64::from(width) / 2.0, f64::from(height) * 0.58);
         theme::with(|p| {
             let colour = |kind: Kind| match kind {
@@ -635,11 +661,20 @@ impl GimbalModel {
                 let alpha = if kinds.contains(&Kind::LensFront) { alpha * lens_visibility(lens_facing(pan, tilt, yaw)) } else { alpha };
                 cr.set_source_rgba(r, g, b, alpha * fade);
                 cr.set_line_width(width);
-                for line in lines.iter().filter(|l| kinds.contains(&l.kind)) {
-                    let (ax, ay) = project(line.a, yaw);
-                    let (bx, by) = project(line.b, yaw);
-                    cr.move_to(cx + ax * scale, cy + ay * scale);
-                    cr.line_to(cx + bx * scale, cy + by * scale);
+                let on_screen = |p: V3| { let (x, y) = project(p, yaw); (cx + x * scale, cy + y * scale) };
+                let chosen: Vec<((f64, f64), (f64, f64))> = lines.iter().filter(|l| kinds.contains(&l.kind)).map(|l| (on_screen(l.a), on_screen(l.b))).collect();
+                // The cone is drawn shorter rather than cut off at the edge.
+                let chosen = if kinds[0] == Kind::Aim && !chosen.is_empty() {
+                    let apex = chosen[0].0;
+                    let far: Vec<(f64, f64)> = chosen.iter().flat_map(|(a, b)| [*a, *b]).collect();
+                    let bounds = (CONE_MARGIN, CONE_MARGIN, f64::from(width) - CONE_MARGIN, f64::from(height) - CONE_MARGIN);
+                    let k = cone_fit(apex, &far, bounds);
+                    let pull = |p: (f64, f64)| (apex.0 + (p.0 - apex.0) * k, apex.1 + (p.1 - apex.1) * k);
+                    chosen.into_iter().map(|(a, b)| (pull(a), pull(b))).collect()
+                } else { chosen };
+                for (a, b) in chosen {
+                    cr.move_to(a.0, a.1);
+                    cr.line_to(b.0, b.1);
                 }
                 let _ = cr.stroke();
             }
@@ -702,6 +737,16 @@ mod tests {
         // Straight on, at rest, it faces the viewer; seen from behind it does not.
         assert!(lens_facing(0.0, 0.0, FRONT_YAW) > 0.9);
         assert!(lens_facing(0.0, 0.0, 0.0) < -0.9);
+    }
+
+    #[test]
+    fn the_cone_is_shortened_to_stay_inside_and_keeps_its_shape() {
+        let bounds = (0.0, 0.0, 100.0, 100.0);
+        // Inside already: all of it.
+        assert_eq!(cone_fit((50.0, 50.0), &[(60.0, 60.0), (40.0, 70.0)], bounds), 1.0);
+        // One point twice as far as the edge allows: half of every line.
+        assert!((cone_fit((50.0, 50.0), &[(150.0, 50.0), (60.0, 60.0)], bounds) - 0.5).abs() < 1e-9);
+        assert!((cone_fit((50.0, 50.0), &[(50.0, -50.0)], bounds) - 0.5).abs() < 1e-9);
     }
 
     #[test]

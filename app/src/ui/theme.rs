@@ -352,6 +352,9 @@ window.t4.csd { border-radius: §18§; }
 
 /* Surfaces */
 .card { background: @t_surface; border-radius: §28§; padding: §20§; }
+.t4 .service-notice { background: alpha(@t_tertiary, 0.14); color: @t_on_surface; border-radius: §12§; padding: §10§ §12§; }
+.t4 .service-notice .icon { color: @t_tertiary; }
+.card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }
 .stage-card { background: @t_surface; border-radius: §32§; padding: §10§; }
@@ -426,9 +429,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 scrollbar.horizontal slider { min-width: §32§; }
 .t4 scrollbar slider:hover { background: alpha(@t_on_surface, 0.5); }
 /* The scrollbar keeps one size, hovered or not: where it takes room, changing it would move the page. */
-.t4 paned > separator { min-width: §6§; min-height: §6§; background: transparent;
-  background-image: linear-gradient(to right, transparent §2§, alpha(@t_outline, 0.35) §2§, alpha(@t_outline, 0.35) §4§, transparent §4§); }
-.t4 paned > separator:hover { background-image: linear-gradient(to right, transparent §2§, @t_primary §2§, @t_primary §4§, transparent §4§); }
+.t4 paned > separator { min-width: §8§; min-height: §8§; background: transparent; background-image: none; }
+.t4 button.preview-play { min-width: §64§; min-height: §64§; border-radius: 999px; padding: 0; }
+.t4 button.preview-play .icon { font-size: §36§; }
 
 /* Toast */
 .toast { background: @t_inverse_surface; color: @t_inverse_on_surface; border-radius: §14§; padding: §12§ §18§; box-shadow: 0 6px 20px alpha(#000000, 0.45); }

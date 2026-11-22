@@ -58,7 +58,7 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     device_info.set_size_request(-1, 140);
     if let Ok(info) = usb_descriptor_info() { device_info.buffer().set_text(&info); }
     else { device_info.buffer().set_text("USB descriptor information unavailable until the camera is visible to Linux."); }
-    let info_scroll = gtk::ScrolledWindow::new();
+    let info_scroll = super::widgets::scroller();
     info_scroll.set_min_content_height(140);
     info_scroll.set_child(Some(&device_info));
     page.append(&info_scroll);
@@ -87,7 +87,7 @@ fn add_diagnostics_page(device_combo: &gtk::ComboBoxText) -> gtk::Box {
     output.set_monospace(true);
     output.set_wrap_mode(gtk::WrapMode::None);
     output.set_vexpand(true);
-    let output_scroll = gtk::ScrolledWindow::new();
+    let output_scroll = super::widgets::scroller();
     output_scroll.set_vexpand(true);
     output_scroll.set_child(Some(&output));
     page.append(&output_scroll);

@@ -10,6 +10,9 @@ use crate::backend::registry::Tab;
 use crate::backend::{current_config, update_config};
 use gtk::glib;
 use gtk::prelude::*;
+
+/// The narrowest the left panel is allowed to be remembered at; its contents set the real minimum.
+const LEFT_MIN: i32 = 240;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -107,10 +110,9 @@ impl FullWindow {
         hub_view.lock_aspect();
         let joystick = Joystick::new(&store);
         let stage = gtk::Box::new(gtk::Orientation::Vertical, 16);
-        stage.set_size_request(320, -1);
         // The camera controls scroll when the window is short, so the window can always be made smaller
         // than they are; the preview stays pinned above them.
-        let stage_scroller = gtk::ScrolledWindow::new();
+        let stage_scroller = widgets::scroller();
         stage_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         stage_scroller.set_propagate_natural_height(false);
         stage_scroller.set_propagate_natural_width(true);
@@ -123,27 +125,11 @@ impl FullWindow {
         preview_card.set_vexpand(false);
         preview_card.set_valign(gtk::Align::Start);
         let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let pause = widgets::icon_button("pause", "Pause the preview", true);
-        pause.add_css_class("on-stage");
-        let hub = ctx.hub.clone();
-        pause.connect_clicked(move |button| {
-            let enabled = !hub.is_enabled();
-            hub.set_enabled(enabled);
-            if let Some(glyph) = button.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
-                widgets::set_icon(&glyph, if enabled { "pause" } else { "play_arrow" });
-            }
-            button.set_tooltip_text(Some(if enabled { "Pause the preview" } else { "Resume the preview" }));
-            widgets::label_accessible(button, if enabled { "Pause the preview" } else { "Resume the preview" });
-        });
+        let pause = ctx.hub.pause_button();
         let pop = widgets::icon_button("open_in_new", "Open the preview in its own window", true);
         pop.add_css_class("on-stage");
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
-        // The pause button shows the state it was left in.
-        if !ctx.hub.is_enabled() {
-            if let Some(glyph) = pause.child().and_then(|c| c.downcast::<gtk::Label>().ok()) { widgets::set_icon(&glyph, "play_arrow"); }
-            pause.set_tooltip_text(Some("Resume the preview"));
-        }
         controls_row.append(&pause);
         controls_row.append(&pop);
         hub_view.add_control(&controls_row);
@@ -176,6 +162,7 @@ impl FullWindow {
 
         let gimbal_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         gimbal_card.add_css_class("card");
+        gimbal_card.add_css_class("tight-x");
         gimbal_card.set_vexpand(true);
         gimbal_card.append(&joystick.widget());
         stage.append(&gimbal_card);
@@ -184,7 +171,6 @@ impl FullWindow {
         let preview_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
         preview_slot.append(&preview_card);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 16);
-        left.set_size_request(320, -1);
         left.append(&preview_slot);
         left.append(&stage_scroller);
         stage_scroller.set_vexpand(true);
@@ -234,7 +220,7 @@ impl FullWindow {
                 }
             }
         }
-        let search_holder = gtk::ScrolledWindow::new();
+        let search_holder = widgets::scroller();
         search_holder.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         page_scrollers.borrow_mut().push(search_holder.clone());
         stack.add_named(&search_holder, Some("search"));
@@ -357,13 +343,13 @@ impl FullWindow {
         paned.set_start_child(Some(&left));
         paned.set_end_child(Some(&right));
         let stacked = Rc::new(Cell::new(false));
-        paned.set_position(if current_config().split_position >= 320 { current_config().split_position } else { 420 });
+        paned.set_position(if current_config().split_position >= LEFT_MIN { current_config().split_position } else { 420 });
 
         let outer_box = gtk::Box::new(gtk::Orientation::Vertical, 16);
         outer_box.set_margin_start(20);
         outer_box.set_margin_end(14);
         outer_box.set_margin_bottom(20);
-        let outer_scroll = gtk::ScrolledWindow::new();
+        let outer_scroll = widgets::scroller();
         outer_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         outer_scroll.set_child(Some(&outer_box));
         outer_scroll.set_vexpand(true);
@@ -422,7 +408,7 @@ impl FullWindow {
                         paned.set_start_child(Some(&left));
                         paned.set_end_child(Some(&right));
                         let saved = current_config().split_position;
-                        paned.set_position(if saved >= 320 { saved } else { 420 });
+                        paned.set_position(if saved >= LEFT_MIN { saved } else { 420 });
                         layout_stack.set_visible_child_name("wide");
                     }
                     stacked.set(now_stacked);
@@ -446,7 +432,7 @@ impl FullWindow {
                 preview_card.set_valign(gtk::Align::Start);
                 if mode == 0 {
                     stage.set_orientation(gtk::Orientation::Vertical);
-                    stage.set_size_request(320, -1);
+                    stage.set_size_request(-1, -1);
                     stage.set_halign(gtk::Align::Fill);
                     preview_card.set_hexpand(false);
                     preview_card.set_halign(gtk::Align::Fill);
@@ -479,8 +465,8 @@ impl FullWindow {
                 // What the right-hand panel would have: the window less the left panel and the margins.
                 let split = if stacked.get() {
                     let saved = current_config().split_position;
-                    if saved >= 320 { saved } else { 420 }
-                } else { paned.position().max(320) };
+                    if saved >= LEFT_MIN { saved } else { 420 }
+                } else { paned.position().max(LEFT_MIN) };
                 let right_width = width - split - MARGINS;
                 let was = layout.get();
                 let go_stacked = if was == 0 { right_width < RIGHT_MIN } else { right_width < RIGHT_BACK };
@@ -538,12 +524,12 @@ impl FullWindow {
                 let position = paned.position();
                 let width = last_width.get();
                 let furthest = width - MARGINS - RIGHT_MIN;
-                if width > 0 && furthest >= 320 && position > furthest {
+                if width > 0 && furthest >= LEFT_MIN && position > furthest {
                     paned.set_position(furthest);
                     return;
                 }
-                if position < 320 { paned.set_position(320); return; }
-                if position >= 320 { glib::idle_add_local_once(move || update_config(|c| c.split_position = position)); }
+                
+                if position >= LEFT_MIN { glib::idle_add_local_once(move || update_config(|c| c.split_position = position)); }
             }
         });
 

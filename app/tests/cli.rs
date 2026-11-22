@@ -555,3 +555,33 @@ fn a_second_service_exits_6_so_systemd_does_not_keep_restarting_it() {
     let unit = service_run(&run, &runtime, &log, &["service", "install", "systemd"]);
     assert!(text(&unit.stdout).contains("RestartPreventExitStatus=6"), "{}", text(&unit.stdout));
 }
+
+#[test]
+fn a_service_started_through_an_appimage_apprun_link_is_seen_as_running() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-apprun");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    // An AppImage runs the program as /tmp/.mount_XXXX/AppRun, a link with no "tiny4lite" in its name.
+    let mount = run.config.join(".mount_Tiny4LX");
+    std::fs::create_dir_all(&mount).unwrap();
+    let apprun = mount.join("AppRun");
+    let _ = std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_tiny4lite-control"), &apprun);
+    let mut child = Command::new(&apprun)
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let state = runtime.join("tiny4lite-control/service.json");
+    let started = Instant::now();
+    while !state.exists() && started.elapsed() < Duration::from_secs(10) { std::thread::sleep(Duration::from_millis(100)); }
+    let status = service_run(&run, &runtime, &log, &["service", "status"]);
+    let _ = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    let _ = child.wait();
+    assert_eq!(status.status.code(), Some(0), "{}", text(&status.stdout));
+    assert!(text(&status.stdout).contains("Running"));
+}

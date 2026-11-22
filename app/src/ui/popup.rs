@@ -30,17 +30,7 @@ impl PreviewWindow {
         view.widget().add_css_class("stage");
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let pause = widgets::icon_button("pause", "Pause the preview", true);
-        pause.add_css_class("on-stage");
-        let hub = ctx.hub.clone();
-        pause.connect_clicked(move |button| {
-            let enabled = !hub.is_enabled();
-            hub.set_enabled(enabled);
-            if let Some(glyph) = button.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
-                widgets::set_icon(&glyph, if enabled { "pause" } else { "play_arrow" });
-            }
-            button.set_tooltip_text(Some(if enabled { "Pause the preview" } else { "Resume the preview" }));
-        });
+        let pause = ctx.hub.pause_button();
         let dock = widgets::icon_button("dock_to_right", "Return the preview to the main window", true);
         dock.add_css_class("on-stage");
         let weak_ctx = Rc::downgrade(ctx);

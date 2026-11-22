@@ -101,6 +101,10 @@ pub struct AppConfig {
     /// Keep the gimbal inside OBSBOT's published tilt range (30° down to 70° up). Off, it can be driven to
     /// the mechanical ends.
     pub tilt_limit: bool,
+    /// The tilt range used while the limit is on, in degrees (up is positive). OBSBOT's published
+    /// range, −30 to +70, unless changed.
+    pub tilt_limit_low: f64,
+    pub tilt_limit_high: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,6 +195,8 @@ impl Default for AppConfig {
             preview_paused: false,
             preview_on_start: false,
             tilt_limit: true,
+            tilt_limit_low: -30.0,
+            tilt_limit_high: 70.0,
         }
     }
 }

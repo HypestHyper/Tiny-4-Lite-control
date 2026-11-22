@@ -211,8 +211,9 @@ impl Joystick {
         readouts.set_row_spacing(2);
         readouts.set_column_spacing(8);
         readouts.set_halign(gtk::Align::End);
-        readouts.set_valign(gtk::Align::Center);
+        readouts.set_valign(gtk::Align::Start);
         readouts.set_margin_end(12);
+        readouts.set_margin_top(10);
         readouts.set_can_target(false);
         readouts.add_css_class("model-readouts");
         let mut values: Vec<(&str, &gtk::Label)> = vec![("Pan", &state.pan_value), ("Tilt", &state.tilt_value)];
@@ -220,24 +221,18 @@ impl Joystick {
         if !compact { values.push(("Zoom", &state.zoom_value)); }
         for (row, (name, value)) in values.into_iter().enumerate() {
             let caption = widgets::text(name, &["small", "dim"]);
+            caption.set_wrap(false);
             caption.set_xalign(1.0);
             value.set_xalign(1.0);
             readouts.attach(&caption, 0, row as i32, 1, 1);
             readouts.attach(value, 1, row as i32, 1, 1);
         }
-        // Beside the model, not over it, so the numbers never cover the drawing.
-        let stage = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        // The numbers sit in the top corner, clear of the model, which stays centred in the card.
+        let stage = gtk::Overlay::new();
         stage.add_css_class("model-frame");
         model.widget().set_hexpand(true);
-        // An empty twin of the readouts on the other side keeps the model in the middle of the card.
-        let balance = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        balance.set_margin_start(12);
-        let sides = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-        sides.add_widget(&balance);
-        sides.add_widget(&readouts);
-        stage.append(&balance);
-        stage.append(model.widget());
-        stage.append(&readouts);
+        stage.set_child(Some(model.widget()));
+        stage.add_overlay(&readouts);
         if compact {
             // Side by side: the model takes what the pad leaves.
             state.pad.set_content_width(124);
@@ -268,7 +263,7 @@ impl Joystick {
                 column.append(&buttons[first + 1]);
                 column
             };
-            let pad_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+            let pad_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             pad_row.set_halign(gtk::Align::Center);
             pad_row.append(&side(0));
             pad_row.append(&state.pad);

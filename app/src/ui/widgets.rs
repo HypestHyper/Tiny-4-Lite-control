@@ -71,6 +71,19 @@ pub fn icon_text_button(glyph: &str, label: &str) -> gtk::Button {
 }
 
 /// Stop the mouse wheel changing a slider or menu; scroll the page instead.
+/// A scrolled area that holds still: no coasting after a touchpad scroll (a click while it coasts only
+/// stops it, so a switch seems not to respond), and no jump to bring a clicked control into view (the
+/// row moves under the pointer and the next click misses).
+pub fn scroller() -> gtk::ScrolledWindow {
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_kinetic_scrolling(false);
+    let hold = |scroll: &gtk::ScrolledWindow| {
+        if let Some(viewport) = scroll.child().and_then(|c| c.downcast::<gtk::Viewport>().ok()) { viewport.set_scroll_to_focus(false); }
+    };
+    scroll.connect_child_notify(move |scroll| hold(scroll));
+    scroll
+}
+
 pub fn lock_wheel(widget: &impl IsA<gtk::Widget>) {
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);

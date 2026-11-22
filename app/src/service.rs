@@ -144,13 +144,29 @@ pub(crate) fn log_path() -> PathBuf { runtime_dir().join("service.log") }
 
 fn now_unix() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 
+/// Is `pid` this program? Judged by the file it runs, not its name on the command line: an AppImage
+/// starts it as `/tmp/.mount_…/AppRun`, which says nothing about what it is.
+pub(crate) fn is_our_program(pid: u32, words: &[String]) -> bool {
+    let ours = |name: &str| name.starts_with("tiny4lite-control");
+    if let Ok(target) = std::fs::read_link(format!("/proc/{pid}/exe")) {
+        if target.file_name().and_then(|n| n.to_str()).is_some_and(ours) { return true; }
+        // The same file as this program (a renamed copy, or under test).
+        if let Ok(me) = std::env::current_exe() { if me == target { return true; } }
+    }
+    words.first().is_some_and(|w| w.contains("tiny4lite-control")
+        || w.rsplit('/').next().is_some_and(ours))
+}
+
+/// The words a process was started with.
+fn command_words(pid: u32) -> Option<Vec<String>> {
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(cmdline.split(|b| *b == 0).filter(|w| !w.is_empty()).map(|w| String::from_utf8_lossy(w).to_string()).collect())
+}
+
 /// Is `pid` a running tiny4lite-control service?
 pub(crate) fn is_service_process(pid: u32) -> bool {
-    let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-    let words: Vec<&[u8]> = cmdline.split(|b| *b == 0).collect();
-    let text = |w: &[u8]| String::from_utf8_lossy(w).to_string();
-    words.iter().any(|w| text(w).contains("tiny4lite")) && words.iter().any(|w| text(w) == "service")
-        && words.iter().any(|w| text(w) == "run")
+    let Some(words) = command_words(pid) else { return false };
+    is_our_program(pid, &words) && words.iter().any(|w| w == "service") && words.iter().any(|w| w == "run")
 }
 
 /// Only one service runs at a time. A lock left behind by a process that is gone is taken over.
@@ -213,9 +229,8 @@ fn window_open() -> bool {
     entries.flatten().any(|entry| {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { return false };
         if pid == me { return false; }
-        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-        let words: Vec<String> = cmdline.split(|b| *b == 0).map(|w| String::from_utf8_lossy(w).to_string()).collect();
-        let ours = words.first().is_some_and(|w| w.contains("tiny4lite-control") || w.ends_with(".AppImage") && w.to_lowercase().contains("tiny"));
+        let Some(words) = command_words(pid) else { return false };
+        let ours = is_our_program(pid, &words);
         // Someone else's window is not ours to keep the camera awake for.
         let same_user = { use std::os::unix::fs::MetadataExt; entry.metadata().is_ok_and(|m| m.uid() == user_id()) };
         // A command line run (`list`, `set`, `service ...`) is not a window; the same test as main() uses.

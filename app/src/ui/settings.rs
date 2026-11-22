@@ -118,7 +118,7 @@ pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
     holder.set_margin_end(6);
     holder.set_margin_bottom(20);
     holder.append(masonry.widget());
-    let root = gtk::ScrolledWindow::new();
+    let root = widgets::scroller();
     root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     root.set_vexpand(true);
     root.set_child(Some(&holder));

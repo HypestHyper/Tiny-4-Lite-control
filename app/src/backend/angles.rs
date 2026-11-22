@@ -26,15 +26,33 @@ pub const TILT_RANGE: (f64, f64) = (-30.0, 70.0);
 /// Keep a pan angle inside the range the camera is driven over.
 pub fn clamp_pan(degrees: f64) -> f64 { degrees.clamp(PAN_RANGE.0, PAN_RANGE.1) }
 static TILT_LIMITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static TILT_LOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TILT_HIGH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TILT_CUSTOM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Keep tilt inside the published range (on), or allow the mechanical ends (off). Follows the
-/// `tilt_limit` setting.
-pub fn set_tilt_limit(on: bool) { TILT_LIMITED.store(on, std::sync::atomic::Ordering::Relaxed); }
+/// A usable custom tilt range: inside the mechanical ends, with the low end below the high one by at
+/// least ten degrees. Anything else falls back to the published range.
+pub fn valid_tilt_limits(low: f64, high: f64) -> bool {
+    low.is_finite() && high.is_finite() && low >= -TILT_LIMIT && high <= TILT_LIMIT && high - low >= 10.0
+}
 
-/// The tilt range the camera is driven over now: the published one, or the mechanical one with the
-/// limit turned off.
+/// Keep tilt inside a range (on), or allow the mechanical ends (off). Follows the `tilt_limit`,
+/// `tilt_limit_low` and `tilt_limit_high` settings.
+pub fn set_tilt_limit(on: bool, low: f64, high: f64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    TILT_LIMITED.store(on, Relaxed);
+    let custom = valid_tilt_limits(low, high) && (low, high) != TILT_RANGE;
+    TILT_LOW.store(low.to_bits(), Relaxed);
+    TILT_HIGH.store(high.to_bits(), Relaxed);
+    TILT_CUSTOM.store(custom, Relaxed);
+}
+
+/// The tilt range the camera is driven over now: the chosen (by default the published) one, or the
+/// mechanical one with the limit turned off.
 pub fn tilt_range() -> (f64, f64) {
-    if TILT_LIMITED.load(std::sync::atomic::Ordering::Relaxed) { TILT_RANGE } else { (-TILT_LIMIT, TILT_LIMIT) }
+    use std::sync::atomic::Ordering::Relaxed;
+    if !TILT_LIMITED.load(Relaxed) { return (-TILT_LIMIT, TILT_LIMIT); }
+    if TILT_CUSTOM.load(Relaxed) { (f64::from_bits(TILT_LOW.load(Relaxed)), f64::from_bits(TILT_HIGH.load(Relaxed))) } else { TILT_RANGE }
 }
 
 /// Keep a tilt angle inside the range the camera is driven over.
@@ -133,6 +151,15 @@ impl Steady {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_tilt_limits_must_be_inside_the_mechanism_and_apart() {
+        assert!(valid_tilt_limits(-32.0, 70.0));
+        assert!(valid_tilt_limits(-90.0, 90.0));
+        assert!(!valid_tilt_limits(-91.0, 70.0));
+        assert!(!valid_tilt_limits(10.0, 15.0));
+        assert!(!valid_tilt_limits(f64::NAN, 70.0));
+    }
+
     use super::*;
 
     #[test]

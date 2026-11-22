@@ -259,13 +259,38 @@ pub fn setup_command(yes: bool) -> i32 {
     println!("\n2. The service\n");
     let result = install_service();
     match &result { Ok(message) => println!("{message}"), Err(error) => println!("Could not install it: {error}") }
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-    match service::running_status() {
+    // An AppImage takes a moment to mount, so give it a while before saying it did not start.
+    let mut running = None;
+    for _ in 0..50 {
+        running = service::running_status();
+        if running.is_some() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    match running {
         Some(status) => println!("\nRunning, process {}.", status.pid),
-        None => println!("\nIt is not running yet. Check with: tiny4lite-control service status"),
+        None => {
+            println!("\nIt did not start. What the system says about it:\n");
+            print!("{}", why_not_running());
+        }
     }
     wait_to_close(yes);
     if result.is_ok() { crate::cli::OK } else { crate::cli::FAILED }
+}
+
+/// Why the service is not running, as far as the system can say: systemd's status and its last log lines,
+/// or the log a service started without systemd writes.
+pub fn why_not_running() -> String {
+    if installed() == Some(InstalledAs::Systemd) && systemd_user_available() {
+        let output = Command::new("systemctl").args(["--user", "status", "tiny4lite-control.service", "--no-pager", "--lines=15"]).output();
+        return match output {
+            Ok(out) => format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            Err(error) => format!("Could not ask systemd: {error}\n"),
+        };
+    }
+    match std::fs::read_to_string(service::log_path()) {
+        Ok(text) => text.lines().rev().take(15).collect::<Vec<_>>().into_iter().rev().map(|l| format!("{l}\n")).collect(),
+        Err(_) => format!("No log at {}.\n", service::log_path().display()),
+    }
 }
 
 pub fn wait_to_close(yes: bool) {

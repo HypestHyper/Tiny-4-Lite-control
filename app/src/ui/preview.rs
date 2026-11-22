@@ -37,6 +37,9 @@ struct ViewInner {
     placeholder_text: gtk::Label,
     /// Shown with an error, to try the stream again.
     retry: gtk::Button,
+    /// The big play button in the middle, while the preview is paused or not started.
+    play: gtk::Button,
+    glyph: gtk::Label,
     /// Width over height of the picture the camera sends, and whether the view's height follows its width.
     ratio: Cell<f32>,
     locked: Cell<bool>,
@@ -59,6 +62,8 @@ struct HubInner {
     retries: Cell<u32>,
     /// Told the mode the camera is really streaming, whenever a stream starts.
     mode_listeners: RefCell<Vec<Rc<dyn Fn(&VideoMode)>>>,
+    /// Told when the preview is started or paused, from any of its buttons.
+    enabled_listeners: RefCell<Vec<Rc<dyn Fn(bool) -> bool>>>,
 }
 
 #[derive(Clone)]
@@ -80,6 +85,7 @@ impl PreviewHub {
             last_texture: RefCell::default(),
             retries: Cell::new(0),
             mode_listeners: RefCell::default(),
+            enabled_listeners: RefCell::default(),
         }))
     }
 
@@ -92,13 +98,48 @@ impl PreviewHub {
         self.0.mode_listeners.borrow_mut().push(Rc::new(listener));
     }
 
+    /// Be told each time the preview is started or paused. The listener returns false once it is no
+    /// longer needed.
+    pub fn on_enabled(&self, listener: impl Fn(bool) -> bool + 'static) {
+        self.0.enabled_listeners.borrow_mut().push(Rc::new(listener));
+    }
+
+    fn tell_enabled(&self) {
+        let enabled = self.0.enabled.get();
+        let listeners: Vec<_> = self.0.enabled_listeners.borrow().clone();
+        let keep: Vec<bool> = listeners.iter().map(|l| l(enabled)).collect();
+        let mut i = 0;
+        self.0.enabled_listeners.borrow_mut().retain(|_| { let k = keep.get(i).copied().unwrap_or(true); i += 1; k });
+    }
+
+    /// The round play/pause button for the corner of a preview, which follows the preview however it
+    /// is started or paused.
+    pub fn pause_button(&self) -> gtk::Button {
+        let button = widgets::icon_button("pause", "Pause the preview", true);
+        button.add_css_class("on-stage");
+        let show = |button: &gtk::Button, enabled: bool| {
+            if let Some(glyph) = button.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
+                widgets::set_icon(&glyph, if enabled { "pause" } else { "play_arrow" });
+            }
+            let words = if enabled { "Pause the preview" } else { "Start the preview" };
+            button.set_tooltip_text(Some(words));
+            widgets::label_accessible(button, words);
+        };
+        show(&button, self.is_enabled());
+        let weak = button.downgrade();
+        self.on_enabled(move |enabled| match weak.upgrade() { Some(button) => { show(&button, enabled); true } None => false });
+        let hub = self.clone();
+        button.connect_clicked(move |_| hub.set_enabled(!hub.is_enabled()));
+        button
+    }
+
     /// Start the stream again after it stopped or failed.
     pub fn restart(&self) {
         let hub = &self.0;
         hub.retries.set(0);
         let child = self.take_stream();
         if let Some(mut child) = child { std::thread::spawn(move || { let _ = child.kill(); let _ = child.wait(); }); }
-        if !hub.enabled.get() { hub.enabled.set(true); update_config(|c| c.preview_paused = false); }
+        if !hub.enabled.get() { hub.enabled.set(true); update_config(|c| c.preview_paused = false); self.tell_enabled(); }
         // A moment for the camera to let go of the old stream.
         let this = self.clone();
         glib::timeout_add_local_once(Duration::from_millis(500), move || this.update_demand());
@@ -109,6 +150,7 @@ impl PreviewHub {
         self.0.enabled.set(enabled);
         self.0.retries.set(0);
         update_config(|c| c.preview_paused = !enabled);
+        self.tell_enabled();
         if enabled { self.update_demand(); } else { self.stop(); self.each_view(|v| v.show_message("Preview paused", "pause_circle")); }
     }
 
@@ -291,7 +333,11 @@ impl PreviewHub {
 impl ViewInner {
     fn show_message(&self, message: &str, glyph: &str) {
         self.placeholder_text.set_text(message);
-        if let Some(first) = self.placeholder.first_child().and_then(|c| c.downcast::<gtk::Label>().ok()) { widgets::set_icon(&first, glyph); }
+        // Paused or not started: the middle is a button that starts it, not just a picture of one.
+        let startable = matches!(glyph, "play_arrow" | "pause_circle");
+        widgets::set_icon(&self.glyph, glyph);
+        self.glyph.set_visible(!startable);
+        self.play.set_visible(startable);
         self.placeholder.set_visible(true);
         // A stopped or failed stream can be started again from here.
         self.retry.set_visible(glyph == "videocam_off");
@@ -328,6 +374,14 @@ impl PreviewView {
         retry.add_css_class("filled");
         retry.set_halign(gtk::Align::Center);
         retry.set_visible(false);
+        let play = widgets::icon_button("play_arrow", "Start the preview", false);
+        play.add_css_class("filled");
+        play.add_css_class("preview-play");
+        play.set_halign(gtk::Align::Center);
+        play.set_visible(false);
+        let start_hub = hub.clone();
+        play.connect_clicked(move |_| start_hub.set_enabled(true));
+        placeholder.append(&play);
         placeholder.append(&glyph);
         placeholder.append(&placeholder_text);
         placeholder.append(&retry);
@@ -355,7 +409,7 @@ impl PreviewView {
         root.add_overlay(&chip);
         root.set_size_request(240, 135);
 
-        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), chip, root: root.clone(), ratio: Cell::new(16.0 / 9.0), locked: Cell::new(false) });
+        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), play, glyph, chip, root: root.clone(), ratio: Cell::new(16.0 / 9.0), locked: Cell::new(false) });
         if let Some(mode) = hub.0.mode.borrow().as_ref() { inner.ratio.set(mode.width as f32 / mode.height.max(1) as f32); }
         {
             let weak = Rc::downgrade(&inner);

@@ -44,7 +44,7 @@ pub fn presets_page(store: &Store) -> gtk::ScrolledWindow {
     column.set_margin_bottom(20);
     column.append(&camera_memory_card(store));
     column.append(&app_presets_card(store));
-    let scroll = gtk::ScrolledWindow::new();
+    let scroll = widgets::scroller();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     scroll.set_child(Some(&column));
@@ -566,7 +566,8 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
 /// and reads these settings as soon as they change.
 pub fn sleep_timer_card() -> gtk::Box {
     let (card, body) = card("Sleep timer", "bedtime",
-        "Puts the camera to sleep when it is not needed, so it does not stay on. The background service does this.");
+        "Puts the camera to sleep when it is not needed, so it does not stay on. All of these need the background service.");
+    body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it under Background service, further down this tab."));
     let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -625,6 +626,26 @@ pub fn sleep_timer_card() -> gtk::Box {
         config.service.sleep_on_suspend,
         Box::new(|on| update_config(|c| c.service.sleep_on_suspend = on))));
     card
+}
+
+/// A warning that shows only while the background service is not running, for the settings that rely
+/// on it. It looks again every couple of seconds.
+pub fn service_needed_notice(message: &str) -> gtk::Box {
+    let notice = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    notice.add_css_class("service-notice");
+    let glyph = widgets::icon("info");
+    glyph.set_valign(gtk::Align::Start);
+    let text = widgets::text(message, &["small"]);
+    text.set_hexpand(true);
+    notice.append(&glyph);
+    notice.append(&text);
+    let refresh = { let notice = notice.downgrade(); move || match notice.upgrade() {
+        Some(notice) => { notice.set_visible(crate::service::running_status().is_none()); true }
+        None => false,
+    } };
+    refresh();
+    glib::timeout_add_local(Duration::from_secs(2), move || if refresh() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break });
+    notice
 }
 
 /// How long ago, for people: 40 s, 12 min, 3 h 5 min.
@@ -877,10 +898,57 @@ fn plain_switch_row(title: &str, summary: &str, active: bool, changed: impl Fn(b
 /// Limits on where the joystick, the steps and presets may turn the camera.
 pub fn gimbal_limits_card() -> gtk::Box {
     let (card, body) = card("Gimbal limits", "open_with", "How far the camera may be turned from this app.");
+    let config = current_config();
+    // The range used while the limit is on: OBSBOT's published one unless changed here.
+    let range = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    range.set_halign(gtk::Align::Start);
+    let spin = |label: &str, value: f64, low: f64, high: f64| {
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        column.append(&widgets::text(label, &["small", "dim"]));
+        let spin = gtk::SpinButton::with_range(low, high, 1.0);
+        spin.set_digits(0);
+        spin.set_value(value);
+        spin.set_numeric(true);
+        widgets::label_accessible(&spin, label);
+        column.append(&spin);
+        (column, spin)
+    };
+    let (low_box, low) = spin("Lowest (down, °)", config.tilt_limit_low, -90.0, 0.0);
+    let (high_box, high) = spin("Highest (up, °)", config.tilt_limit_high, 0.0, 90.0);
+    let reset = gtk::Button::with_label("OBSBOT range");
+    reset.add_css_class("small");
+    reset.set_valign(gtk::Align::End);
+    reset.set_tooltip_text(Some("Back to 30° down and 70° up"));
+    range.append(&low_box);
+    range.append(&high_box);
+    range.append(&reset);
+    let note = widgets::text("", &["small", "dim"]);
+    let save = {
+        let (low, high, note) = (low.clone(), high.clone(), note.clone());
+        move || {
+            let (l, h) = (low.value(), high.value());
+            if backend::angles::valid_tilt_limits(l, h) {
+                note.set_text("");
+                update_config(|c| { c.tilt_limit_low = l; c.tilt_limit_high = h; });
+            } else {
+                note.set_text("Leave at least 10° between the lowest and the highest.");
+            }
+        }
+    };
+    { let save = save.clone(); low.connect_value_changed(move |_| save()); }
+    { let save = save.clone(); high.connect_value_changed(move |_| save()); }
+    { let (low, high) = (low.clone(), high.clone()); reset.connect_clicked(move |_| { low.set_value(-30.0); high.set_value(70.0); }); }
+    range.set_sensitive(config.tilt_limit);
+    let range_weak = range.downgrade();
     body.append(&plain_switch_row("Limit tilt",
-        "Keep tilt between 30° down and 70° up, OBSBOT's published range. Turn off to reach the ends of the mechanism; the camera stops itself there.",
-        current_config().tilt_limit,
-        |on| update_config(|c| c.tilt_limit = on)));
+        "Keep tilt inside the range below, by default OBSBOT's published 30° down to 70° up. Turn off to reach the ends of the mechanism; the camera stops itself there.",
+        config.tilt_limit,
+        move |on| {
+            update_config(|c| c.tilt_limit = on);
+            if let Some(range) = range_weak.upgrade() { range.set_sensitive(on); }
+        }));
+    body.append(&range);
+    body.append(&note);
     card
 }
 

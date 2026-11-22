@@ -127,7 +127,7 @@ impl SlimWindow {
         content.append(&joystick_card);
         content.append(&list);
         content.append(&empty);
-        let scroll = gtk::ScrolledWindow::new();
+        let scroll = widgets::scroller();
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroll.set_vexpand(true);
         scroll.set_child(Some(&content));
@@ -337,7 +337,7 @@ fn build_sheet(state: &Rc<SlimState>, sheet: &gtk::Box) {
         column.append(&card);
     }
     *state.customise_rows.borrow_mut() = switches;
-    let scroll = gtk::ScrolledWindow::new();
+    let scroll = widgets::scroller();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     scroll.set_child(Some(&column));
