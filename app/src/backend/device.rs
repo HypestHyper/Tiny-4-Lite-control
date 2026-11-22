@@ -209,7 +209,11 @@ pub(crate) fn run_v4l2(device: &str, option: &str) -> Result<String, String> {
     }
     let (success, stdout, stderr) = run_with_timeout(
         Command::new("v4l2-ctl").arg("-d").arg(device).arg(option), v4l2_timeout(option))?;
-    if !success { return Err(stderr.trim().to_string()); }
+    if !success {
+        // v4l2-ctl prints some failures (a busy device) on standard output, and some say nothing at all.
+        let said = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        return Err(if said.is_empty() { format!("v4l2-ctl {option} failed without saying why") } else { said.to_string() });
+    }
     Ok(stdout.trim().to_string())
 }
 

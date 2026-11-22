@@ -366,8 +366,16 @@ window.t4.csd { border-radius: §18§; }
 .t4 label.code { font-family: monospace; font-size: ¶12¶; background: @t_surface_high; border-radius: §10§; padding: §10§ §12§; }
 .t4 .setup-banner { background: alpha(@t_primary, 0.14); border-radius: §16§; padding: §12§ §16§; }
 .t4 .setup-banner > .icon { color: @t_primary; font-size: §24§; }
+.t4 spinbutton { background: @t_surface_high; border-radius: §12§; border: none; padding: 0; min-height: §36§; box-shadow: none; }
+.t4 spinbutton > text { background: transparent; border: none; padding: 0 §6§ 0 §12§; min-width: §36§; color: @t_on_surface; font-feature-settings: "tnum"; }
+.t4 spinbutton > button { background: transparent; border: none; box-shadow: none; border-radius: §9§; min-width: §30§; min-height: §30§; margin: §3§ §2§; padding: 0; color: @t_on_surface_variant; }
+.t4 spinbutton > button:last-child { margin-right: §3§; }
+.t4 spinbutton > button:hover { background: alpha(@t_on_surface, 0.09); color: @t_on_surface; }
+.t4 spinbutton > button:active { background: alpha(@t_primary, 0.2); color: @t_primary; }
+.t4 spinbutton > button:disabled { background: transparent; opacity: 0.35; }
+.t4 spinbutton:focus-within { box-shadow: inset 0 0 0 2px alpha(@t_primary, 0.8); }
 .t4 .limit-entry spinbutton { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.t4 .limit-entry button.take-current { border-radius: 0 §10§ §10§ 0; min-width: §36§; min-height: §34§; margin: 0; background: @t_surface_high; }
+.t4 .limit-entry button.take-current { border-radius: 0 §12§ §12§ 0; min-width: §38§; min-height: §36§; margin: 0 0 0 1px; background: @t_surface_high; color: @t_on_surface_variant; }
 .t4 .limit-entry button.take-current:hover { background: alpha(@t_primary, 0.2); color: @t_primary; }
 .t4 .warning-text { color: @t_error; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }

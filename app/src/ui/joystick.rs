@@ -93,6 +93,9 @@ struct State {
     save_timer: RefCell<Option<glib::SourceId>>,
 }
 
+/// How many shortcut buttons sit beside the joystick, half on each side.
+const QUICK_COUNT: usize = 6;
+
 /// What a shortcut button does.
 #[derive(Clone, Debug, PartialEq)]
 enum QuickTarget { App(String), Camera(u8) }
@@ -114,9 +117,9 @@ fn quick_slot(index: usize) -> Option<QuickTarget> {
 /// Save what shortcut `index` does. The first choice turns the defaults into a list of their own.
 fn set_quick_slot(index: usize, target: Option<QuickTarget>) {
     update_config(|c| {
-        let mut slots = c.quick_presets.clone().unwrap_or_else(|| (0..4).map(|i| crate::config::QuickPreset {
+        let mut slots = c.quick_presets.clone().unwrap_or_else(|| (0..QUICK_COUNT).map(|i| crate::config::QuickPreset {
             app: c.presets.get(i).map(|p| p.name.clone()), camera: None }).collect());
-        slots.resize(4, crate::config::QuickPreset::default());
+        slots.resize(QUICK_COUNT, crate::config::QuickPreset::default());
         slots[index] = match target {
             Some(QuickTarget::App(name)) => crate::config::QuickPreset { app: Some(name), camera: None },
             Some(QuickTarget::Camera(slot)) => crate::config::QuickPreset { app: None, camera: Some(slot) },
@@ -393,15 +396,14 @@ impl Joystick {
             let side = |first: usize| {
                 let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
                 column.set_valign(gtk::Align::Center);
-                column.append(&buttons[first]);
-                column.append(&buttons[first + 1]);
+                for button in &buttons[first..first + QUICK_COUNT / 2] { column.append(button); }
                 column
             };
             let pad_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             pad_row.set_halign(gtk::Align::Center);
             pad_row.append(&side(0));
             pad_row.append(&state.pad);
-            pad_row.append(&side(2));
+            pad_row.append(&side(QUICK_COUNT / 2));
             column.append(&pad_row);
         }
 
@@ -453,11 +455,11 @@ impl Joystick {
         column
     }
 
-    /// Four buttons that apply the first four presets saved on the Presets tab. They are squares with an
+    /// The shortcut buttons beside the joystick (see QUICK_COUNT): each runs the preset chosen for it. They are squares with an
     /// outline, so they are not mistaken for the pan and tilt steps.
     fn quick_preset_buttons(&self) -> Vec<gtk::Button> {
         let store = self.0.store.clone();
-        let buttons: Vec<gtk::Button> = (1..=4).map(|n| {
+        let buttons: Vec<gtk::Button> = (1..=QUICK_COUNT).map(|n| {
             let button = gtk::Button::with_label(&n.to_string());
             button.add_css_class("preset");
             widgets::label_accessible(&button, &format!("Shortcut {n}"));

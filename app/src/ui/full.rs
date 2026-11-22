@@ -373,7 +373,13 @@ impl FullWindow {
         main_column.append(&panels::service_setup_banner(&store));
         layout_stack.set_vexpand(true);
         main_column.append(&layout_stack);
-        dialogs.overlay().set_child(Some(&main_column));
+        // A window manager can make the window narrower than its contents allow (tiling ones do). Then the
+        // page scrolls sideways instead of being cut off.
+        let sideways = gtk::ScrolledWindow::new();
+        sideways.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        sideways.set_propagate_natural_height(false);
+        sideways.set_child(Some(&main_column));
+        dialogs.overlay().set_child(Some(&sideways));
         dialogs.install();
         let toaster = Toaster::new();
         dialogs.overlay().add_overlay(toaster.widget());

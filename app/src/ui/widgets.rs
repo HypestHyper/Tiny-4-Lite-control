@@ -177,7 +177,11 @@ impl Segmented {
             button.add_css_class("segment");
             if index == 0 { button.add_css_class("first"); }
             if index + 1 == count { button.add_css_class("last"); }
-            if !option.hint.is_empty() { button.set_tooltip_text(Some(option.hint)); }
+            if !option.hint.is_empty() { button.set_tooltip_text(Some(option.hint)); } else { button.set_tooltip_text(Some(option.label)); }
+            // In a narrow panel the words shorten ("Stand…") rather than holding the window wide.
+            if let Some(text) = button.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
+                text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            }
             let value = option.value;
             let this = self.clone();
             button.connect_clicked(move |clicked| {

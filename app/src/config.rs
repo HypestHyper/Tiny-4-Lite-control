@@ -105,7 +105,7 @@ pub struct AppConfig {
     /// range, −30 to +70, unless changed.
     pub tilt_limit_low: f64,
     pub tilt_limit_high: f64,
-    /// What the four shortcut buttons beside the joystick do. None: the first four app presets.
+    /// What the six shortcut buttons beside the joystick do. None: the first six app presets.
     pub quick_presets: Option<Vec<QuickPreset>>,
     /// Keep pan inside a range: OBSBOT's published ±140° unless changed. Off, the mechanical ±150°.
     pub pan_limit: bool,

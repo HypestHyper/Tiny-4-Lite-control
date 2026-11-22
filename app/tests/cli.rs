@@ -450,7 +450,7 @@ fn the_service_puts_the_camera_to_sleep_before_a_suspend() {
     let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
     assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "suspend", "on"]).status.code(), Some(0));
     // A stand-in for dbus-monitor: after a few seconds it prints what logind prints before a suspend.
-    let monitor = "sleep 4; echo 'signal time=1.0 sender=:1.4 -> destination=(null destination) serial=9 path=/org/freedesktop/login1; interface=org.freedesktop.login1.Manager; member=PrepareForSleep'; echo '   boolean true'; sleep 30";
+    let monitor = "sleep 4; echo 'signal time=1.0 sender=:1.4 -> destination=(null destination) serial=9 path=/org/freedesktop/login1; interface=org.freedesktop.login1.Manager; member=PrepareForSleep'; echo '   boolean true'; sleep 2; echo 'signal time=2.0 sender=:1.4 -> destination=(null destination) serial=10 path=/org/freedesktop/login1; interface=org.freedesktop.login1.Manager; member=PrepareForSleep'; echo '   boolean false'; sleep 30";
     let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
         .args(["service", "run"])
         .env("TINY4LITE_UI_TEST", "1")
@@ -463,14 +463,17 @@ fn the_service_puts_the_camera_to_sleep_before_a_suspend() {
         .spawn()
         .unwrap();
     let started = Instant::now();
+    // Once before the suspend, and once more a few seconds after waking (the camera starts up awake).
+    let count = || std::fs::read_to_string(&log).unwrap_or_default().matches("sleep=on").count();
     let slept = loop {
-        if std::fs::read_to_string(&log).unwrap_or_default().contains("sleep=on") { break true; }
-        if started.elapsed() > Duration::from_secs(15) { break false; }
+        if count() >= 2 { break true; }
+        if started.elapsed() > Duration::from_secs(25) { break false; }
         std::thread::sleep(Duration::from_millis(100));
     };
+    let seen = count();
     let _ = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
     let _ = child.wait();
-    assert!(slept, "no sleep command before the suspend");
+    assert!(slept, "expected sleep before the suspend and again after waking; saw {seen}");
 }
 
 #[test]

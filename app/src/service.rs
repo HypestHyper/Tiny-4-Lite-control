@@ -23,6 +23,10 @@ const SLICE: Duration = Duration::from_millis(200);
 const ROUND_SLICES: u32 = 10;
 /// A new camera gets this long to settle before anything is sent to it.
 const SETTLE: Duration = Duration::from_secs(2);
+/// After the computer wakes, the camera gets this long to come back before it is put to sleep again,
+/// and the service stops waiting for it after the second.
+const RESUME_SETTLE: Duration = Duration::from_secs(4);
+const RESUME_GIVE_UP: Duration = Duration::from_secs(90);
 /// A control used in the window this recently counts as using the camera.
 const ACTIVITY_SECONDS: u64 = 10;
 
@@ -360,6 +364,8 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let mut watcher: Option<crate::suspend::Watcher> = None;
     let mut watching_suspend = false;
     let mut suspend_retry_at: Option<Instant> = None;
+    // When the computer last woke from suspend, until the camera has been put back to sleep.
+    let resumed_at: std::sync::Arc<std::sync::Mutex<Option<Instant>>> = Default::default();
     let mut restored_once = false;
     let mut last_device: Option<String> = None;
     let mut slice = 0u32;
@@ -395,6 +401,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                 watching_suspend = want_suspend;
                 if want_suspend {
                     let device = shared_device.clone();
+                    let resumed = resumed_at.clone();
                     match crate::suspend::Watcher::start(move || {
                         let node = device.lock().unwrap_or_else(|e| e.into_inner()).clone();
                         match node.as_deref().map(send_sleep) {
@@ -402,6 +409,10 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                             Some(Err(error)) => log(&format!("The computer is suspending, but the camera could not be put to sleep: {error}")),
                             None => {}
                         }
+                    }, move || {
+                        // The camera powers up again with the computer: put it back to sleep once it is back.
+                        log("The computer woke up; the camera will be put back to sleep.");
+                        *resumed.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                     }) {
                         Ok(started) => { watcher = Some(started); log("Watching for suspend."); }
                         Err(error) => { log(&format!("Suspend is not watched: {error}")); status.last_event = format!("Suspend is not watched: {error}"); status.last_event_at = now_unix(); }
@@ -430,6 +441,28 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                 }
                 status.camera = camera.clone();
                 write_status(&status);
+            }
+            // Back from suspend: the camera started up awake. Once it has been back a few seconds, and if no
+            // program is using it, put it to sleep again. Give up after a minute and a half.
+            let since_resume = resumed_at.lock().unwrap_or_else(|e| e.into_inner()).map(|at| at.elapsed());
+            if let Some(elapsed) = since_resume {
+                if elapsed > RESUME_GIVE_UP {
+                    *resumed_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                } else if elapsed >= RESUME_SETTLE {
+                    if let Some(device) = camera.as_deref() {
+                        *resumed_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                        let used = !backend::ui_test_mode() && !backend::usage::streaming_holders(device).is_empty();
+                        let note = if used { "Back from suspend; a program is using the camera, so it was left awake.".to_string() } else {
+                            match send_sleep(device) {
+                                Ok(()) => "Back from suspend, so the camera was put to sleep again.".to_string(),
+                                Err(error) => format!("Back from suspend, but the camera could not be put to sleep: {error}"),
+                            }
+                        };
+                        log(&note);
+                        status.last_event = note;
+                        status.last_event_at = now_unix();
+                    }
+                }
             }
             // A capture mode that was asked for while another program had the camera is applied now that it is free.
             if let Some(device) = camera.as_deref() {

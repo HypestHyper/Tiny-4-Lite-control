@@ -104,7 +104,7 @@ pub struct Watcher {
 
 impl Watcher {
     /// `before_sleep` is run (and waited for) while the lock is held; then the lock is let go.
-    pub fn start(before_sleep: impl Fn() + Send + 'static) -> Result<Watcher, String> {
+    pub fn start(before_sleep: impl Fn() + Send + 'static, after_wake: impl Fn() + Send + 'static) -> Result<Watcher, String> {
         available()?;
         let mut monitor = monitor_command().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
             .spawn().map_err(|e| format!("Could not start the suspend watcher: {e}"))?;
@@ -124,8 +124,11 @@ impl Watcher {
                     }
                     // Awake again: hold the lock once more for the next time.
                     Some(false) => {
-                        let mut held = thread_lock.lock().unwrap_or_else(|e| e.into_inner());
-                        if held.is_none() { *held = take_lock(); }
+                        {
+                            let mut held = thread_lock.lock().unwrap_or_else(|e| e.into_inner());
+                            if held.is_none() { *held = take_lock(); }
+                        }
+                        after_wake();
                     }
                     None => {}
                 }

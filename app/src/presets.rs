@@ -139,6 +139,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
 
     let mut applied = 0usize;
     let mut errors = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     // Tracking would pull the camera away from a saved position, so a preset that turns tracking
     // off does it first; one that turns tracking on does it last, after the gimbal has moved.
     let tracking = preset.settings.get("obsbot:ai_tracking_mode").copied();
@@ -229,6 +230,17 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             pixel_format: fourcc_from_i64(*format)?,
         }))();
         match mode {
+            // Already in that mode: nothing to change (and nothing to fail while a stream is running).
+            Some(mode) if video::current_mode(device).is_some_and(|now| now.width == mode.width && now.height == mode.height
+                && now.pixel_format == mode.pixel_format && now.frame_rate_milli.abs_diff(mode.frame_rate_milli) <= 500) => { applied += 1; }
+            // Another program is streaming, so the camera refuses a new mode: it is changed once it is free.
+            Some(mode) if !crate::backend::usage::streaming_holders(device).is_empty() => {
+                let pending = config::VideoModeConfig { width: mode.width, height: mode.height, pixel_format: mode.pixel_format.clone(), frame_rate_milli: mode.frame_rate_milli };
+                match update_config_checked(|config| config.pending_video_mode = Some(pending)) {
+                    Ok(()) => notes.push("The capture mode changes when no program is using the camera (the background service does that).".to_string()),
+                    Err(error) => errors.push(format!("video mode: the camera is in use, and the change could not be saved for later: {error}")),
+                }
+            }
             Some(mode) => {
                 match video::set_mode(device, &mode) {
                 Ok(()) => {
@@ -251,7 +263,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     }
 
     if errors.is_empty() {
-        Ok(format!("Submitted {applied} settings from preset '{}'.", preset.name))
+        let mut done = format!("Submitted {applied} settings from preset '{}'.", preset.name);
+        for note in notes { done.push(' '); done.push_str(&note); }
+        Ok(done)
     } else {
         Err(format!("Submitted {applied} settings from '{}'; {} setting(s) failed: {}",
             preset.name, errors.len(), errors.join(" · ")))

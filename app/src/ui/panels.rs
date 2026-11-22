@@ -914,7 +914,15 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
     mode.on_change(move |v| s.set_mode(match v { 1 => ThemeMode::Light, 2 => ThemeMode::Dark, _ => ThemeMode::System }));
     body.append(&section("Theme", mode.widget().upcast_ref()));
 
-    let swatches = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    // Wraps onto a second line in a narrow panel instead of holding the window wide.
+    let swatches = gtk::FlowBox::new();
+    swatches.set_selection_mode(gtk::SelectionMode::None);
+    swatches.set_column_spacing(10);
+    swatches.set_row_spacing(10);
+    swatches.set_max_children_per_line(6);
+    swatches.set_min_children_per_line(1);
+    swatches.set_homogeneous(true);
+    swatches.set_halign(gtk::Align::Start);
     let buttons: Rc<RefCell<Vec<(String, gtk::ToggleButton)>>> = Rc::default();
     for (id, name, _) in theme::ACCENTS {
         let button = gtk::ToggleButton::new();
@@ -929,7 +937,7 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
             let _ = clicked;
             s.set_accent(id);
         });
-        swatches.append(&button);
+        swatches.insert(&button, -1);
         buttons.borrow_mut().push((id.to_string(), button));
     }
     body.append(&section("Accent colour", swatches.upcast_ref()));
@@ -1093,8 +1101,16 @@ fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Opti
     let note = widgets::text("", &["small", "warning-text"]);
     note.set_visible(false);
 
-    let fields = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    // The two ends side by side, or one above the other in a narrow panel; the reset button under them.
+    let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
     fields.add_css_class("limit-fields");
+    let ends = gtk::FlowBox::new();
+    ends.set_selection_mode(gtk::SelectionMode::None);
+    ends.set_homogeneous(true);
+    ends.set_max_children_per_line(2);
+    ends.set_min_children_per_line(1);
+    ends.set_column_spacing(10);
+    ends.set_row_spacing(8);
     let field = |caption: &str, value: f64, low: f64, high: f64| {
         let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
         column.set_hexpand(true);
@@ -1121,10 +1137,11 @@ fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Opti
     let (high_box, high, take_high) = field(axis.high_name, high_now, 0.0, axis.mechanical);
     let reset = gtk::Button::with_label("OBSBOT range");
     reset.add_css_class("small");
-    reset.set_valign(gtk::Align::End);
+    reset.set_halign(gtk::Align::Start);
     reset.set_tooltip_text(Some("Put both ends back to OBSBOT's published range"));
-    fields.append(&low_box);
-    fields.append(&high_box);
+    ends.insert(&low_box, -1);
+    ends.insert(&high_box, -1);
+    fields.append(&ends);
     fields.append(&reset);
 
     let save = {
