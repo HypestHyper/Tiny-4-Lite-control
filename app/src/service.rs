@@ -210,7 +210,8 @@ pub struct Status {
     pub asleep_by_service: bool,
     /// The Studio camera: what runs and what it costs.
     #[serde(default)]
-    pub denoise: Option<crate::denoise::Report>,
+    #[serde(alias = "denoise")]
+    pub studio: Option<crate::studio::Report>,
 }
 
 /// The running service's status, if one is running: for the window to show.
@@ -369,7 +370,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let shared_device: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let mut watcher: Option<crate::suspend::Watcher> = None;
     // The Studio camera (virtual, with filters), run while it is turned on.
-    let mut denoiser = crate::denoise::Denoiser::new();
+    let mut studio = crate::studio::Studio::new();
     let mut watching_suspend = false;
     let mut suspend_retry_at: Option<Instant> = None;
     // When the computer last woke from suspend, until the camera has been put back to sleep.
@@ -381,7 +382,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
         // Looking around takes a round of slices: the wait is cut into small ones so a stop is answered
         // within a fifth of a second.
         // A round every two seconds, or at once when the app's preview lets go of the Studio camera.
-        if slice % ROUND_SLICES == 0 || crate::denoise::release_requested() {
+        if slice % ROUND_SLICES == 0 || crate::studio::release_requested() {
             // Settings edited in the window take effect at once, without restarting the service.
             let now_stamp = config_stamp();
             if now_stamp != stamp {
@@ -441,7 +442,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             // camera awake too, while the Studio camera reads it for that app).
             let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode()
                 && (!backend::usage::streaming_holders(c).is_empty()
-                    || denoiser.watched()
+                    || studio.watched()
                     || backend::usage::seconds_since_activity().is_some_and(|s| s < ACTIVITY_SECONDS)));
             let sight = Sight { camera: camera.as_deref(), in_use, window_open: false };
             for action in brain.step(Instant::now(), &sight) {
@@ -484,9 +485,9 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                 }
             }
             if camera.is_some() { last_device = camera.clone(); }
-            let denoise_config = current_config().denoise;
-            status.denoise = (denoise_config.enabled || status.denoise.is_some())
-                .then(|| denoiser.step(&denoise_config, if backend::ui_test_mode() { None } else { camera.as_deref() }));
+            let studio_config = current_config().studio;
+            status.studio = (studio_config.enabled || status.studio.is_some())
+                .then(|| studio.step(&studio_config, if backend::ui_test_mode() { None } else { camera.as_deref() }));
             status.camera = camera;
             write_status(&status);
             if once && restored_once { break; }
@@ -495,7 +496,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
         slice = slice.wrapping_add(1);
     }
     drop(watcher);
-    denoiser.stop_all();
+    studio.stop_all();
     // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep.
     if stop.load(std::sync::atomic::Ordering::Relaxed) && current_config().service.sleep_on_shutdown {
         if let Some(device) = last_device.as_deref().filter(|d| Path::new(d).exists() || backend::ui_test_mode()) {
@@ -937,7 +938,7 @@ mod tests {
 
     #[test]
     fn the_status_file_round_trips() {
-        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false, denoise: Some(crate::denoise::Report { state: "running".into(), cpu_percent: Some(12.5), ..Default::default() }) };
+        let status = Status { pid: 7, started: 5, camera: Some("/dev/video1".into()), last_event: "x".into(), last_event_at: 9, restored: true, asleep_by_service: false, studio: Some(crate::studio::Report { state: "running".into(), cpu_percent: Some(12.5), ..Default::default() }) };
         let text = serde_json::to_string(&status).unwrap();
         assert_eq!(serde_json::from_str::<Status>(&text).unwrap(), status);
     }

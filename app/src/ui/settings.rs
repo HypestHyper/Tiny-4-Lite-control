@@ -21,7 +21,7 @@ pub struct Masonry {
 
 impl Masonry {
     pub fn new() -> Masonry {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         root.set_homogeneous(true);
         let masonry = Masonry { root, columns: Rc::default(), cards: Rc::default(), count: Rc::new(Cell::new(0)) };
         masonry.set_columns(1);
@@ -46,7 +46,7 @@ impl Masonry {
         while let Some(child) = self.root.first_child() { self.root.remove(&child); }
         self.columns.borrow_mut().clear();
         for _ in 0..count {
-            let column = gtk::Box::new(gtk::Orientation::Vertical, 16);
+            let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
             column.set_valign(gtk::Align::Start);
             self.root.append(&column);
             self.columns.borrow_mut().push(column);
@@ -132,7 +132,7 @@ pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
         let (card, weight) = group_card(store, group, &settings, Density::Full, keep);
         masonry.add(&card, weight);
     }
-    let holder = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 12);
     holder.set_margin_end(6);
     holder.set_margin_bottom(20);
     holder.append(masonry.widget());

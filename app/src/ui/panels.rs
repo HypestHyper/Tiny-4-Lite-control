@@ -627,80 +627,20 @@ pub fn app_card(store: &Store) -> gtk::Box {
     card
 }
 
-/// The Studio camera: a second camera with filters (denoise first), run by the background service. Its
-/// switch, each filter with its strength beside it, the graphics-chip choice, what it needs, and what it
-/// is doing and costing right now.
-pub fn denoise_card(store: &Store) -> gtk::Box {
+/// The Studio camera: a second, virtual camera, run by the background service, as the frame for filters
+/// on the camera's picture (none yet: it passes the picture through). Its switch, the 30 fps limit, what it
+/// needs, and what it is doing and costing right now.
+pub fn studio_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Studio camera", "blur_on",
-        "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, with the filters below applied. Choose it in your video app. It only uses the camera while an app has it open.");
+        "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, that apps can choose. It only uses the camera while an app has it open.");
     body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it under Background service, further down this tab."));
-    let config = current_config().denoise;
+    let config = current_config().studio;
     body.append(&plain_switch_row("Studio camera",
         "Make \u{201c}Tiny 2 Lite Studio\u{201d} available to apps.",
-        config.enabled, |on| update_config(|c| c.denoise.enabled = on)));
-    body.append(&widgets::text("Filters", &["small", "dim", "chooser-head"]));
-
-    // The switch, and the strength right beside it while it is on.
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    titles.set_hexpand(true);
-    titles.append(&widgets::text("Denoise", &["setting-label"]));
-    titles.append(&widgets::text("Less grain. Strength: to the right, smoother but softer.", &["setting-summary"]));
-    let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 100.0, 1.0);
-    strength.set_draw_value(false);
-    strength.set_size_request(140, -1);
-    strength.set_value(f64::from(config.strength));
-    strength.set_valign(gtk::Align::Center);
-    widgets::lock_wheel(&strength);
-    widgets::label_accessible(&strength, "Denoise strength");
-    let amount = widgets::line(&config.strength.to_string(), &["setting-value", "tnum"]);
-    amount.set_width_chars(3);
-    amount.set_valign(gtk::Align::Center);
-    let beside = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    beside.append(&strength);
-    beside.append(&amount);
-    let reveal = gtk::Revealer::new();
-    reveal.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
-    reveal.set_child(Some(&beside));
-    reveal.set_reveal_child(config.denoise);
-    let switch = gtk::Switch::new();
-    switch.set_valign(gtk::Align::Center);
-    switch.set_active(config.denoise);
-    widgets::label_accessible(&switch, "Denoise");
-    {
-        let reveal = reveal.clone();
-        switch.connect_active_notify(move |sw| {
-            let on = sw.is_active();
-            update_config(|c| c.denoise.denoise = on);
-            reveal.set_reveal_child(on);
-        });
-    }
-    {
-        // Saved once the slider settles: a change restarts the denoising for a moment.
-        let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
-        let amount = amount.clone();
-        strength.connect_value_changed(move |s| {
-            let value = s.value().round() as u8;
-            amount.set_text(&value.to_string());
-            if let Some(id) = timer.borrow_mut().take() { id.remove(); }
-            let slot = timer.clone();
-            *timer.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(500), move || {
-                slot.borrow_mut().take();
-                update_config(|c| c.denoise.strength = value);
-            }));
-        });
-    }
-    row.append(&titles);
-    row.append(&reveal);
-    row.append(&switch);
-    body.append(&row);
-
-    body.append(&plain_switch_row("Use the graphics chip",
-        "Denoise on the GPU when it can: VA-API (Intel) or Vulkan (AMD, Intel, NVIDIA), with the best-looking filter and almost no processor time. Off, or without one, the processor does it.",
-        config.use_gpu, |on| update_config(|c| c.denoise.use_gpu = on)));
+        config.enabled, |on| update_config(|c| c.studio.enabled = on)));
     body.append(&plain_switch_row("Limit to 30 fps",
         "A camera set to 60 fps gives the Studio camera 30: half the work, and plenty for calls.",
-        config.limit_fps, |on| update_config(|c| c.denoise.limit_fps = on)));
+        config.limit_fps, |on| update_config(|c| c.studio.limit_fps = on)));
 
     // What it needs, with a way to set it up.
     let needs = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -720,7 +660,7 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
 
     // What it is doing, and what it costs.
     let state = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    state.add_css_class("denoise-state");
+    state.add_css_class("studio-state");
     let glyph = widgets::icon("memory");
     glyph.set_valign(gtk::Align::Start);
     let state_text = widgets::text("", &["small"]);
@@ -735,11 +675,11 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
         move || -> bool {
             let (Some(needs), Some(needs_text), Some(state), Some(state_text)) = (needs.upgrade(), needs_text.upgrade(), state.upgrade(), state_text.upgrade()) else { return false };
             let mut missing = Vec::new();
-            if !crate::denoise::ffmpeg_found() { missing.push("ffmpeg"); }
-            if crate::denoise::loopback_node().is_none() { missing.push("the virtual camera (v4l2loopback)"); }
+            if !crate::studio::ffmpeg_found() { missing.push("ffmpeg"); }
+            if crate::studio::loopback_node().is_none() { missing.push("the virtual camera (v4l2loopback)"); }
             needs.set_visible(!missing.is_empty());
             needs_text.set_text(&format!("Needs {}.", missing.join(" and ")));
-            let report = crate::service::running_status().and_then(|s| s.denoise);
+            let report = crate::service::running_status().and_then(|s| s.studio);
             match report {
                 Some(r) if r.state != "off" || !r.detail.is_empty() => {
                     let mut line = match r.state.as_str() {
@@ -756,7 +696,6 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
                     }
                     if let Some(cpu) = r.cpu_percent { line.push_str(&format!(" · CPU {cpu:.0}%")); }
                     if let Some(mb) = r.memory_mb { line.push_str(&format!(" · {mb:.0} MB")); }
-                    if r.gpu { line.push_str(" · graphics chip"); }
                     if let Some(device) = &r.device { line.push_str(&format!(" · {device}")); }
                     if !r.detail.is_empty() { line.push_str(&format!("\n{}", r.detail)); }
                     state_text.set_text(&line);

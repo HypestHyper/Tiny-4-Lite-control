@@ -367,7 +367,7 @@ window.t4.csd { border-radius: §18§; }
 .segmented.small button.segment { min-height: §32§; padding: 0 §12§; font-size: ¶13¶; }
 
 /* Surfaces */
-.card { background: @t_surface; border-radius: §28§; padding: §20§; }
+.card { background: @t_surface; border-radius: §24§; padding: §14§ §16§; }
 .t4 .service-notice { background: alpha(@t_tertiary, 0.14); color: @t_on_surface; border-radius: §12§; padding: §10§ §12§; }
 .t4 .service-notice .icon { color: @t_tertiary; }
 .t4 label.code { font-family: monospace; font-size: ¶12¶; background: @t_surface_high; border-radius: §10§; padding: §10§ §12§; }
@@ -387,8 +387,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 .warning-text { color: @t_error; }
 .t4 .gesture-icon { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: 999px; }
 .t4 .gesture-icon .icon { font-size: §24§; }
-.t4 .denoise-state { background: @t_surface_high; border-radius: §12§; padding: §10§ §12§; }
-.t4 .denoise-state .icon { color: @t_primary; }
+.t4 .studio-state { background: @t_surface_high; border-radius: §12§; padding: §10§ §12§; }
+.t4 .studio-state .icon { color: @t_primary; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }
@@ -400,8 +400,8 @@ window.t4.csd { border-radius: §18§; }
 .divider { background: @t_outline_variant; min-height: 1px; }
 
 /* Setting rows */
-.setting-row { padding: §10§ 0; }
-.setting-row.slim { padding: §6§ 0; }
+.setting-row { padding: §6§ 0; }
+.setting-row.slim { padding: §4§ 0; }
 .setting-label { font-size: ¶14¶; font-weight: 600; }
 .setting-summary { font-size: ¶13¶; color: @t_on_surface_variant; }
 .setting-value { font-size: ¶13¶; font-weight: 600; color: @t_primary; font-feature-settings: "tnum"; }
@@ -420,8 +420,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 switch label { font-size: 0; min-width: 0; }
 
 /* Slider: tall pill track, bar handle with a ring */
-.t4 scale trough { min-height: §16§; border-radius: §8§; background: @t_surface_highest; border: none; }
-.t4 scale highlight { min-width: 0; margin: 0; padding: 0; min-height: §16§; border-radius: §8§; background: @t_primary; border: none; }
+.t4 .setting-row scale { padding: §6§ §2§ §2§ §2§; }
+.t4 scale trough { min-height: §14§; border-radius: §8§; background: @t_surface_highest; border: none; }
+.t4 scale highlight { min-width: 0; margin: 0; padding: 0; min-height: §14§; border-radius: §8§; background: @t_primary; border: none; }
 /* Colour sliders: the bar shows the colours it moves between, and the filled part lets them show through. */
 .t4 scale.grad-temperature trough { background-image: linear-gradient(to right, #ff8a2b, #ffc98a 30%, #f2f0ea 50%, #b9d0ff 70%, #6f9cff); }
 .t4 scale.grad-red trough { background-image: linear-gradient(to right, #3fb8b4, #9aa3a6 50%, #e5484d); }

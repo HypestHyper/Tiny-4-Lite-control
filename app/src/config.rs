@@ -57,7 +57,9 @@ pub struct AppConfig {
     // Auto-sleep is opt-in and must remain inert unless explicitly enabled.
     pub service: ServiceConfig,
     /// The Studio camera: a virtual camera with filters.
-    pub denoise: DenoiseConfig,
+    // Saved as [denoise] by the first versions; still read from there.
+    #[serde(alias = "denoise")]
+    pub studio: StudioConfig,
     // Reserved for a future explicit restore-on-connect feature. False is
     // deliberately the default: loading config must never move the camera.
     pub apply_on_connect: bool,
@@ -105,7 +107,8 @@ pub struct AppConfig {
     /// How strict focus peaking is, 0–100: higher marks only the very sharpest edges.
     pub preview_peaking_strictness: u8,
     /// Show the Studio camera in the preview instead of the camera itself (when it is there).
-    pub preview_denoised: bool,
+    #[serde(alias = "preview_denoised")]
+    pub preview_studio: bool,
     /// Keep the gimbal inside OBSBOT's published tilt range (30° down to 70° up). Off, it can be driven to
     /// the mechanical ends.
     pub tilt_limit: bool,
@@ -123,24 +126,18 @@ pub struct AppConfig {
     pub service_setup_dismissed: bool,
 }
 
-/// The Studio camera (a second, virtual camera with filters), run by the background service.
+/// The Studio camera (a second, virtual camera for filters), run by the background service.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
-pub struct DenoiseConfig {
+pub struct StudioConfig {
     /// The Studio camera is there for apps.
     pub enabled: bool,
-    /// The denoise filter is on.
-    pub denoise: bool,
-    /// Denoise strength, 1 to 100.
-    pub strength: u8,
-    /// Denoise on the graphics chip (VA-API or Vulkan) when there is one.
-    pub use_gpu: bool,
     /// Bring a 60 fps camera down to 30 for the Studio camera: half the work.
     pub limit_fps: bool,
 }
 
-impl Default for DenoiseConfig {
-    fn default() -> DenoiseConfig { DenoiseConfig { enabled: false, denoise: true, strength: 40, use_gpu: true, limit_fps: true } }
+impl Default for StudioConfig {
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
@@ -206,7 +203,7 @@ impl Default for AppConfig {
             gesture_zoom_ratio: None,
             joystick_sensitivity_percent: 100,
             service: ServiceConfig::default(),
-            denoise: DenoiseConfig::default(),
+            studio: StudioConfig::default(),
             apply_on_connect: false,
             compact_mode: false,
             compact_controls: vec![
@@ -243,7 +240,7 @@ impl Default for AppConfig {
             preview_on_start: false,
             preview_focus_peaking: false,
             preview_peaking_strictness: 60,
-            preview_denoised: false,
+            preview_studio: false,
             tilt_limit: true,
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,

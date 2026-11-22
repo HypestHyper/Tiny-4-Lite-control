@@ -139,15 +139,15 @@ impl PreviewHub {
     }
 
     /// The Studio camera's node, if the preview shows it and it is there.
-    fn showing_denoised(&self) -> Option<String> {
-        if !current_config().preview_denoised { return None; }
-        crate::denoise::loopback_node()
+    fn showing_studio(&self) -> Option<String> {
+        if !current_config().preview_studio { return None; }
+        crate::studio::loopback_node()
     }
 
     /// Show the Studio camera or the camera itself, and start the picture again from the new one.
-    pub fn set_denoised(&self, on: bool) {
-        if current_config().preview_denoised == on { return; }
-        update_config(|c| c.preview_denoised = on);
+    pub fn set_studio(&self, on: bool) {
+        if current_config().preview_studio == on { return; }
+        update_config(|c| c.preview_studio = on);
         // Every window's list follows.
         let listeners: Vec<_> = self.0.source_listeners.borrow().clone();
         let keep: Vec<bool> = listeners.iter().map(|l| l(on)).collect();
@@ -155,22 +155,22 @@ impl PreviewHub {
         self.0.source_listeners.borrow_mut().retain(|_| { let k = keep.get(i).copied().unwrap_or(true); i += 1; k });
         self.0.retries.set(0);
         // Back to the camera: ask the service to let go of it now, not after its usual pause.
-        if !on { crate::denoise::request_release(); }
+        if !on { crate::studio::request_release(); }
         if self.0.running.get() { self.restart(); } else { self.update_demand(); }
     }
 
     /// Why the Studio camera cannot give a picture right now, before trying: not set up, the background
     /// service not running, turned off, or what the service says is wrong. None when it should work.
     fn studio_blocked(&self) -> Option<String> {
-        if crate::denoise::loopback_node().is_none() {
+        if crate::studio::loopback_node().is_none() {
             return Some("The Studio camera is not set up yet: Device tab \u{2192} Studio camera \u{2192} Set up\u{2026}. Or pick Camera above.".into());
         }
         let Some(status) = crate::service::running_status() else {
             return Some("The Studio camera needs the background service, and it is not running: Device tab \u{2192} Background service \u{2192} Start (or Install\u{2026}). Or pick Camera above.".into());
         };
-        match status.denoise {
+        match status.studio {
             // Turned on, but the service says nothing about it: it is an older version.
-            None if current_config().denoise.enabled => Some("The background service that is running is an older version without the Studio camera. Install this version (Device tab \u{2192} App), or stop and start the service (Device tab \u{2192} Background service).".into()),
+            None if current_config().studio.enabled => Some("The background service that is running is an older version without the Studio camera. Install this version (Device tab \u{2192} App), or stop and start the service (Device tab \u{2192} Background service).".into()),
             None => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
             Some(r) if r.state == "off" => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
             Some(r) if r.state == "unavailable" || r.state == "error" => Some(format!("The Studio camera is not working: {}", r.detail)),
@@ -183,7 +183,7 @@ impl PreviewHub {
     fn studio_problem(&self) -> String {
         let service = match crate::service::running_status() {
             None => "The background service is not running, and it runs the Studio camera.".to_string(),
-            Some(status) => match status.denoise {
+            Some(status) => match status.studio {
                 None => "The Studio camera is turned off (Device tab \u{2192} Studio camera).".to_string(),
                 Some(r) if r.detail.is_empty() => format!("The Studio camera is {}.", r.state),
                 Some(r) => r.detail,
@@ -204,9 +204,9 @@ impl PreviewHub {
         picker.set_valign(gtk::Align::Center);
         picker.set_tooltip_text(Some("What the preview shows: the camera itself, or the Studio camera (with its filters) that your apps can use"));
         widgets::label_accessible(&picker, "Preview source");
-        picker.set_selected(u32::from(current_config().preview_denoised));
+        picker.set_selected(u32::from(current_config().preview_studio));
         let hub = self.clone();
-        picker.connect_selected_notify(move |p| hub.set_denoised(p.selected() == 1));
+        picker.connect_selected_notify(move |p| hub.set_studio(p.selected() == 1));
         // Changed in another window: show the same here.
         let weak = picker.downgrade();
         self.0.source_listeners.borrow_mut().push(Rc::new(move |on| match weak.upgrade() {
@@ -345,16 +345,16 @@ impl PreviewHub {
         self.each_view(|v| v.show_message("Starting preview…", "videocam"));
         let this = self.clone();
         // The Studio camera, if that is what the preview shows and it is there; otherwise the camera.
-        if current_config().preview_denoised {
+        if current_config().preview_studio {
             if let Some(why) = self.studio_blocked() {
                 hub.running.set(false);
                 self.each_view(|v| v.show_message(&why, "videocam_off"));
                 return;
             }
         }
-        let denoised = self.showing_denoised();
+        let from_studio = self.showing_studio();
         // Reading the current mode asks the camera, so do it off the UI thread.
-        hub.store.call(None, move |device| match &denoised {
+        hub.store.call(None, move |device| match &from_studio {
             // The Studio camera always sends raw 4:2:0 at the camera's own size. It only answers questions
             // while something writes to it (and the writer changes as the preview opens it), so the size
             // comes from the camera itself.
@@ -374,10 +374,10 @@ impl PreviewHub {
 
     fn spawn_stream(&self, mode: VideoMode, generation: u64, device: String) {
         let hub = &self.0;
-        let denoised = device != hub.store.device();
+        let from_studio = device != hub.store.device();
         *hub.mode.borrow_mut() = Some(mode.clone());
         // The capture mode card follows what the camera itself sends, not the Studio copy.
-        if !denoised {
+        if !from_studio {
             let listeners: Vec<_> = hub.mode_listeners.borrow().clone();
             for listener in listeners { listener(&mode); }
         }
@@ -418,7 +418,7 @@ impl PreviewHub {
         *hub.child.borrow_mut() = child;
 
         let this = self.clone();
-        let label = if denoised { format!("Studio · {} × {}", mode.width, mode.height) }
+        let label = if from_studio { format!("Studio · {} × {}", mode.width, mode.height) }
             else { format!("{} × {} · {} · {:.0} fps", mode.width, mode.height, mode.pixel_format, mode.frame_rate_milli as f64 / 1000.0) };
         glib::spawn_future_local(async move {
             while let Ok(frame) = receiver.recv().await {
@@ -430,7 +430,7 @@ impl PreviewHub {
                 // A hiccup in the stream is common, so try again a few times before giving up. The Studio
                 // camera changes its writer as it starts (placeholder, then the real picture), which takes
                 // a few seconds, so it gets more tries.
-                let tries = if denoised { 6 } else { 3 };
+                let tries = if from_studio { 6 } else { 3 };
                 if this.0.retries.get() < tries && this.0.enabled.get() {
                     this.0.retries.set(this.0.retries.get() + 1);
                     this.each_view(|v| v.show_message("The picture stopped. Reconnecting…", "videocam"));
@@ -439,7 +439,7 @@ impl PreviewHub {
                         if !again.0.running.get() { again.update_demand(); }
                     });
                 } else {
-                    let why = if denoised { format!("The Studio picture stopped. {}", this.studio_problem()) } else { "The picture stopped.".to_string() };
+                    let why = if from_studio { format!("The Studio picture stopped. {}", this.studio_problem()) } else { "The picture stopped.".to_string() };
                     this.each_view(|v| v.show_message(&why, "videocam_off"));
                 }
             }

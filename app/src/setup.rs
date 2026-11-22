@@ -107,8 +107,8 @@ pub fn kernel_headers_package(manager: Manager) -> Option<String> {
     }
 }
 
-/// The package for what denoise needs (`ffmpeg`, `v4l2loopback`) on a package manager, if it has one.
-pub fn denoise_package(what: &str, manager: Manager) -> Option<&'static str> {
+/// The package for what the Studio camera needs (`ffmpeg`, `v4l2loopback`) on a package manager, if it has one.
+pub fn studio_package(what: &str, manager: Manager) -> Option<&'static str> {
     Some(match (what, manager) {
         ("ffmpeg", Manager::Portage) => "media-video/ffmpeg",
         // Fedora's own build (RPM Fusion's "ffmpeg" replaces it if that is wanted); both have the filters used.
@@ -155,7 +155,7 @@ pub fn requirements_command(install: bool, yes: bool) -> i32 {
     }
     // The Studio camera needs more, and is set up on its own (tiny4lite-control studio setup).
     let ffmpeg = program_found("ffmpeg");
-    let camera = crate::denoise::loopback_node();
+    let camera = crate::studio::loopback_node();
     println!("\nFor the Studio camera (optional, set up with: tiny4lite-control studio setup):");
     println!("{} {:<36} {}", if ffmpeg { "ok     " } else { "missing" }, "ffmpeg", "reads, cleans and writes the picture");
     println!("{} {:<36} {}", if camera.is_some() { "ok     " } else { "missing" }, "v4l2loopback (the virtual camera)", "the second camera that apps choose");
@@ -494,15 +494,15 @@ mod tests {
     }
 
     #[test]
-    fn denoise_packages_are_named_for_every_package_manager() {
+    fn studio_packages_are_named_for_every_package_manager() {
         for manager in [Manager::Apt, Manager::Dnf, Manager::Pacman, Manager::Zypper, Manager::Apk, Manager::Xbps, Manager::Portage] {
-            assert!(denoise_package("ffmpeg", manager).is_some(), "{manager:?}");
+            assert!(studio_package("ffmpeg", manager).is_some(), "{manager:?}");
         }
-        assert_eq!(denoise_package("ffmpeg", Manager::Dnf), Some("ffmpeg-free"));
-        assert_eq!(denoise_package("v4l2loopback", Manager::Pacman), Some("v4l2loopback-dkms"));
-        assert_eq!(denoise_package("v4l2loopback", Manager::Dnf), Some("akmod-v4l2loopback"));
+        assert_eq!(studio_package("ffmpeg", Manager::Dnf), Some("ffmpeg-free"));
+        assert_eq!(studio_package("v4l2loopback", Manager::Pacman), Some("v4l2loopback-dkms"));
+        assert_eq!(studio_package("v4l2loopback", Manager::Dnf), Some("akmod-v4l2loopback"));
         // Alpine has none: setup says so instead of trying.
-        assert_eq!(denoise_package("v4l2loopback", Manager::Apk), None);
+        assert_eq!(studio_package("v4l2loopback", Manager::Apk), None);
         assert!(kernel_headers_package(Manager::Apt).is_some_and(|p| p.starts_with("linux-headers-")));
         assert_eq!(kernel_headers_package(Manager::Zypper), None);
     }

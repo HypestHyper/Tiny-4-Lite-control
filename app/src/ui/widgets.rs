@@ -247,7 +247,7 @@ const EDIT_HOLD: Duration = Duration::from_millis(900);
 
 impl SettingRow {
     pub fn new(store: &Store, setting: &'static Setting, density: Density) -> SettingRow {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
         root.add_css_class("setting-row");
         if density == Density::Slim { root.add_css_class("slim"); }
         root.set_accessible_role(gtk::AccessibleRole::Group);
