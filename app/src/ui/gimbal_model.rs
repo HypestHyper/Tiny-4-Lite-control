@@ -657,16 +657,13 @@ impl GimbalModel {
                 &[Kind::Moving], &[Kind::Lens], &[Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
             ];
             for kinds in styles {
-                // The view cone fades out as the camera goes down to sleep, and back in as it comes up.
-                // The view cone is always drawn, whatever the tilt (the camera reports where it points).
-                let cone = 1.0;
-                if cone <= 0.0 { continue; }
-                let ((r, g, b), width, alpha) = colour(kinds[0]);
-                let alpha = alpha * cone;
+                // The view cone is always drawn, whatever the tilt.
+                // (Line thickness is `line_width`: `width` is the drawing's own width, which the cone needs.)
+                let ((r, g, b), line_width, alpha) = colour(kinds[0]);
                 // The lens accent fades near edge-on instead of vanishing at once.
                 let alpha = if kinds.contains(&Kind::LensFront) { alpha * lens_visibility(lens_facing(pan, tilt, yaw)) } else { alpha };
                 cr.set_source_rgba(r, g, b, alpha * fade);
-                cr.set_line_width(width);
+                cr.set_line_width(line_width);
                 let on_screen = |p: V3| { let (x, y) = project(p, yaw); (cx + x * scale, cy + y * scale) };
                 let chosen: Vec<((f64, f64), (f64, f64))> = lines.iter().filter(|l| kinds.contains(&l.kind)).map(|l| (on_screen(l.a), on_screen(l.b))).collect();
                 // The cone is drawn shorter rather than cut off at the edge.
@@ -886,5 +883,44 @@ mod shape_tests {
         let angle = dx.abs().atan2(dz.abs()).to_degrees();
         assert!((angle - 67.2 / 2.0).abs() < 0.2, "half width {angle}");
         assert!((dy.abs() / dx.abs() - 9.0 / 16.0).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod cone_preview {
+    use super::*;
+
+    /// With T4_CONE_PREVIEW=path, draws the model at a few poses as raw RGBA (to look at the cone).
+    #[test]
+    fn write_cone_preview_when_asked() {
+        let Some(path) = std::env::var_os("T4_CONE_PREVIEW") else { return };
+        let poses = [(0.0, 0.0, FRONT_YAW), (13.0, -85.0, FRONT_YAW), (40.0, 10.0, FRONT_YAW), (-60.0, 0.0, FRONT_YAW), (0.0, 0.0, 215.0), (0.0, 30.0, FRONT_YAW)];
+        let (w, h) = (MIN_WIDTH + 40, MODEL_HEIGHT);
+        let surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, w * poses.len() as i32, h).unwrap();
+        let cr = gtk::cairo::Context::new(&surface).unwrap();
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.paint().unwrap();
+        for (i, (pan, tilt, yaw)) in poses.iter().enumerate() {
+            let lines = model(*pan, *tilt, 0.0, *yaw);
+            let x0 = f64::from(w) * i as f64;
+            let (cx, cy) = (x0 + f64::from(w) / 2.0, f64::from(h) * 0.58);
+            let k = cone_share(&lines, *yaw, (f64::from(w) / 2.0, f64::from(h) * 0.58), FIXED_SCALE, (f64::from(w), f64::from(h)));
+            let aim: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
+            let apex = aim[0].a;
+            let pull = |p: V3| (apex.0 + (p.0 - apex.0) * k, apex.1 + (p.1 - apex.1) * k, apex.2 + (p.2 - apex.2) * k);
+            for line in &lines {
+                let (a, b) = if line.kind == Kind::Aim { (pull(line.a), pull(line.b)) } else { (line.a, line.b) };
+                if line.kind == Kind::Aim { cr.set_source_rgb(0.1, 0.4, 0.9); cr.set_line_width(1.6); } else { cr.set_source_rgb(0.5, 0.5, 0.5); cr.set_line_width(0.8); }
+                let (ax, ay) = project(a, *yaw);
+                let (bx, by) = project(b, *yaw);
+                cr.move_to(cx + ax * FIXED_SCALE, cy + ay * FIXED_SCALE);
+                cr.line_to(cx + bx * FIXED_SCALE, cy + by * FIXED_SCALE);
+                cr.stroke().unwrap();
+            }
+        }
+        drop(cr);
+        surface.flush();
+        let data = surface.take_data().unwrap();
+        std::fs::write(path, &data[..]).unwrap();
     }
 }
