@@ -544,7 +544,7 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
             "Let the camera correct for the colour of your lighting.", Kind::Toggle),
         Setting::v4l2("white_balance_temperature", "v4l2:white_balance_temperature", WhiteBalance, "Colour temperature",
-            "Lower is warmer, higher is cooler.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
+            "Match it to your light: lower makes the picture cooler (bluer), higher makes it warmer.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
             "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
