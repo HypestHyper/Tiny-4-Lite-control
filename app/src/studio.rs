@@ -74,6 +74,11 @@ pub const OUTPUT_FORMAT: &str = "yuyv422";
 pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>) -> Vec<String> {
     let mut args = base_args();
     if let Some((route, _)) = lut { args.extend(crate::lut::hw_args(route)); }
+    // Low delay: no input buffering or probing (the format is known), the camera's frames unpacked on one
+    // core (unpacking spread over cores holds a frame back per core), and frames passed on as they come
+    // rather than re-timed (re-timing duplicates or drops frames, and catching up builds lag).
+    args.extend(["-fflags".into(), "nobuffer".into(), "-flags".into(), "low_delay".into(), "-probesize".into(), "32".into(),
+        "-analyzeduration".into(), "0".into(), "-thread_queue_size".into(), "2".into(), "-threads".into(), "1".into()]);
     args.extend([
         "-f".into(), "v4l2".into(), "-input_format".into(), format.input.clone(),
         "-video_size".into(), format!("{}x{}", format.width, format.height),
@@ -88,7 +93,7 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Opt
     args.extend(["-vf".into(), format!("{limit}{filters}")]);
     // Progress every second (frames done so far), to measure the frame rate the Studio camera really gets.
     args.extend(["-progress".into(), progress_path().to_string_lossy().to_string(), "-stats_period".into(), "1".into()]);
-    args.extend(["-f".into(), "v4l2".into(), loopback.into()]);
+    args.extend(["-fps_mode".into(), "passthrough".into(), "-f".into(), "v4l2".into(), loopback.into()]);
     args
 }
 
@@ -528,6 +533,9 @@ mod tests {
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
         let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None).join(" ");
         assert!(pass.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{pass}");
+        // Low delay: no buffering or probing, one decoding thread, frames passed on as they come.
+        assert!(pass.contains("-fflags nobuffer -flags low_delay") && pass.contains("-threads 1 -f v4l2"), "{pass}");
+        assert!(pass.contains("-fps_mode passthrough -f v4l2 /dev/video42"), "{pass}");
         assert!(pass.contains("-vf format=yuyv422 -progress") && pass.ends_with("-f v4l2 /dev/video42"), "{pass}");
         // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
         let sixty = Format { fps: 60.0, ..fmt() };
