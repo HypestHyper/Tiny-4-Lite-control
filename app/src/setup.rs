@@ -159,11 +159,34 @@ pub fn start() -> Result<String, String> {
         return Ok("Started.".into());
     }
     use std::os::unix::process::CommandExt;
-    Command::new(service::program_path()).args(["service", "run"])
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+    // With no systemd journal to catch what it says, it writes to a log beside its status file.
+    let log_path = service::log_path();
+    if let Some(parent) = log_path.parent() { let _ = std::fs::create_dir_all(parent); }
+    let log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path);
+    let stderr = match log { Ok(file) => Stdio::from(file), Err(_) => Stdio::null() };
+    let mut child = Command::new(service::program_path()).args(["service", "run"])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(stderr)
         .process_group(0)
         .spawn().map_err(|e| format!("Could not start the service: {e}"))?;
-    Ok("Started.".into())
+    // Collected when it ends, so a window that started it is not left holding a finished process.
+    std::thread::spawn(move || { let _ = child.wait(); });
+    // Give it a moment, so a start that fails at once (another copy running) is reported.
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if service::running_status().is_some() { return Ok(format!("Started. Its log is {}.", log_path.display())); }
+    }
+    Err(format!("The service did not start. See {}.", log_path.display()))
+}
+
+/// Ask a process to stop and wait for it to go.
+fn terminate(pid: u32) -> Result<(), String> {
+    Command::new("kill").args(["-TERM", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status()
+        .map_err(|e| format!("Could not stop the service: {e}"))?;
+    for _ in 0..40 {
+        if !service::is_service_process(pid) { return Ok(()); }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    Err("The service did not stop within a few seconds.".into())
 }
 
 /// Stop the service. It sends sleep on its way out if that is turned on.
@@ -171,15 +194,11 @@ pub fn stop() -> Result<String, String> {
     let Some(status) = service::running_status() else { return Ok("The service is not running.".into()) };
     if installed() == Some(InstalledAs::Systemd) && systemd_user_available() {
         systemctl(&["stop", "tiny4lite-control.service"])?;
-    } else {
-        Command::new("kill").args(["-TERM", &status.pid.to_string()]).status().map_err(|e| format!("Could not stop the service: {e}"))?;
+        // systemd only stops what it started: one started by hand or from autostart is still running.
+        if !service::is_service_process(status.pid) { return Ok("Stopped.".into()); }
     }
-    // It answers within a moment; wait for it, so the next look at its status is true.
-    for _ in 0..40 {
-        if service::running_status().is_none() { return Ok("Stopped.".into()); }
-        std::thread::sleep(std::time::Duration::from_millis(150));
-    }
-    Err("The service did not stop within a few seconds.".into())
+    terminate(status.pid)?;
+    Ok("Stopped.".into())
 }
 
 pub fn restart() -> Result<String, String> { stop()?; start() }
@@ -203,6 +222,8 @@ pub fn remove() -> Result<String, String> {
 pub fn install_service() -> Result<String, String> {
     let program = service::program_path();
     if systemd_user_available() {
+        // A copy started another way would hold the lock, and the systemd one would not run.
+        if let Some(status) = service::running_status() { terminate(status.pid)?; }
         let path = service::install_path("systemd").ok_or("No place for the service file.")?;
         if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
         std::fs::write(&path, service::systemd_unit(&program)).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
@@ -222,7 +243,7 @@ pub fn install_service() -> Result<String, String> {
 pub fn setup_command(yes: bool) -> i32 {
     println!("Tiny 2 Lite Control: background service setup\n");
     println!("1. What it needs\n");
-    let code = requirements_command(false, true);
+    requirements_command(false, true);
     let wanted = manager().map(installable).unwrap_or_default();
     if !wanted.is_empty() {
         println!();
@@ -235,7 +256,6 @@ pub fn setup_command(yes: bool) -> i32 {
         wait_to_close(yes);
         return crate::cli::FAILED;
     }
-    let _ = code;
     println!("\n2. The service\n");
     let result = install_service();
     match &result { Ok(message) => println!("{message}"), Err(error) => println!("Could not install it: {error}") }
@@ -248,7 +268,7 @@ pub fn setup_command(yes: bool) -> i32 {
     if result.is_ok() { crate::cli::OK } else { crate::cli::FAILED }
 }
 
-fn wait_to_close(yes: bool) {
+pub fn wait_to_close(yes: bool) {
     if yes { return; }
     use std::io::{BufRead, Write};
     print!("\nPress Enter to close this window.");

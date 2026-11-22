@@ -7,10 +7,13 @@
 //! already be asleep when we react.
 //!
 //! No libraries are added: `dbus-monitor` prints the signal, and `systemd-inhibit` (or
-//! `elogind-inhibit`) holds the lock for as long as the program it runs lives.
+//! `elogind-inhibit`) holds the lock for as long as the program it runs lives. That program is `cat`
+//! reading a pipe from this process, so it ends, and the lock with it, when the service ends in any way,
+//! even if it is killed: nothing is left behind.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Reads `dbus-monitor` output and says when a `PrepareForSleep` signal arrives, and what it carried:
@@ -69,18 +72,24 @@ fn monitor_command() -> Command {
 
 fn take_lock() -> Option<Child> {
     if crate::backend::ui_test_mode() && std::env::var_os("TINY4LITE_TEST_SUSPEND_MONITOR").is_some() {
-        return Command::new("sh").args(["-c", "while :; do sleep 1; done"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
+        return Command::new("cat").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
     }
     let program = inhibit_program()?;
-    // `sleep infinity` is not everywhere (busybox), so the lock is held by a loop instead.
+    // `cat` waits on our pipe: closing it (or this process ending) ends `cat`, then the inhibitor lets go.
     Command::new(program)
-        .args(["--what=sleep", "--mode=delay", "--who=tiny4lite-control", "--why=Putting the camera to sleep", "sh", "-c", "while :; do sleep 3600; done"])
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .args(["--what=sleep", "--mode=delay", "--who=tiny4lite-control", "--why=Putting the camera to sleep", "cat"])
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().ok()
 }
 
 fn release(lock: &Mutex<Option<Child>>) {
     if let Some(mut child) = lock.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        // Closing the pipe lets `cat` finish and the inhibitor exit by itself; kill only if it does not.
+        drop(child.stdin.take());
+        for _ in 0..20 {
+            if child.try_wait().is_ok_and(|done| done.is_some()) { return; }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -90,6 +99,7 @@ fn release(lock: &Mutex<Option<Child>>) {
 pub struct Watcher {
     monitor: Arc<Mutex<Option<Child>>>,
     lock: Arc<Mutex<Option<Child>>>,
+    alive: Arc<AtomicBool>,
 }
 
 impl Watcher {
@@ -102,6 +112,8 @@ impl Watcher {
         let lock: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(take_lock()));
         let monitor = Arc::new(Mutex::new(Some(monitor)));
         let thread_lock = lock.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
         std::thread::Builder::new().name("suspend-watch".into()).spawn(move || {
             let mut parser = Parser::default();
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -118,9 +130,15 @@ impl Watcher {
                     None => {}
                 }
             }
+            // dbus-monitor ended: nothing more will come, so the lock is of no use.
+            release(&thread_lock);
+            thread_alive.store(false, Ordering::Relaxed);
         }).map_err(|e| format!("Could not start the suspend watcher: {e}"))?;
-        Ok(Watcher { monitor, lock })
+        Ok(Watcher { monitor, lock, alive })
     }
+
+    /// False once the watcher has stopped seeing signals (its dbus-monitor ended).
+    pub fn alive(&self) -> bool { self.alive.load(Ordering::Relaxed) }
 }
 
 impl Drop for Watcher {

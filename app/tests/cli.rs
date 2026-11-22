@@ -528,3 +528,30 @@ fn the_service_can_be_set_up_started_stopped_and_removed_from_the_command_line()
     assert!(!run.config.join("autostart/tiny4lite-control-service.desktop").exists());
     assert!(!run.config.join("systemd/user/tiny4lite-control.service").exists());
 }
+
+#[test]
+fn a_second_service_exits_6_so_systemd_does_not_keep_restarting_it() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-twice");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    let mut first = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let state = runtime.join("tiny4lite-control/service.json");
+    let started = Instant::now();
+    while !state.exists() && started.elapsed() < Duration::from_secs(10) { std::thread::sleep(Duration::from_millis(100)); }
+    let second = service_run(&run, &runtime, &log, &["service", "run"]);
+    let _ = Command::new("kill").args(["-TERM", &first.id().to_string()]).status();
+    let _ = first.wait();
+    assert_eq!(second.status.code(), Some(6), "{}", text(&second.stderr));
+    assert!(text(&second.stderr).contains("already running"));
+    let unit = service_run(&run, &runtime, &log, &["service", "install", "systemd"]);
+    assert!(text(&unit.stdout).contains("RestartPreventExitStatus=6"), "{}", text(&unit.stdout));
+}

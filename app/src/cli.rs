@@ -17,6 +17,8 @@ pub const USAGE: i32 = 2;
 pub const BLOCKED: i32 = 3;
 pub const NEEDS_YES: i32 = 4;
 pub const NO_CAMERA: i32 = 5;
+/// `service run` found another service already running. The systemd unit does not restart on it.
+pub const ALREADY_RUNNING: i32 = 6;
 
 const COMMANDS: &[&str] = &[
     "list", "get", "set", "toggle", "reset", "info", "deps", "service", "requirements", "status", "gimbal", "preset", "position",
@@ -100,7 +102,10 @@ fn dispatch(args: &[String]) -> i32 {
         "deps" => { print!("{}", registry::dependency_map()); OK }
         "requirements" => {
             let flag_on = |name: &str| options.flags.iter().any(|(n, _)| n == name);
-            crate::setup::requirements_command(flag_on("--install"), options.yes)
+            let code = crate::setup::requirements_command(flag_on("--install"), options.yes);
+            // Opened in a terminal by the window: keep it open until the result has been read.
+            if flag_on("--wait") { crate::setup::wait_to_close(false); }
+            code
         }
         "service" => {
             let flag_on = |name: &str| options.flags.iter().any(|(n, _)| n == name);
@@ -797,7 +802,7 @@ Examples:
   tiny4lite-control list white-balance --json
 
 Exit codes: 0 done, 1 failed, 2 wrong usage, 3 unavailable because of another setting,
-4 needs --yes, 5 no camera found.
+4 needs --yes, 5 no camera found, 6 the service is already running.
 
 Nothing is sent to the camera except what you ask for. Moving the gimbal or sleeping the camera
 physically moves it: clear the space around it first.

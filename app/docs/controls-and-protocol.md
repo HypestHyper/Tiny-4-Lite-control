@@ -120,8 +120,10 @@ The XU transport uses unit 2, selector `0x02` for framed commands and
 selector `0x06` for the 60-byte status block.
 
 - AI tracking modes: No Tracking, Normal Tracking, Upper Body,
-  Close-up, Headless, Lower Body, Hand, and Group. These are the eight
-  mode/submode tuples verified by selector 0x06 GET_CUR read-back.
+  Close-up, Headless, Lower Body and Group: seven of the eight
+  mode/submode tuples verified by selector 0x06 GET_CUR read-back. Hand
+  tracking was taken out of the app at the user's request; a preset saved
+  with it skips that setting with a note and applies the rest.
 - Tracking speed: Standard and Sport. Both modes have been physically
   confirmed working on the user's Tiny 2 Lite. Sport encoding is
   firmware-sensitive; the current implementation sends the documented

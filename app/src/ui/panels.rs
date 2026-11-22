@@ -690,7 +690,8 @@ pub fn service_card(store: &Store) -> gtk::Box {
             status.set_text(&lines.join("\n"));
             install.set_visible(installed.is_none());
             start.set_visible(installed.is_some());
-            stop.set_visible(installed.is_some());
+            // One started by hand can be stopped here too.
+            stop.set_visible(installed.is_some() || running.is_some());
             remove.set_visible(installed.is_some());
             start.set_sensitive(running.is_none());
             stop.set_sensitive(running.is_some());
@@ -739,7 +740,7 @@ pub fn service_card(store: &Store) -> gtk::Box {
         if let Err(error) = setup::run_in_terminal(arguments) { store.error(&error); }
     };
     install.connect_clicked(terminal(store.clone(), &["service", "setup"]));
-    install_missing.connect_clicked(terminal(store.clone(), &["requirements", "--install"]));
+    install_missing.connect_clicked(terminal(store.clone(), &["requirements", "--install", "--wait"]));
     card
 }
 

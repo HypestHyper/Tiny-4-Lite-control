@@ -168,7 +168,7 @@ gimbal, sleep and wake, `position go` and applying a preset never ask; without `
 explain and exit 4.
 
 Exit codes: 0 done, 1 failed, 2 wrong usage, 3 unavailable because of another setting, 4 needs
-`--yes`, 5 no camera found.
+`--yes`, 5 no camera found, 6 `service run` found the service already running.
 
 Shell completion (settings, groups, values and preset names):
 

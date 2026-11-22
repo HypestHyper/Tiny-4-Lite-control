@@ -22,14 +22,14 @@ The test-bench window described in section 1 has been replaced by a full window,
 
 State handling follows [CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md): each value is labelled by where it came from. **Camera** (read back; no label), **Saved** (the last value this app sent; the camera has not confirmed it), or **Unknown**. Specifically:
 
-- Autofocus priority: camera read-back only (`CAM_GET_FACE_FOCUS`, 0x35C2). Face = `bf fb 01 00`, Global = `be 07 00 00`. A saved value is never shown as the camera's state. Every change is followed by a read-back and the UI shows what the camera reports.
+- Autofocus priority: camera read-back only (`CAM_GET_FACE_FOCUS`, 0x35C2). The set frame carries 1 (Face) or 0 (Global) at offset 16; the bytes once recorded as `bf fb 01 00` / `be 07 00 00` were the payload CRC and half of that number (see app/docs/controls-and-protocol.md, Autofocus priority). The corrected setter is not yet confirmed on the camera. A saved value is never shown as the camera's state. Every change is followed by a read-back and the UI shows what the camera reports.
 - Auto Exposure priority ("Metering priority"): status byte 7 (0 = Face, 1 = Global) with a read-back after every change. A saved value is used only if the status block cannot be read at all, and is labelled Saved.
 - Exposure compensation: UVC Processing Unit 3, selector 1, raw value 0 to 18 sent directly, GET_CUR after every SET_CUR. It is the same hardware control as the V4L2 `backlight_compensation` control, so the app shows it once.
-- AI tracking mode: exactly the eight verified tuples (No tracking, Normal, Upper body, Close-up, Headless, Lower body, Hand, Group), read from status offsets 0x18 and 0x1C and verified after every change. An unrecognised pair is Unknown, never a guess.
+- AI tracking mode: seven of the eight verified tuples (No tracking, Normal, Upper body, Close-up, Headless, Lower body, Group; Hand was removed at the user's request), read from status offsets 0x18 and 0x1C and verified after every change. An unrecognised pair is Unknown, never a guess.
 - Target Selection: status byte 0x01. Zoom (L-pose), Dynamic Zoom and Dynamic Zoom Direction: saved or Unknown; status byte 0x07 is not used.
 - The HDR switch was removed from the interface, as on `test-app-v0.1`.
 - Live gimbal model: a wireframe camera in the Camera controls card follows the live pan and tilt from the same `0x0043` query as the readout. It only draws what the camera reports. Its sign convention (positive pan right, positive tilt up) follows the joystick and is not yet checked against the physical camera.
-- Presets: applying a preset that includes an absolute pan/tilt turns the gimbal, and neither the window nor the command line asks first. Saved presets keep their meaning: AI mode number 6 is still Group and Hand is 7.
+- Presets: applying a preset that includes an absolute pan/tilt turns the gimbal, and neither the window nor the command line asks first. Saved presets keep their meaning: AI mode number 6 is still Group; a preset with 7 (Hand, now removed) skips that one setting with a note, and the rest of it is still applied.
 
 Verification so far: unit tests and integration tests against the synthetic camera, and headless screenshots. **Nothing here has been run against a real camera.** In particular the integrated behaviour of every read-back path, and the gimbal stop on release, still need a physical test.
 
@@ -88,18 +88,18 @@ The application is a Rust + GTK4 app. Source of truth on `test-app-v0.1`:
   10–200%, rejects invalid gesture zoom ratios, and writes via a
   temporary file followed by rename. Unit tests cover safe defaults and
   round-tripping persisted settings.
-- `apply_on_connect` is reserved and defaults to `false`. Loading
+- `apply_on_connect` defaults to `false`; the background service uses it as the restore switch. Loading
   settings does not send camera commands or move the gimbal. Camera
   read-back remains authoritative where available. Autofocus priority is
   queried when Controls is populated, after each setter, and on explicit
   refresh; the persisted `focus_mode` is not trusted to initialize the UI.
   Gesture states without reliable camera read-back remain locally saved as
   the last successfully submitted setting.
-- This is the persistence foundation, not yet the complete service
-  architecture. A dedicated in-process camera service for serialized
-  device ownership, monitoring, disconnect/reconnect handling, and
-  optional restore-on-connect has not been implemented. No separately
-  installed system daemon is planned.
+- The background service (`tiny4lite-control service run`, `app/src/service.rs`) is implemented on
+  top of this: it watches for the camera, restores the capture mode and optionally the settings, applies a
+  capture mode that was waiting for a free camera, and sleeps the camera when idle, at shutdown and at
+  suspend. It runs as a user program (a systemd user unit or a desktop autostart entry), never as a
+  system daemon. See app/README.md and app/docs/service-and-distros.md. Not yet run on a real camera.
 
 ### 2026-11-20 device-specific V4L2 baseline
 

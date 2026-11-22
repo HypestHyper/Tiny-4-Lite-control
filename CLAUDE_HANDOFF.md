@@ -64,7 +64,7 @@ Checked against the acceptance criteria above. Everything below was verified wit
 
 | Criterion | Result |
 |---|---|
-| Exactly the eight verified AI modes | Done: No tracking, Normal, Upper body, Close-up, Headless, Lower body, Hand, Group. A unit test pins the labels and the tuples. |
+| Exactly the eight verified AI modes | Done, then changed at the user's request: Hand tracking was removed, so seven are offered (No tracking, Normal, Upper body, Close-up, Headless, Lower body, Group). A unit test pins the labels and the tuples. |
 | Target Selection initialises from status byte 0x01 | Done. Camera read-back wins; a saved value is used only if the byte cannot be read. |
 | Other three gestures never claim read-back; saved and Unknown are visibly distinct | Done. They show a neutral "Saved" label or a coloured "Unknown" label. Byte 0x07 is not used anywhere (a test covers it). |
 | No removed feature labels or controls | The HDR switch is gone from the windows and the command line. |

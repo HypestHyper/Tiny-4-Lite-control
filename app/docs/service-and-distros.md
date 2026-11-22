@@ -11,7 +11,7 @@ decides by what the system has:
 | The system has | What is installed | How start, stop and remove work |
 |---|---|---|
 | A systemd user manager (`systemctl --user` answers): Fedora, Arch, Debian, Ubuntu, openSUSE, NixOS… | A user unit, `~/.config/systemd/user/tiny4lite-control.service`, enabled and started | `systemctl --user start` / `stop`; remove disables it, deletes the unit and reloads |
-| No systemd user manager (Void, Alpine, Artix and Gentoo with runit, OpenRC, s6 or dinit; a container) | A desktop autostart entry, `~/.config/autostart/tiny4lite-control-service.desktop` | Start runs the service as a detached program; stop sends it SIGTERM using the process id it keeps in `$XDG_RUNTIME_DIR/tiny4lite-control/`; remove stops it and deletes the entry |
+| No systemd user manager (Void, Alpine, Artix and Gentoo with runit, OpenRC, s6 or dinit; a container) | A desktop autostart entry, `~/.config/autostart/tiny4lite-control-service.desktop` | Start runs the service as a detached program that writes its log to `$XDG_RUNTIME_DIR/tiny4lite-control/service.log`; stop sends it SIGTERM using the process id in its status file there; remove stops it and deletes the entry |
 
 Neither route needs a password. A password is asked for only to install missing programs, and only in the
 terminal that setup opens.
@@ -24,7 +24,11 @@ the init systems `openrc`, `runit`, `s6`, `dinit`, `cron`. A `udev` rule that st
 camera is plugged in is printed on request too. Run `service targets` for the list.
 
 Only one service runs at a time, whichever way it was started: a lock file in the runtime directory decides,
-and a lock left by a process that is gone is taken over.
+and a lock left by a process that is gone is taken over. A second copy exits with code 6, and the systemd
+unit has `RestartPreventExitStatus=6`, so systemd does not keep restarting it while another copy runs.
+Installing the systemd unit first stops a copy that was started another way, and **Stop** stops a copy
+whichever way it was started (systemd only stops what it started itself, so a hand-started one gets
+SIGTERM too).
 
 ## Stopping, shutdown and logout
 
@@ -40,6 +44,11 @@ logind, and elogind on Void, Alpine, Artix and Gentoo. It uses two tools and no 
 
 * `dbus-monitor` (the dbus tools: `dbus`, `dbus-bin`, `dbus-tools` or `dbus-1`, by distribution)
 * `systemd-inhibit`, or `elogind-inhibit` on elogind systems
+
+The inhibitor runs `cat` on a pipe from the service. Closing the pipe ends it, so the lock goes away when
+the service lets go of it, and also when the service ends in any way, even if it is killed: no helper is
+left behind. If `dbus-monitor` ends (the system bus restarted), the service starts the watcher again, at
+most once a minute.
 
 ## Requirements and the package managers
 

@@ -2,7 +2,7 @@
 //!
 //! It needs no display and no window. It watches for the camera being plugged in, puts the saved
 //! capture mode back, optionally restores the settings (and a named preset), and, only if you turn it
-//! on, puts an idle camera to sleep and wakes it when a program starts using it.
+//! on, puts the camera to sleep when it is idle, at shutdown and at suspend. It never wakes it.
 //!
 //! Safe by default: with the default configuration it only restores the capture mode. It never moves
 //! the gimbal unless you allow it, and never sleeps the camera unless you turn that on.
@@ -139,6 +139,8 @@ pub fn runtime_dir() -> PathBuf {
 
 fn lock_path() -> PathBuf { runtime_dir().join("service.lock") }
 pub(crate) fn state_path() -> PathBuf { runtime_dir().join("service.json") }
+/// What a service started without systemd writes, as systemd would keep it in the journal.
+pub(crate) fn log_path() -> PathBuf { runtime_dir().join("service.log") }
 
 fn now_unix() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 
@@ -214,9 +216,10 @@ fn window_open() -> bool {
         let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
         let words: Vec<String> = cmdline.split(|b| *b == 0).map(|w| String::from_utf8_lossy(w).to_string()).collect();
         let ours = words.first().is_some_and(|w| w.contains("tiny4lite-control") || w.ends_with(".AppImage") && w.to_lowercase().contains("tiny"));
-        // A command line run (`list`, `set`, `service ...`) is not a window.
-        let command = words.get(1).map(String::as_str).unwrap_or("");
-        ours && (command.is_empty() || command.starts_with("--slim") || command.starts_with("--full") || command.starts_with("--preview"))
+        // Someone else's window is not ours to keep the camera awake for.
+        let same_user = { use std::os::unix::fs::MetadataExt; entry.metadata().is_ok_and(|m| m.uid() == user_id()) };
+        // A command line run (`list`, `set`, `service ...`) is not a window; the same test as main() uses.
+        ours && same_user && !crate::cli::is_cli(words.get(1..).unwrap_or(&[]))
     })
 }
 
@@ -333,7 +336,7 @@ fn apply_pending_mode(device: &str, status: &mut Status) {
 pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let _lock = match Lock::acquire(&lock_path()) {
         Ok(lock) => lock,
-        Err(error) => { eprintln!("{error}"); return crate::cli::FAILED; }
+        Err(error) => { eprintln!("{error}"); return crate::cli::ALREADY_RUNNING; }
     };
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
@@ -354,6 +357,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let shared_device: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
     let mut watcher: Option<crate::suspend::Watcher> = None;
     let mut watching_suspend = false;
+    let mut suspend_retry_at: Option<Instant> = None;
     let mut restored_once = false;
     let mut last_device: Option<String> = None;
     let mut slice = 0u32;
@@ -364,8 +368,9 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             // Settings edited in the window take effect at once, without restarting the service.
             let now_stamp = config_stamp();
             if now_stamp != stamp {
-                stamp = now_stamp;
+                // A file that cannot be read now (half written by hand) is tried again next round.
                 if let Ok(loaded) = crate::config::load() {
+                    stamp = now_stamp;
                     backend::install_config(loaded);
                     let (auto, minutes, on_shutdown, on_suspend) = policy(&current_config());
                     brain.set_policy(auto, minutes);
@@ -375,6 +380,15 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             }
             // Suspend is watched while it is wanted, and the watcher is let go when it is not.
             let want_suspend = current_config().service.sleep_on_suspend;
+            // The watcher ends if its dbus-monitor does (the system bus restarted): start it again, but
+            // not more than once a minute.
+            if watching_suspend && watcher.as_ref().is_some_and(|w| !w.alive())
+                && suspend_retry_at.is_none_or(|at| Instant::now() >= at) {
+                log("The suspend watcher stopped; starting it again.");
+                watcher = None;
+                watching_suspend = false;
+                suspend_retry_at = Some(Instant::now() + Duration::from_secs(60));
+            }
             if want_suspend != watching_suspend {
                 watching_suspend = want_suspend;
                 if want_suspend {
@@ -505,7 +519,7 @@ fn print_config(json: bool) {
     println!("restore          {}   Put the camera settings back when it is plugged in", on(c.apply_on_connect));
     println!("preset           {}   Restore this preset; with none, the last settings this app set", c.service.connect_preset.as_deref().unwrap_or("none"));
     println!("gimbal           {}   Let a restore turn the gimbal to a saved position", on(c.service.allow_gimbal_move));
-    println!("sleep            {}   Put an idle camera to sleep, and wake it when a program uses it", on(c.service.auto_sleep_enabled));
+    println!("sleep            {}   Put the camera to sleep when nothing has used it for a while", on(c.service.auto_sleep_enabled));
     println!("sleep-after      {} min", c.service.auto_sleep_timeout_minutes);
     println!("shutdown         {}   Put the camera to sleep when the computer shuts down or the session ends", on(c.service.sleep_on_shutdown));
     println!("suspend          {}   Put the camera to sleep when the computer suspends", on(c.service.sleep_on_suspend));
@@ -599,7 +613,7 @@ fn config_home() -> PathBuf {
 }
 
 pub(crate) fn systemd_unit(program: &str) -> String {
-    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nNice=10\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n", quoted(program))
+    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nRestartPreventExitStatus=6\nNice=10\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n", quoted(program))
 }
 
 pub(crate) fn desktop_entry(program: &str) -> String {
@@ -649,7 +663,7 @@ pub(crate) fn install_path(target: &str) -> Option<PathBuf> {
 
 /// The best target for this machine.
 fn detect_target() -> &'static str {
-    if Path::new("/run/systemd/system").exists() { "systemd" } else { "xdg" }
+    if crate::setup::systemd_user_available() { "systemd" } else { "xdg" }
 }
 
 fn install_command(target: Option<&str>, write: bool) -> i32 {
