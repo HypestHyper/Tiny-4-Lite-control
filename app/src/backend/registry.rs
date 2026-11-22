@@ -375,7 +375,10 @@ impl Setting {
             spec.min = control.min as f64;
             spec.max = control.max.max(control.min) as f64;
             spec.step = control.step.max(1) as f64;
-            spec.default = Some(control.default_value as f64);
+            // A default this app knows better (the driver reports gain's as 1; the camera's own is 33) wins
+            // while it is inside the range the camera reports; otherwise the driver's default is used.
+            let ours = spec.default.filter(|d| (spec.min..=spec.max).contains(d));
+            spec.default = ours.or(Some(control.default_value as f64));
         }
         Some(spec)
     }
@@ -532,7 +535,7 @@ fn build() -> Vec<Setting> {
             .needs(ae, Cond::Is(1), "Set Exposure mode to Manual to choose a shutter speed.")
             .info("Shorter times freeze motion and darken the picture. Very long times need a frame rate low enough to fit them."),
         Setting::v4l2("gain", "v4l2:gain", Exposure, "Sensor gain",
-            "Brightens the picture, with more noise.", slider(1.0, 64.0, 1.0, Fmt::Plain)),
+            "Brightens the picture, with more noise.", resting_at(slider(1.0, 64.0, 1.0, Fmt::Plain), 33.0)),
         Setting::v4l2("power_line_frequency", "v4l2:power_line_frequency", Exposure, "Anti-flicker",
             "Match your mains frequency to remove banding under artificial light.", Kind::DriverMenu)
             .info("Use 50 Hz in most of Europe, Asia and Africa, and 60 Hz in the Americas."),
@@ -822,6 +825,16 @@ mod tests {
             }
         }
         assert!(checked >= 12, "only {checked} sliders were checked");
+    }
+
+    /// The driver reports gain's default as 1, but the camera's own default (and OBSBOT Center's) is 33:
+    /// reset goes to 33.
+    #[test]
+    fn gain_resets_to_33_not_the_drivers_1() {
+        let mut snap = mock_snapshot();
+        if let Some(c) = snap.controls.iter_mut().find(|c| c.name == "gain") { c.min = 1; c.max = 64; c.default_value = 1; }
+        let spec = find("v4l2:gain").unwrap().slider(&snap).unwrap();
+        assert_eq!(spec.default, Some(33.0));
     }
 
     /// A balance, hue or compensation slider should rest in the middle of its range, so its
