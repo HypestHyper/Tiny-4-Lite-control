@@ -792,6 +792,19 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
     choose.append(&remove);
     choose.append(&add);
     section.append(&choose);
+    // A LUT made for flat log footage darkens a webcam picture: say so for the one picked.
+    let log_note = widgets::text("This LUT looks made for flat log footage from a cinema camera. On a webcam's normal picture it makes everything darker and more contrasty; a LUT made for normal (Rec.709) video suits it better.", &["small", "warning-text"]);
+    log_note.set_wrap(true);
+    log_note.set_xalign(0.0);
+    log_note.set_visible(config.lut.as_deref().is_some_and(crate::lut::looks_like_log));
+    section.append(&log_note);
+    {
+        let (log_note, names) = (log_note.clone(), names.clone());
+        picker.connect_selected_notify(move |picker| {
+            let name = names.borrow().get(picker.selected() as usize).cloned();
+            log_note.set_visible(name.as_deref().is_some_and(crate::lut::looks_like_log));
+        });
+    }
     section.append(&plain_switch_row("Use the graphics chip",
         "Apply the LUT on the GPU (Vulkan, through libplacebo) when it can: light. Otherwise the processor does it, which is heavy.",
         config.lut_gpu, |on| update_config(|c| c.studio.lut_gpu = on)));

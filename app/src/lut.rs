@@ -164,33 +164,65 @@ pub fn filter(route: Route, path: &Path, out: &str) -> String {
     }
 }
 
-/// Try the graphics-chip route on a small made-up picture: it works, or what ffmpeg said.
+/// Run ffmpeg on a small made-up picture with `filter`, and give back the average brightness (Y, 0–255) of
+/// what comes out, or what ffmpeg said.
+fn test_brightness(route: Route, filter: &str) -> Result<f64, String> {
+    let mut args: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostdin"].iter().map(|s| s.to_string()).collect();
+    args.extend(hw_args(route));
+    // A made-up picture as the camera sends it: MJPEG, full range.
+    args.extend(["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=s=640x360:r=30,format=yuvj422p".into(), "-frames:v".into(), "4".into(),
+        "-vf".into(), filter.into(), "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "yuyv422".into(), "-".into()]);
+    let mut child = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+        .map_err(|e| format!("ffmpeg could not start: {e}"))?;
+    // Read the picture on another thread, so a full pipe never stops ffmpeg.
+    let mut out = child.stdout.take().ok_or("no output")?;
+    let reader = std::thread::spawn(move || { use std::io::Read; let mut data = Vec::new(); let _ = out.read_to_end(&mut data); data });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() > Duration::from_secs(15) => { let _ = child.kill(); let _ = child.wait(); return Err("it took too long".into()); }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let data = reader.join().unwrap_or_default();
+    if !status.success() {
+        let mut said = String::new();
+        if let Some(mut err) = child.stderr.take() { use std::io::Read; let _ = err.read_to_string(&mut said); }
+        let said: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).collect();
+        let said = said[said.len().saturating_sub(2)..].join(" ");
+        return Err(if said.is_empty() { format!("ffmpeg stopped ({status})") } else { said });
+    }
+    let luma: Vec<u8> = data.iter().step_by(2).copied().collect();
+    if luma.is_empty() { return Err("no picture came out".into()); }
+    Ok(luma.iter().map(|v| f64::from(*v)).sum::<f64>() / luma.len() as f64)
+}
+
+/// Try the graphics-chip route on a small made-up picture, and check it is faithful: a table that changes
+/// nothing must leave the brightness as it is (a route that gets the video range or the gamma wrong makes
+/// everything darker or lighter). Works, or why not.
 pub fn probe_gpu() -> Result<(), String> {
     let dir = crate::service::runtime_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let test = dir.join("studio-lut-test.cube");
     std::fs::write(&test, write_cube(&identity(17))).map_err(|e| e.to_string())?;
-    let mut args: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostdin"].iter().map(|s| s.to_string()).collect();
-    args.extend(hw_args(Route::Gpu));
-    args.extend(["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=s=640x360:r=30".into(), "-frames:v".into(), "8".into(),
-        "-vf".into(), filter(Route::Gpu, &test, "yuyv422"), "-f".into(), "null".into(), "-".into()]);
-    let mut child = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
-        .map_err(|e| format!("ffmpeg could not start: {e}"))?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut said = String::new();
-                if let Some(mut err) = child.stderr.take() { use std::io::Read; let _ = err.read_to_string(&mut said); }
-                let said: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).collect();
-                let said = said[said.len().saturating_sub(2)..].join(" ");
-                return if status.success() { Ok(()) } else { Err(if said.is_empty() { format!("ffmpeg stopped ({status})") } else { said }) };
-            }
-            Ok(None) if started.elapsed() > Duration::from_secs(15) => { let _ = child.kill(); let _ = child.wait(); return Err("it took too long".into()); }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(e.to_string()),
-        }
+    let plain = test_brightness(Route::Cpu, "format=yuyv422")?;
+    let through = test_brightness(Route::Gpu, &filter(Route::Gpu, &test, "yuyv422"))?;
+    let change = (through - plain) / plain.max(1.0) * 100.0;
+    if change.abs() > 3.0 {
+        return Err(format!("it changes the brightness by itself (a no-change LUT made a test picture {:.0}% {})", change.abs(), if change < 0.0 { "darker" } else { "lighter" }));
     }
+    Ok(())
+}
+
+/// Whether a LUT looks made for flat log footage (from a cinema camera) rather than a normal picture, by
+/// its name and title. Such a LUT makes a webcam picture darker and more contrasty.
+pub fn looks_like_log(name: &str) -> bool {
+    let title = std::fs::read_to_string(lut_dir().join(name)).ok()
+        .and_then(|t| t.lines().find(|l| l.trim_start().starts_with("TITLE")).map(str::to_string)).unwrap_or_default();
+    let text = format!("{name} {title}").to_lowercase().replace(['-', '_', ' ', '.'], "");
+    ["slog", "vlog", "clog", "flog", "nlog", "dlog", "logc", "log3g10", "redlog", "bmdfilm", "cinelike", "logto709", "log2rec709", "logtorec709", "log709", "hlg"].iter().any(|k| text.contains(k))
 }
 
 #[cfg(test)]
@@ -218,6 +250,27 @@ mod tests {
         assert!((half.values[0][0] - 0.1).abs() < 1e-6, "{:?}", half.values[0]);
         // Written and read back the same.
         assert_eq!(parse_cube(&write_cube(&half)).unwrap().size, 3);
+    }
+
+    #[test]
+    fn the_processor_route_keeps_the_brightness_with_a_no_change_table() {
+        // ffmpeg is there on the machines the tests run on; skip quietly where it is not.
+        if !crate::setup::program_found("ffmpeg") { return; }
+        let dir = std::env::temp_dir().join(format!("t4-lut-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let test = dir.join("ident.cube");
+        std::fs::write(&test, write_cube(&identity(17))).unwrap();
+        let plain = test_brightness(Route::Cpu, "format=yuyv422").unwrap();
+        let through = test_brightness(Route::Cpu, &filter(Route::Cpu, &test, "yuyv422")).unwrap();
+        assert!((through - plain).abs() / plain < 0.02, "{plain} -> {through}");
+    }
+
+    #[test]
+    fn log_luts_are_recognised_by_name() {
+        assert!(looks_like_log("Sony S-Log3 to Rec709.cube"));
+        assert!(looks_like_log("ARRI_LogC_to_709.cube"));
+        assert!(!looks_like_log("Teal and orange.cube"));
+        assert!(!looks_like_log("Warm film.cube"));
     }
 
     #[test]
