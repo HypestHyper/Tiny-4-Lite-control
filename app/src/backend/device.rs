@@ -170,7 +170,7 @@ tilt_speed (int) : min=-120 max=120 step=1 default=20 value=0
             dependent_flags(autofocus != 0),
         ),
         "--list-formats-ext" => String::from(
-            "ioctl: VIDIOC_ENUM_FMT\n Type: Video Capture\n [0]: 'MJPG' (Motion-JPEG, compressed)\n   Size: Discrete 1920x1080\n     Interval: Discrete 0.033s (30.000 fps)\n     Interval: Discrete 0.017s (60.000 fps)\n   Size: Discrete 1280x720\n     Interval: Discrete 0.033s (30.000 fps)\n [1]: 'YUYV' (YUYV 4:2:2)\n   Size: Discrete 640x480\n     Interval: Discrete 0.033s (30.000 fps)\n"
+            "ioctl: VIDIOC_ENUM_FMT\n Type: Video Capture\n [0]: 'MJPG' (Motion-JPEG, compressed)\n   Size: Discrete 3840x2160\n     Interval: Discrete 0.033s (30.000 fps)\n   Size: Discrete 1920x1080\n     Interval: Discrete 0.033s (30.000 fps)\n     Interval: Discrete 0.017s (60.000 fps)\n   Size: Discrete 1280x720\n     Interval: Discrete 0.033s (30.000 fps)\n [1]: 'YUYV' (YUYV 4:2:2)\n   Size: Discrete 640x480\n     Interval: Discrete 0.033s (30.000 fps)\n"
         ),
         "--get-fmt-video" => String::from("Format Video Capture:\n\tWidth/Height      : 1920/1080\n\tPixel Format      : 'MJPG'\n"),
         "--get-parm" => String::from("Streaming Parameters Video Capture:\n\tFrames per second: 30.000 (30/1)\n"),

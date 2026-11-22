@@ -87,6 +87,10 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **A sleeping camera wakes for a move.** The stick, the 1° steps, Centre, the shortcut buttons, Apply on a preset and Go on a camera position all send Wake first when the camera reports it is asleep; a position or preset then waits a moment for the camera to come up.
 
+**Capture mode.** One list of every mode the camera offers (for example "3840 × 2160 (4K) · 30 fps · MJPG"), largest first, so a size and a frame rate that do not go together cannot be chosen.
+
+**Crashes.** If the app crashes, the message and where it happened are written to `~/.local/state/tiny4lite-control/crash.log` (and to the terminal, if there is one).
+
 **Which build.** Device tab, Developer tools, shows the version, and for a build from GitHub Actions its build number and commit; `tiny4lite-control --version` prints the same.
 
 **Sliders.** Every slider marks its middle. The reset button beside a slider is tinted while the value is away from its default. Colour temperature, red balance, blue balance and hue show their colours along the bar. The view cone on the camera model is always drawn.
