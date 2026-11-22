@@ -627,6 +627,116 @@ pub fn app_card(store: &Store) -> gtk::Box {
     card
 }
 
+/// The LUT filter of the Studio camera: a switch with its strength beside it, the chosen file with a button
+/// to choose another, and whether it may run on the graphics chip.
+fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    section.append(&widgets::text("Filters", &["small", "dim", "chooser-head"]));
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text("LUT", &["setting-label"]));
+    let file = widgets::text(&config.lut.clone().unwrap_or_else(|| "No .cube file chosen yet.".into()), &["setting-summary"]);
+    file.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    titles.append(&file);
+    let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+    strength.set_draw_value(false);
+    strength.set_size_request(120, -1);
+    strength.set_value(f64::from(config.lut_strength));
+    strength.set_valign(gtk::Align::Center);
+    strength.set_tooltip_text(Some("Strength: 0 leaves the picture alone, 100 is the LUT as it is"));
+    widgets::lock_wheel(&strength);
+    widgets::label_accessible(&strength, "LUT strength");
+    let amount = widgets::line(&format!("{}%", config.lut_strength), &["setting-value", "tnum"]);
+    amount.set_width_chars(4);
+    amount.set_valign(gtk::Align::Center);
+    let beside = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    beside.append(&strength);
+    beside.append(&amount);
+    let reveal = gtk::Revealer::new();
+    reveal.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
+    reveal.set_child(Some(&beside));
+    reveal.set_reveal_child(config.lut_on);
+    let switch = gtk::Switch::new();
+    switch.set_valign(gtk::Align::Center);
+    switch.set_active(config.lut_on);
+    switch.set_sensitive(config.lut.is_some());
+    widgets::label_accessible(&switch, "Apply the LUT");
+    {
+        let reveal = reveal.clone();
+        switch.connect_active_notify(move |sw| {
+            let on = sw.is_active();
+            update_config(|c| c.studio.lut_on = on);
+            reveal.set_reveal_child(on);
+        });
+    }
+    {
+        // Saved once the slider settles: each strength is a new table, so the picture restarts for a moment.
+        let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+        let amount = amount.clone();
+        strength.connect_value_changed(move |s| {
+            let value = s.value().round() as u8;
+            amount.set_text(&format!("{value}%"));
+            if let Some(id) = timer.borrow_mut().take() { id.remove(); }
+            let slot = timer.clone();
+            *timer.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(600), move || {
+                slot.borrow_mut().take();
+                update_config(|c| c.studio.lut_strength = value);
+            }));
+        });
+    }
+    row.append(&titles);
+    row.append(&reveal);
+    row.append(&switch);
+    section.append(&row);
+
+    let choose = gtk::Button::with_label("Choose .cube\u{2026}");
+    choose.add_css_class("small");
+    choose.set_halign(gtk::Align::Start);
+    {
+        let (store, file, switch) = (store.clone(), file.clone(), switch.clone());
+        choose.connect_clicked(move |button| {
+            let window = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            #[allow(deprecated)]
+            let dialog = gtk::FileChooserNative::new(Some("Choose a LUT"), window.as_ref(), gtk::FileChooserAction::Open, Some("Choose"), Some("Cancel"));
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("3D LUT (.cube)"));
+            filter.add_pattern("*.cube");
+            filter.add_pattern("*.CUBE");
+            #[allow(deprecated)]
+            dialog.add_filter(&filter);
+            let (store, file, switch) = (store.clone(), file.clone(), switch.clone());
+            #[allow(deprecated)]
+            dialog.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(path) = dialog.file().and_then(|f| f.path()) {
+                        match crate::lut::import(&path) {
+                            Ok(name) => {
+                                file.set_text(&name);
+                                update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
+                                switch.set_sensitive(true);
+                                switch.set_active(true);
+                                store.toast(&format!("LUT {name} is ready"));
+                            }
+                            Err(error) => store.error(&error),
+                        }
+                    }
+                }
+            });
+            #[allow(deprecated)]
+            dialog.show();
+            // The dialog has to live until it answers.
+            unsafe { button.set_data("lut-dialog", dialog); }
+        });
+    }
+    section.append(&choose);
+    section.append(&plain_switch_row("Use the graphics chip",
+        "Apply the LUT on the GPU (Vulkan, through libplacebo) when it can: light. Otherwise the processor does it, which is heavy.",
+        config.lut_gpu, |on| update_config(|c| c.studio.lut_gpu = on)));
+    section
+}
+
 /// The Studio camera: a second, virtual camera, run by the background service, as the frame for filters
 /// on the camera's picture (none yet: it passes the picture through). Its switch, the 30 fps limit, what it
 /// needs, and what it is doing and costing right now.
@@ -641,6 +751,7 @@ pub fn studio_card(store: &Store) -> gtk::Box {
     body.append(&plain_switch_row("Limit to 30 fps",
         "A camera set to 60 fps gives the Studio camera 30: half the work, and plenty for calls.",
         config.limit_fps, |on| update_config(|c| c.studio.limit_fps = on)));
+    body.append(&lut_controls(store, &config));
 
     // What it needs, with a way to set it up.
     let needs = gtk::Box::new(gtk::Orientation::Horizontal, 10);

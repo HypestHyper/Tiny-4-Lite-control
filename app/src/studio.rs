@@ -71,8 +71,9 @@ fn base_args() -> Vec<String> {
 pub const OUTPUT_FORMAT: &str = "yuyv422";
 
 /// Real camera in, the picture out to the Studio camera (no filters yet: as it is).
-pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>) -> Vec<String> {
+pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>) -> Vec<String> {
     let mut args = base_args();
+    if let Some((route, _)) = lut { args.extend(crate::lut::hw_args(route)); }
     args.extend([
         "-f".into(), "v4l2".into(), "-input_format".into(), format.input.clone(),
         "-video_size".into(), format!("{}x{}", format.width, format.height),
@@ -80,7 +81,11 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Opt
     ]);
     // A camera set to 60 fps is brought down first, which halves all the work after it.
     let limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
-    args.extend(["-vf".into(), format!("{limit}format={OUTPUT_FORMAT}")]);
+    let filters = match lut {
+        Some((route, path)) => crate::lut::filter(route, path, OUTPUT_FORMAT),
+        None => format!("format={OUTPUT_FORMAT}"),
+    };
+    args.extend(["-vf".into(), format!("{limit}{filters}")]);
     // Progress every second (frames done so far), to measure the frame rate the Studio camera really gets.
     args.extend(["-progress".into(), progress_path().to_string_lossy().to_string(), "-stats_period".into(), "1".into()]);
     args.extend(["-f".into(), "v4l2".into(), loopback.into()]);
@@ -149,9 +154,11 @@ pub struct Report {
 struct Running {
     child: Child,
     want: Want,
-    /// What it was started with; a change (size, frame rate) restarts it.
+    /// What it was started with; a change (size, frame rate, LUT) restarts it.
     key: String,
     started: Instant,
+    /// Where the LUT runs, if one is applied.
+    lut: Option<crate::lut::Route>,
 }
 
 #[derive(Default)]
@@ -166,6 +173,9 @@ pub struct Studio {
     /// The last frame count ffmpeg reported, and when, for the frame rate.
     frame_sample: Option<(Instant, u64)>,
     format: Option<(String, Format)>,
+    /// Whether the graphics chip can apply LUTs here (tested once, the first time one is needed), and if
+    /// not, what it said.
+    lut_gpu: Option<Result<(), String>>,
 }
 
 fn log_path() -> PathBuf { crate::service::runtime_dir().join("studio.log") }
@@ -251,7 +261,7 @@ impl Studio {
                     if self.running.as_ref().map(|r| &r.key) != Some(&key) {
                         self.stop();
                         if let Ok(child) = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-                            self.running = Some(Running { child, want: Want::Placeholder, key, started: Instant::now() });
+                            self.running = Some(Running { child, want: Want::Placeholder, key, started: Instant::now(), lut: None });
                         }
                     }
                     return Report { state: "off".into(), detail: "Off: an app still has the Studio camera open, so it shows a dark picture until the app lets go.".into(), device: loopback, ..Report::default() };
@@ -272,10 +282,13 @@ impl Studio {
         // Has what runs ended by itself?
         if let Some(running) = self.running.as_mut() {
             if let Ok(Some(status)) = running.child.try_wait() {
-                let lived = running.started.elapsed();
+                let (lived, lut) = (running.started.elapsed(), running.lut);
                 self.running = None;
                 let said = last_lines(&log_path(), 3);
-                if lived < Duration::from_secs(5) || !status.success() {
+                if lut == Some(crate::lut::Route::Gpu) {
+                    // The graphics chip did not manage it on the real picture: the processor from now on.
+                    self.lut_gpu = Some(Err(format!("it stopped on the real picture: {said}")));
+                } else if lived < Duration::from_secs(5) || !status.success() {
                     self.last_error = Some(if said.is_empty() { format!("ffmpeg stopped ({status}).") } else { said });
                     self.retry_after = Some(Instant::now() + RETRY);
                 }
@@ -296,10 +309,23 @@ impl Studio {
 
         let waiting = self.retry_after.is_some_and(|at| Instant::now() < at);
         let max_fps = config.limit_fps.then_some(30.0);
+        // The LUT, if one is on: blended to its strength, on the graphics chip if it can (tested once).
+        let mut lut_problem = None;
+        let lut = match (&config.lut, config.lut_on, want) {
+            (Some(name), true, Want::Pipeline) => match crate::lut::prepared(name, config.lut_strength) {
+                Ok(path) => {
+                    if config.lut_gpu && self.lut_gpu.is_none() { self.lut_gpu = Some(crate::lut::probe_gpu()); }
+                    let route = if config.lut_gpu && matches!(self.lut_gpu, Some(Ok(()))) { crate::lut::Route::Gpu } else { crate::lut::Route::Cpu };
+                    Some((route, path))
+                }
+                Err(error) => { lut_problem = Some(error); None }
+            },
+            _ => None,
+        };
         let target = match (want, camera) {
             (Want::Nothing, _) | (_, None) => None,
             (want, Some(camera)) => self.format_for(camera).map(|format| {
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps) }
+                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path()))) }
                     else { placeholder_args(&loopback, &format) };
                 (want, args)
             }),
@@ -314,7 +340,8 @@ impl Studio {
                     match Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(log).spawn() {
                         Ok(child) => {
                             crate::service::note(&format!("Studio camera: {}.", if want == Want::Pipeline { "an app opened it; running" } else { "waiting for an app to open it" }));
-                            self.running = Some(Running { child, want, key, started: Instant::now() });
+                            let lut_route = if want == Want::Pipeline { lut.as_ref().map(|(r, _)| *r) } else { None };
+                            self.running = Some(Running { child, want, key, started: Instant::now(), lut: lut_route });
                             if want == Want::Pipeline { self.last_error = None; }
                         }
                         Err(error) => {
@@ -354,7 +381,18 @@ impl Studio {
                 }
                 if running.want == Want::Pipeline {
                     report.state = "running".into();
-                    report.detail = "Passing the picture through.".into();
+                    report.detail = match running.lut {
+                        Some(route) => format!("Applying the LUT on the {}.", route.name()),
+                        None => "Passing the picture through.".into(),
+                    };
+                    // Why the LUT is on the processor, which is heavy.
+                    if running.lut == Some(crate::lut::Route::Cpu) {
+                        let why = if !config.lut_gpu { "Use the graphics chip is off.".to_string() }
+                            else if let Some(Err(said)) = &self.lut_gpu { format!("The graphics chip could not: {said}") }
+                            else { String::new() };
+                        report.detail = format!("{} {why}", report.detail).trim().to_string();
+                    }
+                    if let Some(problem) = &lut_problem { report.detail = format!("{} The LUT is not applied: {problem}", report.detail); }
                 } else {
                     report.state = "waiting".into();
                     report.detail = "Ready: choose \u{201c}Tiny 2 Lite Studio\u{201d} in an app. The camera is not used until then.".into();
@@ -488,13 +526,13 @@ mod tests {
 
     #[test]
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
-        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None).join(" ");
+        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None).join(" ");
         assert!(pass.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{pass}");
         assert!(pass.contains("-vf format=yuyv422 -progress") && pass.ends_with("-f v4l2 /dev/video42"), "{pass}");
         // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
         let sixty = Format { fps: 60.0, ..fmt() };
-        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0)).join(" ").contains("-vf fps=30,format=yuyv422"));
-        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0)).join(" ").contains("fps=30,"));
+        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0), None).join(" ").contains("-vf fps=30,format=yuyv422"));
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0), None).join(" ").contains("fps=30,"));
         let wait = placeholder_args("/dev/video42", &fmt()).join(" ");
         assert!(wait.contains("color=c=0x101418:s=1920x1080:r=5") && wait.ends_with("-f v4l2 /dev/video42"), "{wait}");
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");

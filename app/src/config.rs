@@ -134,10 +134,16 @@ pub struct StudioConfig {
     pub enabled: bool,
     /// Bring a 60 fps camera down to 30 for the Studio camera: half the work.
     pub limit_fps: bool,
+    /// The LUT chosen (its name in the app's luts folder), whether it is applied, how strongly (0–100),
+    /// and whether it may run on the graphics chip.
+    pub lut: Option<String>,
+    pub lut_on: bool,
+    pub lut_strength: u8,
+    pub lut_gpu: bool,
 }
 
 impl Default for StudioConfig {
-    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true } }
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.

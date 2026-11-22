@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod studio;
 mod install;
+mod lut;
 mod presets;
 mod service;
 mod setup;
