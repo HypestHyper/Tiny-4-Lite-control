@@ -157,6 +157,25 @@ impl PreviewHub {
         if self.0.running.get() { self.restart(); } else { self.update_demand(); }
     }
 
+    /// Why the Studio camera cannot give a picture right now, before trying: not set up, the background
+    /// service not running, turned off, or what the service says is wrong. None when it should work.
+    fn studio_blocked(&self) -> Option<String> {
+        if crate::denoise::loopback_node().is_none() {
+            return Some("The Studio camera is not set up yet: Device tab \u{2192} Studio camera \u{2192} Set up\u{2026}. Or pick Camera above.".into());
+        }
+        let Some(status) = crate::service::running_status() else {
+            return Some("The Studio camera needs the background service, and it is not running: Device tab \u{2192} Background service \u{2192} Start (or Install\u{2026}). Or pick Camera above.".into());
+        };
+        match status.denoise {
+            // Turned on, but the service says nothing about it: it is an older version.
+            None if current_config().denoise.enabled => Some("The background service that is running is an older version without the Studio camera. Install this version (Device tab \u{2192} App), or stop and start the service (Device tab \u{2192} Background service).".into()),
+            None => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
+            Some(r) if r.state == "off" => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
+            Some(r) if r.state == "unavailable" || r.state == "error" => Some(format!("The Studio camera is not working: {}", r.detail)),
+            Some(_) => None,
+        }
+    }
+
     /// Why the Studio picture is not coming: what the background service says about it, and what the
     /// stream reader said.
     fn studio_problem(&self) -> String {
@@ -170,6 +189,8 @@ impl PreviewHub {
         };
         let reader = std::fs::read_to_string(preview_log_path()).unwrap_or_default();
         let reader = reader.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        // What v4l2-ctl says when nothing writes to the virtual camera, in plain words.
+        let reader = if reader.contains("unsupported stream type") { "nothing is sending a picture into the Studio camera.".to_string() } else { reader };
         if reader.is_empty() { service } else { format!("{service} The stream said: {reader}") }
     }
 
@@ -322,10 +343,12 @@ impl PreviewHub {
         self.each_view(|v| v.show_message("Starting preview…", "videocam"));
         let this = self.clone();
         // The Studio camera, if that is what the preview shows and it is there; otherwise the camera.
-        if current_config().preview_denoised && crate::denoise::loopback_node().is_none() {
-            hub.running.set(false);
-            self.each_view(|v| v.show_message("The Studio camera is not set up yet. Device tab \u{2192} Studio camera \u{2192} Set up\u{2026}, or pick Camera above.", "videocam_off"));
-            return;
+        if current_config().preview_denoised {
+            if let Some(why) = self.studio_blocked() {
+                hub.running.set(false);
+                self.each_view(|v| v.show_message(&why, "videocam_off"));
+                return;
+            }
         }
         let denoised = self.showing_denoised();
         // Reading the current mode asks the camera, so do it off the UI thread.
