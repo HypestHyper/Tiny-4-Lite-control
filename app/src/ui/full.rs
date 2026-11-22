@@ -378,6 +378,8 @@ impl FullWindow {
         let sideways = gtk::ScrolledWindow::new();
         sideways.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         sideways.set_propagate_natural_height(false);
+        // A real scrollbar, always shown when it is needed, so the page never just looks cut off.
+        sideways.set_overlay_scrolling(false);
         sideways.set_child(Some(&main_column));
         dialogs.overlay().set_child(Some(&sideways));
         dialogs.install();

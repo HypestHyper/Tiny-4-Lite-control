@@ -140,10 +140,11 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
             let _ = &slots_go;
             let store = store_go.clone();
             let store2 = store.clone();
-            store.call_now(move |d| backend::recall_camera_preset(d, slot_number), move |r| match r {
+            let store_wake = store.clone();
+            super::joystick::after_waking(&store_wake, move || store.call_now(move |d| backend::recall_camera_preset(d, slot_number), move |r| match r {
                 Ok(()) => store2.toast(&format!("Moving to position {}", slot_number + 1)),
                 Err(e) => store2.error(&format!("Could not move to position {}: {e}", slot_number + 1)),
-            });
+            }));
         });
 
         let (store_save, slots_save, reload_save) = (store.clone(), slots.clone(), reload.clone());
@@ -275,7 +276,8 @@ fn app_presets_card(store: &Store) -> gtk::Box {
                         });
                     };
                     let _ = (&store_apply, &preset_apply);
-                    run();
+                    // A sleeping camera is woken first, or the preset's position would be ignored.
+                    super::joystick::after_waking(&store_apply, run);
                 });
                 let (store_delete, render_delete) = (store.clone(), render.clone());
                 let name = preset.name.clone();
@@ -1203,6 +1205,9 @@ pub fn developer_card(store: &Store) -> gtk::Box {
         }
     });
     body.append(&open);
+    let version = widgets::text(&format!("Version {}", crate::cli::build_label()), &["small", "dim"]);
+    version.set_selectable(true);
+    body.append(&version);
     card
 }
 

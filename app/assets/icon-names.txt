@@ -43,3 +43,6 @@ warning
 waving_hand
 wb_sunny
 zoom_in
+front_hand
+pan_tool_alt
+pinch_zoom_out

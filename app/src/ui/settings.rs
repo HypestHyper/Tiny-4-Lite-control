@@ -97,7 +97,7 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
         // A gesture shows a picture of the hand pose beside it.
         if let Some(icon) = super::gesture_draw::for_setting(setting.id) {
             let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            let picture = super::gesture_draw::picture(icon, if density == Density::Slim { 36 } else { 44 });
+            let picture = super::gesture_draw::picture(icon, if density == Density::Slim { 36 } else { 40 });
             picture.set_valign(gtk::Align::Start);
             picture.set_margin_top(6);
             row.widget().set_hexpand(true);

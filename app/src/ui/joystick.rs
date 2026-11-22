@@ -169,6 +169,39 @@ fn open_quick_chooser(button: &gtk::Button, index: usize, store: &Store, camera_
     popover.popup();
 }
 
+/// Whether the camera says it is asleep (status byte 0x02).
+pub fn camera_asleep(store: &Store) -> bool { store.snapshot().byte(0x02) == Some(1) }
+
+thread_local! {
+    /// When Wake was last sent for a move, so a held stick does not send it over and over.
+    static WOKEN_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// How long the camera takes to come up from sleep before it follows a move.
+const WAKE_SETTLE: Duration = Duration::from_millis(2500);
+
+/// Before a move (stick, steps, centre, a preset): wake the camera if it is asleep. Returns true if Wake
+/// was sent just now, so the caller can wait for it.
+pub fn wake_for_move(store: &Store) -> bool {
+    if !camera_asleep(store) { return false; }
+    let recent = WOKEN_AT.with(|at| at.get().is_some_and(|at| at.elapsed() < Duration::from_secs(5)));
+    if recent { return false; }
+    WOKEN_AT.with(|at| at.set(Some(Instant::now())));
+    let done = store.clone();
+    store.toast("Waking the camera");
+    store.call_now(|d| backend::set_sleep_mode(d, false), move |result| {
+        if let Err(error) = result { done.error(&format!("Could not wake the camera: {error}")); }
+        let later = done.clone();
+        glib::timeout_add_local_once(Duration::from_millis(1500), move || later.refresh());
+    });
+    true
+}
+
+/// Run a move, waking the camera first if it is asleep (and giving it a moment to come up).
+pub fn after_waking(store: &Store, action: impl FnOnce() + 'static) {
+    if wake_for_move(store) { glib::timeout_add_local_once(WAKE_SETTLE, action); } else { action(); }
+}
+
 /// Camera power as two plain buttons, Wake and Sleep, each sending its command, with the state the camera
 /// reports beside the title. Used on the Camera controls card and the Device tab. `sent` runs as each
 /// command goes out (the joystick reads the position more often for a while).
@@ -505,6 +538,10 @@ impl Joystick {
             };
             let (store, joystick, chooser) = (store.clone(), self.clone(), choose.clone());
             button.connect_clicked(move |_| {
+                if quick_slot(index).is_none() { chooser(); return; }
+                let (store, joystick, chooser) = (store.clone(), joystick.clone(), chooser.clone());
+                let store_wake = store.clone();
+                after_waking(&store_wake, move || {
                 let done = store.clone();
                 let again = joystick.clone();
                 match quick_slot(index) {
@@ -533,6 +570,7 @@ impl Joystick {
                         });
                     }
                 }
+                });
             });
             // Right-click, or a long press on a touch screen, chooses.
             let right = gtk::GestureClick::new();
@@ -583,6 +621,9 @@ impl Joystick {
                 widgets::label_accessible(&button, &format!("{axis} {sign}1 degree"));
                 let this = self.clone();
                 button.connect_clicked(move |_| {
+                    let this = this.clone();
+                    let store_wake = this.0.store.clone();
+                    after_waking(&store_wake, move || {
                     let store = this.0.store.clone();
                     let snapshot = store.snapshot();
                     let Some(range) = snapshot.control(control).map(|c| (c.min, c.max)) else {
@@ -597,6 +638,7 @@ impl Joystick {
                         }
                         again.poll_position_once();
                     });
+                    });
                 });
                 group.append(&button);
                 buttons.borrow_mut().push(button);
@@ -608,12 +650,16 @@ impl Joystick {
         let this = self.clone();
         centre.connect_clicked(move |_| {
             let again = this.clone();
-            this.0.store.clone().call_now(|d| backend::centre_gimbal(d), move |result| {
+            let store_wake = this.0.store.clone();
+            after_waking(&store_wake, move || {
+            let store = again.0.store.clone();
+            store.call_now(|d| backend::centre_gimbal(d), move |result| {
                 match result {
                     Ok(()) => { again.boost_polling(); again.0.store.toast("Centring the camera") }
                     Err(error) => again.0.store.error(&format!("Could not centre the camera: {error}")),
                 }
                 again.poll_now();
+            });
             });
         });
         centre.set_halign(gtk::Align::Center);
@@ -806,6 +852,8 @@ impl Joystick {
     fn engage(&self) {
         let state = &self.0;
         if state.engaged.replace(true) { return; }
+        // A sleeping camera ignores the stick: wake it, and the stick takes over once it is up.
+        if wake_for_move(&state.store) { self.boost_polling(); }
         state.animating.set(false);
         let weak = Rc::downgrade(state);
         let id = glib::timeout_add_local(SEND_INTERVAL, move || {
@@ -854,6 +902,16 @@ impl Joystick {
     fn learn_direction(&self, before: Option<(f64, f64)>, after: (f64, f64)) {
         let state = &self.0;
         let (Some(before), (sent_pan, sent_tilt)) = (before, state.sent.get()) else { return };
+        // Something else is moving the camera (a preset, Centre, Wake or Sleep, all of which read the
+        // position more often for a while): what it did says nothing about the stick.
+        if state.boost_until.get().is_some_and(|until| Instant::now() < until) { return; }
+        // Outside the range (the sleeping pose, or past a limit) the camera does not answer the stick
+        // normally either.
+        let inside = |(pan, tilt): (f64, f64)| {
+            let (p, t) = (backend::angles::pan_range(), backend::angles::tilt_range());
+            (p.0..=p.1).contains(&pan) && (t.0..=t.1).contains(&tilt)
+        };
+        if !inside(before) || !inside(after) || camera_asleep(&state.store) { return; }
         let held = state.direction_changed_at.get().elapsed();
         let (mut sign_pan, mut sign_tilt) = state.axis_sign.get();
         let learn = |sent: i64, moved: f64, sign: &mut f64, name: &str| {

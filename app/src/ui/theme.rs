@@ -378,6 +378,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 .limit-entry button.take-current { border-radius: 0 §12§ §12§ 0; min-width: §38§; min-height: §36§; margin: 0 0 0 1px; background: @t_surface_high; color: @t_on_surface_variant; }
 .t4 .limit-entry button.take-current:hover { background: alpha(@t_primary, 0.2); color: @t_primary; }
 .t4 .warning-text { color: @t_error; }
+.t4 .gesture-icon { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: 999px; }
+.t4 .gesture-icon .icon { font-size: §24§; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }

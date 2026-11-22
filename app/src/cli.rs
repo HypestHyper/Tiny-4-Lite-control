@@ -11,6 +11,16 @@ use crate::{config, presets, video};
 use serde_json::{json, Value as Json};
 use std::time::Duration;
 
+/// The version, and for a build made by GitHub Actions its run number and commit, so a downloaded
+/// AppImage says exactly which build it is.
+pub fn build_label() -> String {
+    let mut label = env!("CARGO_PKG_VERSION").to_string();
+    if let Some(run) = option_env!("GITHUB_RUN_NUMBER") { label.push_str(&format!(" · build {run}")); }
+    if let Some(sha) = option_env!("GITHUB_SHA") { label.push_str(&format!(" · {}", &sha[..sha.len().min(7)])); }
+    if option_env!("GITHUB_RUN_NUMBER").is_none() { label.push_str(" · local build"); }
+    label
+}
+
 pub const OK: i32 = 0;
 pub const FAILED: i32 = 1;
 pub const USAGE: i32 = 2;
@@ -83,7 +93,7 @@ pub fn run(args: Vec<String>) -> i32 {
 
 fn dispatch(args: &[String]) -> i32 {
     if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
-        println!("tiny4lite-control {}", env!("CARGO_PKG_VERSION"));
+        println!("tiny4lite-control {}", build_label());
         return OK;
     }
     if matches!(args.first().map(String::as_str), Some("--help" | "-h")) {

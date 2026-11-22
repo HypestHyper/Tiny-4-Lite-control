@@ -83,7 +83,11 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Presets and the capture mode.** Applying a preset skips the capture mode if the camera is already in it. If another program is streaming, the capture mode is saved and the background service changes it once the camera is free; the rest of the preset is applied straight away.
 
-**Gestures.** Target selection, the zoom gesture and dynamic zoom each show a picture of the hand pose, drawn as Material-style icons.
+**Gestures.** Target selection, the zoom gesture and dynamic zoom each show Google's Material Symbol for the hand pose (front_hand, pan_tool_alt, pinch_zoom_out) in a round tonal container.
+
+**A sleeping camera wakes for a move.** The stick, the 1° steps, Centre, the shortcut buttons, Apply on a preset and Go on a camera position all send Wake first when the camera reports it is asleep; a position or preset then waits a moment for the camera to come up.
+
+**Which build.** Device tab, Developer tools, shows the version, and for a build from GitHub Actions its build number and commit; `tiny4lite-control --version` prints the same.
 
 **Sliders.** Every slider marks its middle. The reset button beside a slider is tinted while the value is away from its default. Colour temperature, red balance, blue balance and hue show their colours along the bar. The view cone on the camera model is always drawn.
 

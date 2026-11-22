@@ -657,7 +657,6 @@ impl GimbalModel {
                 &[Kind::Moving], &[Kind::Lens], &[Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
             ];
             for kinds in styles {
-                if !known && kinds[0] == Kind::Aim { continue; }
                 // The view cone fades out as the camera goes down to sleep, and back in as it comes up.
                 // The view cone is always drawn, whatever the tilt (the camera reports where it points).
                 let cone = 1.0;
@@ -753,7 +752,7 @@ mod tests {
         let (w, h) = (f64::from(MIN_WIDTH), f64::from(MODEL_HEIGHT));
         for yaw in [FRONT_YAW, 0.0, 90.0, 135.0, 225.0] {
             for pan in (-150..=150).step_by(10) {
-                for tilt in [-25.0, 0.0, 30.0, 70.0] {
+                for tilt in [-90.0, -85.0, -60.0, -30.0, 0.0, 30.0, 70.0, 90.0] {
                     let lines = model(f64::from(pan), tilt, 0.0, yaw);
                     let k = cone_share(&lines, yaw, (w / 2.0, h * 0.58), FIXED_SCALE, (w, h));
                     assert!(k > 0.2, "cone nearly gone at yaw {yaw} pan {pan} tilt {tilt}: {k}");
