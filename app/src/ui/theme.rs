@@ -321,6 +321,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.small:active { border-radius: §8§; }
 .t4 button.on-stage { background: alpha(#000000, 0.45); color: @t_on_stage; }
 .t4 button.on-stage:hover { background: alpha(#000000, 0.65); }
+.t4 button.on-stage.lit { background: #28c85a; color: #04210d; }
+.t4 button.on-stage.lit:hover { background: #3ad66b; }
 .t4 button.close-button:hover { background: @t_error_hover; color: #ffffff; }
 .t4 button > box { }
 .t4 button.has-icon > box { }

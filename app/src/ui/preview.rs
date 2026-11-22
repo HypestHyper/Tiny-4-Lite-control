@@ -71,6 +71,7 @@ pub struct PreviewHub(Rc<HubInner>);
 
 impl PreviewHub {
     pub fn new(store: &Store) -> PreviewHub {
+        FOCUS_PEAKING.store(current_config().preview_focus_peaking, Ordering::Relaxed);
         PreviewHub(Rc::new(HubInner {
             store: store.clone(),
             views: RefCell::default(),
@@ -130,6 +131,21 @@ impl PreviewHub {
         self.on_enabled(move |enabled| match weak.upgrade() { Some(button) => { show(&button, enabled); true } None => false });
         let hub = self.clone();
         button.connect_clicked(move |_| hub.set_enabled(!hub.is_enabled()));
+        button
+    }
+
+    /// The round button that turns focus peaking on and off, lit while it is on.
+    pub fn peaking_button(&self) -> gtk::Button {
+        let button = widgets::icon_button("filter_center_focus", "Focus peaking: outline what is in focus in green", true);
+        button.add_css_class("on-stage");
+        let show = |button: &gtk::Button| {
+            if focus_peaking_on() { button.add_css_class("lit"); } else { button.remove_css_class("lit"); }
+        };
+        show(&button);
+        button.connect_clicked(move |button| {
+            set_focus_peaking(!focus_peaking_on());
+            show(button);
+        });
         button
     }
 
@@ -267,7 +283,9 @@ impl PreviewHub {
                 // Test mode has no camera: draw a still test card so the layout can be checked.
                 let (w, h) = (mode.width.min(960) as i32, mode.height.min(540) as i32);
                 std::thread::spawn(move || loop {
-                    if sender.send_blocking(test_card(w, h)).is_err() { return; }
+                    let mut card = test_card(w, h);
+                    if FOCUS_PEAKING.load(Ordering::Relaxed) { focus_peaking(&mut card); }
+                    if sender.send_blocking(card).is_err() { return; }
                     std::thread::sleep(Duration::from_millis(500));
                 });
             }
@@ -490,7 +508,8 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
                 // Drop frames we cannot show in time: decoding is the expensive part.
                 if last_decode.elapsed() < min_gap || sender.is_full() { continue; }
                 last_decode = Instant::now();
-                if let Some(frame) = decode_jpeg(&jpeg, width_hint.load(Ordering::Relaxed)) {
+                if let Some(mut frame) = decode_jpeg(&jpeg, width_hint.load(Ordering::Relaxed)) {
+                    if FOCUS_PEAKING.load(Ordering::Relaxed) { focus_peaking(&mut frame); }
                     if sender.send_blocking(frame).is_err() { return; }
                 }
             }
@@ -499,7 +518,8 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
                 let raw: Vec<u8> = buffer.drain(..raw_frame_size).collect();
                 if last_decode.elapsed() < min_gap || sender.is_full() { continue; }
                 last_decode = Instant::now();
-                if let Some(frame) = decode_yuyv(&raw, &mode) {
+                if let Some(mut frame) = decode_yuyv(&raw, &mode) {
+                    if FOCUS_PEAKING.load(Ordering::Relaxed) { focus_peaking(&mut frame); }
                     if sender.send_blocking(frame).is_err() { return; }
                 }
             }
@@ -507,6 +527,52 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
         } else {
             return;
         }
+    }
+}
+
+/// Focus peaking: paint the sharpest edges in the picture green, so what is in focus stands out.
+static FOCUS_PEAKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn focus_peaking_on() -> bool { FOCUS_PEAKING.load(Ordering::Relaxed) }
+
+pub fn set_focus_peaking(on: bool) {
+    FOCUS_PEAKING.store(on, Ordering::Relaxed);
+    update_config(|c| c.preview_focus_peaking = on);
+}
+
+/// The colour edges in focus are painted.
+const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
+
+/// Mark the pixels with the strongest local contrast. The contrast of each pixel is the difference
+/// to its neighbours left/right and up/down (in brightness). What counts as sharp adapts to the
+/// picture: the strongest few per cent, but never weak edges in a flat or blurred picture.
+fn focus_peaking(frame: &mut Frame) {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    if w < 3 || h < 3 || frame.rgb.len() < w * h * 3 { return; }
+    let luma: Vec<u16> = frame.rgb.chunks_exact(3).map(|p| (u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8).collect();
+    let mut strength = vec![0u16; w * h];
+    let mut histogram = [0u32; 512];
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x;
+            let dx = luma[i + 1].abs_diff(luma[i - 1]);
+            let dy = luma[i + w].abs_diff(luma[i - w]);
+            let s = (dx + dy).min(511);
+            strength[i] = s;
+            histogram[usize::from(s)] += 1;
+        }
+    }
+    // The threshold: the strongest 7% of edges, and at least a clear step in brightness.
+    let wanted = ((w - 2) * (h - 2)) as u32 * 7 / 100;
+    let mut count = 0u32;
+    let mut threshold = 511u16;
+    for level in (0..512).rev() {
+        count += histogram[level];
+        if count >= wanted { threshold = level as u16; break; }
+    }
+    let threshold = threshold.max(48);
+    for (i, s) in strength.iter().enumerate() {
+        if *s >= threshold { frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR); }
     }
 }
 
@@ -562,3 +628,33 @@ fn test_card(width: i32, height: i32) -> Frame {
     Frame { width, height, rgb }
 }
 
+
+#[cfg(test)]
+mod peaking_tests {
+    use super::*;
+
+    fn frame(width: i32, height: i32, pixel: impl Fn(i32, i32) -> u8) -> Frame {
+        let mut rgb = Vec::new();
+        for y in 0..height { for x in 0..width { let v = pixel(x, y); rgb.extend_from_slice(&[v, v, v]); } }
+        Frame { width, height, rgb }
+    }
+
+    fn green(f: &Frame) -> usize { f.rgb.chunks_exact(3).filter(|p| *p == PEAK_COLOUR).count() }
+
+    #[test]
+    fn a_sharp_edge_is_painted_and_a_flat_or_soft_picture_is_not() {
+        // A hard step from dark to light down the middle: the pixels at the step are marked.
+        let mut sharp = frame(64, 32, |x, _| if x < 32 { 20 } else { 230 });
+        focus_peaking(&mut sharp);
+        assert!(green(&sharp) > 0);
+        let at_edge = (1..31).all(|y| { let i = (y * 64 + 32) as usize * 3; sharp.rgb[i..i + 3] == PEAK_COLOUR });
+        assert!(at_edge, "the step itself is marked");
+        // A flat picture and a gentle gradient (out of focus) have no edges worth marking.
+        let mut flat = frame(64, 32, |_, _| 120);
+        focus_peaking(&mut flat);
+        assert_eq!(green(&flat), 0);
+        let mut soft = frame(64, 32, |x, _| (x * 3) as u8);
+        focus_peaking(&mut soft);
+        assert_eq!(green(&soft), 0);
+    }
+}

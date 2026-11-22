@@ -87,6 +87,8 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **A sleeping camera wakes for a move.** The stick, the 1° steps, Centre, the shortcut buttons, Apply on a preset and Go on a camera position all send Wake first when the camera reports it is asleep; a position or preset then waits a moment for the camera to come up.
 
+**Focus peaking.** The focus button on the preview (beside pause, in every window) outlines what is in focus in green: each frame's sharpest edges, the strongest few per cent, but never the soft edges of a picture that is out of focus. It works on the picture as the preview shows it, so it costs little, and the choice is remembered.
+
 **Capture mode.** One list of every mode the camera offers (for example "3840 × 2160 (4K) · 30 fps · MJPG"), largest first, so a size and a frame rate that do not go together cannot be chosen.
 
 **Crashes.** If the app crashes, the message and where it happened are written to `~/.local/state/tiny4lite-control/crash.log` (and to the terminal, if there is one).

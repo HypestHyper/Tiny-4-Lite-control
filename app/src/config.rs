@@ -98,6 +98,8 @@ pub struct AppConfig {
     /// Start the live preview when the app opens. Off, it waits for its play button, so opening the app
     /// does not turn the camera on.
     pub preview_on_start: bool,
+    /// Outline what is in focus in green on the preview.
+    pub preview_focus_peaking: bool,
     /// Keep the gimbal inside OBSBOT's published tilt range (30° down to 70° up). Off, it can be driven to
     /// the mechanical ends.
     pub tilt_limit: bool,
@@ -212,6 +214,7 @@ impl Default for AppConfig {
             joystick_follows_mirror: true,
             preview_paused: false,
             preview_on_start: false,
+            preview_focus_peaking: false,
             tilt_limit: true,
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,

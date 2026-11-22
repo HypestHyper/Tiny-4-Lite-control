@@ -132,6 +132,7 @@ impl FullWindow {
         pop.add_css_class("on-stage");
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
+        controls_row.append(&ctx.hub.peaking_button());
         controls_row.append(&pause);
         controls_row.append(&pop);
         hub_view.add_control(&controls_row);
