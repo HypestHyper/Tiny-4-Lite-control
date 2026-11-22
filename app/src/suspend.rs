@@ -95,6 +95,9 @@ fn release(lock: &Mutex<Option<Child>>) {
     }
 }
 
+/// The longest the suspend is held back for the camera.
+const SLEEP_WORK_LIMIT: std::time::Duration = std::time::Duration::from_millis(1000);
+
 /// Watches for suspend until dropped.
 pub struct Watcher {
     monitor: Arc<Mutex<Option<Child>>>,
@@ -104,7 +107,8 @@ pub struct Watcher {
 
 impl Watcher {
     /// `before_sleep` is run (and waited for) while the lock is held; then the lock is let go.
-    pub fn start(before_sleep: impl Fn() + Send + 'static, after_wake: impl Fn() + Send + 'static) -> Result<Watcher, String> {
+    pub fn start(before_sleep: impl Fn() + Send + Sync + 'static, after_wake: impl Fn() + Send + 'static) -> Result<Watcher, String> {
+        let before_sleep = std::sync::Arc::new(before_sleep);
         available()?;
         let mut monitor = monitor_command().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
             .spawn().map_err(|e| format!("Could not start the suspend watcher: {e}"))?;
@@ -119,8 +123,17 @@ impl Watcher {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 match parser.feed(&line) {
                     Some(true) => {
-                        before_sleep();
+                        // Never hold the suspend back for long: the work gets a second, then the lock goes
+                        // whether it has finished or not (it carries on in the background).
+                        let started = std::time::Instant::now();
+                        let (done_tx, done_rx) = std::sync::mpsc::channel();
+                        let work = before_sleep.clone();
+                        std::thread::spawn(move || { work(); let _ = done_tx.send(()); });
+                        let finished = done_rx.recv_timeout(SLEEP_WORK_LIMIT).is_ok();
                         release(&thread_lock);
+                        eprintln!("[tiny4lite-control service] Suspend: {} after {} ms; the suspend was let go.",
+                            if finished { "camera command done" } else { "camera command still running" },
+                            started.elapsed().as_millis());
                     }
                     // Awake again: hold the lock once more for the next time.
                     Some(false) => {

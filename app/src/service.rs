@@ -404,7 +404,8 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                     let resumed = resumed_at.clone();
                     match crate::suspend::Watcher::start(move || {
                         let node = device.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        match node.as_deref().map(send_sleep) {
+                        // One try only: there is no time for more before the computer sleeps.
+                        match node.as_deref().map(|d| backend::set_sleep_mode(d, true)) {
                             Some(Ok(())) => log("The computer is suspending, so the camera was put to sleep."),
                             Some(Err(error)) => log(&format!("The computer is suspending, but the camera could not be put to sleep: {error}")),
                             None => {}
