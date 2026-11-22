@@ -427,10 +427,8 @@ window.t4.csd { border-radius: §18§; }
 /* Colour temperature tells the camera what colour the light is, and it corrects for it: a low setting makes
    the picture cold (blue), a high one warm (red). The bar shows what happens to the picture. */
 .t4 scale.grad-temperature trough { background-image: linear-gradient(to right, #5f8dff, #b9d0ff 30%, #f2f0ea 50%, #ffb27a 70%, #ff5a36); }
-/* What each balance does to the picture on this camera: less red leaves it green, more makes it red; less
-   blue leaves it yellow (red and green), more makes it purple (blue over the red). */
-.t4 scale.grad-red trough { background-image: linear-gradient(to right, #4cc46a, #a3a89f 50%, #e5484d); }
-.t4 scale.grad-blue trough { background-image: linear-gradient(to right, #e2c43c, #a6a39f 50%, #9b5ce0); }
+.t4 scale.grad-red trough { background-image: linear-gradient(to right, #3fb8b4, #9aa3a6 50%, #e5484d); }
+.t4 scale.grad-blue trough { background-image: linear-gradient(to right, #e2bf3c, #a3a39b 50%, #4a7de3); }
 /* Hue on this camera only shifts the tint a little, from bluish to reddish, through neutral in the middle. */
 .t4 scale.grad-hue trough { background-image: linear-gradient(to right, #5b7fe0, #9aa0b4 50%, #e0605b); }
 .t4 scale.grad-temperature highlight, .t4 scale.grad-red highlight, .t4 scale.grad-blue highlight, .t4 scale.grad-hue highlight { background: transparent; }

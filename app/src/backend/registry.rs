@@ -547,10 +547,10 @@ fn build() -> Vec<Setting> {
             "Match it to your light: lower makes the picture bluer, higher makes it redder.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
-            "Less is greener, more is redder.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust red."),
         Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
-            "Less is yellower, more is more purple.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            "Fine-tune the blue channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust blue."),
 
         // ── Focus ──
