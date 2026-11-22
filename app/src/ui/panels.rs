@@ -613,7 +613,7 @@ pub fn sleep_timer_card() -> gtk::Box {
     });
 
     body.append(&switch_row("Sleep when nothing is using the camera",
-        "After the time below with no app using it and the control window closed.",
+        "After the time below with no app streaming from it (a paused preview does not count) and no control used in this window.",
         config.service.auto_sleep_enabled,
         Box::new({ let minutes = minutes.clone(); move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); } })));
     body.append(&minutes);
@@ -1028,61 +1028,150 @@ fn plain_switch_row(title: &str, summary: &str, active: bool, changed: impl Fn(b
     row
 }
 
-/// Limits on where the joystick, the steps and presets may turn the camera.
-pub fn gimbal_limits_card() -> gtk::Box {
-    let (card, body) = card("Gimbal limits", "open_with", "How far the camera may be turned from this app.");
-    let config = current_config();
-    // The range used while the limit is on: OBSBOT's published one unless changed here.
-    let range = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    range.set_halign(gtk::Align::Start);
-    let spin = |label: &str, value: f64, low: f64, high: f64| {
+/// One axis of the gimbal limits: what it is called, its ends, and where its settings live.
+struct AxisLimits {
+    name: &'static str,
+    low_name: &'static str,
+    high_name: &'static str,
+    summary: &'static str,
+    published: (f64, f64),
+    mechanical: f64,
+    read: fn(&config::AppConfig) -> (bool, f64, f64),
+    write_on: fn(&mut config::AppConfig, bool),
+    write_range: fn(&mut config::AppConfig, f64, f64),
+    /// Pan or tilt out of a live position (pan, tilt).
+    live: fn((f64, f64)) -> f64,
+}
+
+const AXES: [AxisLimits; 2] = [
+    AxisLimits {
+        name: "Pan", low_name: "Left", high_name: "Right",
+        summary: "OBSBOT's range is 140° each way. Off, it can turn to the ends of the mechanism, 150°, where the camera stops itself.",
+        published: (-140.0, 140.0), mechanical: 150.0,
+        read: |c| (c.pan_limit, c.pan_limit_low, c.pan_limit_high),
+        write_on: |c, on| c.pan_limit = on,
+        write_range: |c, low, high| { c.pan_limit_low = low; c.pan_limit_high = high; },
+        live: |(pan, _)| pan,
+    },
+    AxisLimits {
+        name: "Tilt", low_name: "Down", high_name: "Up",
+        summary: "OBSBOT's range is 30° down to 70° up. Off, it can tilt to the ends of the mechanism, 90°, where the camera stops itself.",
+        published: (-30.0, 70.0), mechanical: 90.0,
+        read: |c| (c.tilt_limit, c.tilt_limit_low, c.tilt_limit_high),
+        write_on: |c, on| c.tilt_limit = on,
+        write_range: |c, low, high| { c.tilt_limit_low = low; c.tilt_limit_high = high; },
+        live: |(_, tilt)| tilt,
+    },
+];
+
+/// Limits on how far the stick, the 1° steps and presets may turn the camera: per axis, on or off, with
+/// its two ends typed in or taken from where the camera points now.
+pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("Gimbal limits", "open_with",
+        "How far the stick, the 1° steps and presets may turn the camera, in degrees. The stick slows near an end and stops just short of it.");
+    // Where the camera points now, for the buttons that take it.
+    let position: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
+    {
+        let position = Rc::downgrade(&position);
+        store.subscribe_gimbal(move |live| match position.upgrade() { Some(cell) => { cell.set(live); true } None => false });
+    }
+    for (index, axis) in AXES.iter().enumerate() {
+        if index > 0 {
+            let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            divider.add_css_class("divider");
+            body.append(&divider);
+        }
+        body.append(&axis_limits(store, axis, &position));
+    }
+    card
+}
+
+fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Option<(f64, f64)>>>) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    section.add_css_class("limit-axis");
+    let (on, low_now, high_now) = (axis.read)(&current_config());
+    let note = widgets::text("", &["small", "warning-text"]);
+    note.set_visible(false);
+
+    let fields = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    fields.add_css_class("limit-fields");
+    let field = |caption: &str, value: f64, low: f64, high: f64| {
         let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        column.append(&widgets::text(label, &["small", "dim"]));
+        column.set_hexpand(true);
+        column.append(&widgets::text(caption, &["small", "dim"]));
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        line.add_css_class("linked");
+        line.add_css_class("limit-entry");
         let spin = gtk::SpinButton::with_range(low, high, 1.0);
         spin.set_digits(0);
-        spin.set_value(value);
         spin.set_numeric(true);
-        widgets::label_accessible(&spin, label);
-        column.append(&spin);
-        (column, spin)
+        spin.set_value(value);
+        spin.set_hexpand(true);
+        spin.set_width_chars(4);
+        widgets::lock_wheel(&spin);
+        widgets::label_accessible(&spin, &format!("{} {} limit, degrees", axis.name, caption.to_lowercase()));
+        let take = widgets::icon_button("center_focus_strong", &format!("Use where the camera points now as the {} limit", caption.to_lowercase()), true);
+        take.add_css_class("take-current");
+        line.append(&spin);
+        line.append(&take);
+        column.append(&line);
+        (column, spin, take)
     };
-    let (low_box, low) = spin("Lowest (down, °)", config.tilt_limit_low, -90.0, 0.0);
-    let (high_box, high) = spin("Highest (up, °)", config.tilt_limit_high, 0.0, 90.0);
+    let (low_box, low, take_low) = field(axis.low_name, low_now, -axis.mechanical, 0.0);
+    let (high_box, high, take_high) = field(axis.high_name, high_now, 0.0, axis.mechanical);
     let reset = gtk::Button::with_label("OBSBOT range");
     reset.add_css_class("small");
     reset.set_valign(gtk::Align::End);
-    reset.set_tooltip_text(Some("Back to 30° down and 70° up"));
-    range.append(&low_box);
-    range.append(&high_box);
-    range.append(&reset);
-    let note = widgets::text("", &["small", "dim"]);
+    reset.set_tooltip_text(Some("Put both ends back to OBSBOT's published range"));
+    fields.append(&low_box);
+    fields.append(&high_box);
+    fields.append(&reset);
+
     let save = {
         let (low, high, note) = (low.clone(), high.clone(), note.clone());
         move || {
             let (l, h) = (low.value(), high.value());
-            if backend::angles::valid_tilt_limits(l, h) {
-                note.set_text("");
-                update_config(|c| { c.tilt_limit_low = l; c.tilt_limit_high = h; });
+            if crate::backend::angles::valid_limits(l, h, axis.mechanical) {
+                note.set_visible(false);
+                update_config(|c| (axis.write_range)(c, l, h));
             } else {
-                note.set_text("Leave at least 10° between the lowest and the highest.");
+                note.set_text("Leave at least 10° between the two ends.");
+                note.set_visible(true);
             }
         }
     };
     { let save = save.clone(); low.connect_value_changed(move |_| save()); }
     { let save = save.clone(); high.connect_value_changed(move |_| save()); }
-    { let (low, high) = (low.clone(), high.clone()); reset.connect_clicked(move |_| { low.set_value(-30.0); high.set_value(70.0); }); }
-    range.set_sensitive(config.tilt_limit);
-    let range_weak = range.downgrade();
-    body.append(&plain_switch_row("Limit tilt",
-        "Keep tilt inside the range below, by default OBSBOT's published 30° down to 70° up. Turn off to reach the ends of the mechanism; the camera stops itself there.",
-        config.tilt_limit,
-        move |on| {
-            update_config(|c| c.tilt_limit = on);
-            if let Some(range) = range_weak.upgrade() { range.set_sensitive(on); }
-        }));
-    body.append(&range);
-    body.append(&note);
-    card
+    {
+        let (low, high) = (low.clone(), high.clone());
+        reset.connect_clicked(move |_| { low.set_value(axis.published.0); high.set_value(axis.published.1); });
+    }
+    // Take where the camera points now; an end on the wrong side of centre cannot be a limit.
+    for (button, spin, low_end) in [(&take_low, &low, true), (&take_high, &high, false)] {
+        let (spin, position, store) = (spin.clone(), position.clone(), store.clone());
+        button.connect_clicked(move |_| {
+            let Some(now) = position.get().map(axis.live) else {
+                store.error("The camera has not said where it points yet.");
+                return;
+            };
+            let now = now.round();
+            if (low_end && now > 0.0) || (!low_end && now < 0.0) {
+                store.error(&format!("The camera points {} now, which is the other side of centre for this end.", crate::backend::angles::format(now)));
+                return;
+            }
+            spin.set_value(now);
+        });
+    }
+
+    fields.set_sensitive(on);
+    let fields_weak = fields.downgrade();
+    section.append(&plain_switch_row(&format!("Limit {}", axis.name.to_lowercase()), axis.summary, on, move |on| {
+        update_config(|c| (axis.write_on)(c, on));
+        if let Some(fields) = fields_weak.upgrade() { fields.set_sensitive(on); }
+    }));
+    section.append(&fields);
+    section.append(&note);
+    section
 }
 
 pub fn developer_card(store: &Store) -> gtk::Box {

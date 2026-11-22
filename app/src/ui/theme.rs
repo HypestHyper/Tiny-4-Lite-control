@@ -303,10 +303,19 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.preset { min-width: §38§; min-height: §38§; padding: 0; border-radius: §10§; background: transparent; border: 2px solid @t_outline; font-weight: 700; color: @t_on_surface; }
 .t4 button.preset:hover { background: alpha(@t_primary, 0.14); }
 .t4 button.preset:disabled { opacity: 0.4; }
+.t4 button.preset.empty { border-style: dashed; color: @t_on_surface_variant; opacity: 0.7; }
+.t4 button.preset.memory { border-color: @t_tertiary; }
+.t4 .quick-chooser button.flat-item { background: transparent; border-radius: §8§; padding: §6§ §10§; min-height: 0; }
+.t4 .quick-chooser button.flat-item:hover { background: alpha(@t_on_surface, 0.08); }
+.t4 .quick-chooser button.flat-item.chosen { background: alpha(@t_primary, 0.16); color: @t_primary; }
+.t4 .quick-chooser .chooser-head { margin-top: §6§; }
 .t4 button.round.small { min-height: §32§; min-width: §32§; padding: 0; border-radius: §16§; }
 .t4 button.round.small:active { border-radius: §8§; }
 .t4 button.flat-icon { background: transparent; color: @t_on_surface_variant; }
 .t4 button.flat-icon:hover { background: alpha(@t_on_surface, 0.08); color: @t_on_surface; }
+/* A reset button with something to reset: tinted, so a value away from its default is easy to spot. */
+.t4 button.flat-icon.reset:not(:disabled) { background: alpha(@t_primary, 0.14); color: @t_primary; }
+.t4 button.flat-icon.reset:not(:disabled):hover { background: alpha(@t_primary, 0.24); }
 .t4 button.small { min-height: §32§; padding: 0 §14§; border-radius: §16§; font-size: ¶13¶; }
 .t4 button.small:active { border-radius: §8§; }
 .t4 button.on-stage { background: alpha(#000000, 0.45); color: @t_on_stage; }
@@ -357,6 +366,10 @@ window.t4.csd { border-radius: §18§; }
 .t4 label.code { font-family: monospace; font-size: ¶12¶; background: @t_surface_high; border-radius: §10§; padding: §10§ §12§; }
 .t4 .setup-banner { background: alpha(@t_primary, 0.14); border-radius: §16§; padding: §12§ §16§; }
 .t4 .setup-banner > .icon { color: @t_primary; font-size: §24§; }
+.t4 .limit-entry spinbutton { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.t4 .limit-entry button.take-current { border-radius: 0 §10§ §10§ 0; min-width: §36§; min-height: §34§; margin: 0; background: @t_surface_high; }
+.t4 .limit-entry button.take-current:hover { background: alpha(@t_primary, 0.2); color: @t_primary; }
+.t4 .warning-text { color: @t_error; }
 .card.tight-x { padding-left: §12§; padding-right: §12§; }
 .card.tight { padding: §16§ §18§; }
 .card-inner { background: @t_surface_high; border-radius: §20§; padding: §16§; }
@@ -390,6 +403,12 @@ window.t4.csd { border-radius: §18§; }
 /* Slider: tall pill track, bar handle with a ring */
 .t4 scale trough { min-height: §16§; border-radius: §8§; background: @t_surface_highest; border: none; }
 .t4 scale highlight { min-width: 0; margin: 0; padding: 0; min-height: §16§; border-radius: §8§; background: @t_primary; border: none; }
+/* Colour sliders: the bar shows the colours it moves between, and the filled part lets them show through. */
+.t4 scale.grad-temperature trough { background-image: linear-gradient(to right, #ff8a2b, #ffc98a 30%, #f2f0ea 50%, #b9d0ff 70%, #6f9cff); }
+.t4 scale.grad-red trough { background-image: linear-gradient(to right, #3fb8b4, #9aa3a6 50%, #e5484d); }
+.t4 scale.grad-blue trough { background-image: linear-gradient(to right, #e2bf3c, #a3a39b 50%, #4a7de3); }
+.t4 scale.grad-hue trough { background-image: linear-gradient(to right, #00d5d5, #3b6cff 17%, #d23cff 33%, #ff3b3b 50%, #ffd23b 67%, #3bd25a 83%, #00d5d5); }
+.t4 scale.grad-temperature highlight, .t4 scale.grad-red highlight, .t4 scale.grad-blue highlight, .t4 scale.grad-hue highlight { background: transparent; }
 .t4 scale slider { min-width: 4px; min-height: §32§; margin: -§8§ 0; border-radius: 3px; background: @t_primary; border: none; box-shadow: 0 0 0 §4§ @t_surface; transition: min-width 160ms cubic-bezier(0.2,0,0,1); }
 .card-inner scale slider { box-shadow: 0 0 0 §4§ @t_surface_high; }
 /* The slider keeps its width while pressed, so nothing around it moves. */
@@ -466,7 +485,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 .compact button.small { min-height: §24§; padding: 0 §6§; font-size: ¶12¶; border-radius: §12§; }
 .t4 .compact button.round.small { min-height: §26§; min-width: §26§; padding: 0; }
 .readout { font-size: ¶20¶; font-weight: 700; font-feature-settings: "tnum"; min-width: §72§; }
-.t4 .model-readouts .readout, .t4 .model-readouts .setting-value { font-size: ¶14¶; font-weight: 700; min-width: §40§; color: @t_on_surface; }
+.t4 .model-readouts { padding: 0 §8§ §10§ §8§; }
+.t4 .model-readouts .readout, .t4 .model-readouts .setting-value { font-size: ¶14¶; font-weight: 700; min-width: 0; color: @t_on_surface; }
 
 /* Preset list items */
 .list-item { background: @t_surface_high; border-radius: §20§; padding: §12§ §16§; }

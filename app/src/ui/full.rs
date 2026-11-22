@@ -13,6 +13,8 @@ use gtk::prelude::*;
 
 /// The narrowest the left panel is allowed to be remembered at; its contents set the real minimum.
 const LEFT_MIN: i32 = 240;
+/// The narrowest the settings panel gets; below this the window stops shrinking.
+const RIGHT_MIN: i32 = 280;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -66,7 +68,7 @@ impl FullWindow {
             .default_height(760)
             .build();
         windowing::set_class(&window, windowing::CLASS_FULL);
-        window.set_size_request(340, 480);
+        window.set_size_request(-1, 480);
 
         // ── Header ──
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -191,7 +193,7 @@ impl FullWindow {
                         // Extra cards that are not registry settings.
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
-                        built.masonry.add(&panels::gimbal_limits_card(), 2);
+                        built.masonry.add(&panels::gimbal_limits_card(&store), 3);
                         built.masonry.add(&panels::sleep_timer_card(), 5);
                         built.masonry.add(&panels::service_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
@@ -248,7 +250,7 @@ impl FullWindow {
         let banner = connection_banner(ctx);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.set_size_request(340, -1);
+        column.set_size_request(RIGHT_MIN, -1);
         bar_row.set_margin_bottom(12);
         search_row.set_margin_bottom(0);
         banner.set_margin_bottom(0);
@@ -336,7 +338,7 @@ impl FullWindow {
         paned.set_resize_end_child(true);
         // The left panel never gets narrower than its contents, so nothing in it is cut off.
         paned.set_shrink_start_child(false);
-        paned.set_shrink_end_child(true);
+        paned.set_shrink_end_child(false);
         paned.set_margin_start(20);
         paned.set_margin_end(14);
         paned.set_margin_bottom(20);
@@ -382,7 +384,6 @@ impl FullWindow {
 
         // Adapt to the window. The layout follows the room the right-hand panel has, not the window: with the
         // left panel made narrower, the window can get narrower before the page has to stack.
-        const RIGHT_MIN: i32 = 470;
         const RIGHT_BACK: i32 = 510;
         const MARGINS: i32 = 34;
         let layout = Rc::new(Cell::new(0_u8));
@@ -474,7 +475,11 @@ impl FullWindow {
                 } else { paned.position().max(LEFT_MIN) };
                 let right_width = width - split - MARGINS;
                 let was = layout.get();
-                let go_stacked = if was == 0 { right_width < RIGHT_MIN } else { right_width < RIGHT_BACK };
+                // One layout at every width: the two panels side by side, each shrinking to what it needs
+                // (the window cannot get narrower than both together). The stacked layout is kept for now
+                // but never chosen.
+                let _ = (right_width, RIGHT_BACK);
+                let go_stacked = false;
                 // A little slack each way, so a window sitting on a threshold does not flicker.
                 let next = if go_stacked { 1 } else { 0 };
                 let first = false;

@@ -12,7 +12,7 @@ fn store() -> &'static Mutex<AppConfig> {
 
 /// Replace the in-memory configuration, for example after loading it from disk.
 pub fn install_config(config: AppConfig) {
-    super::angles::set_tilt_limit(config.tilt_limit, config.tilt_limit_low, config.tilt_limit_high);
+    super::angles::set_limits(&config);
     *store().lock().unwrap_or_else(|e| e.into_inner()) = config;
 }
 
@@ -38,7 +38,7 @@ pub fn update_config(update: impl FnOnce(&mut AppConfig)) {
     {
         let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
         update(&mut guard);
-        super::angles::set_tilt_limit(guard.tilt_limit, guard.tilt_limit_low, guard.tilt_limit_high);
+        super::angles::set_limits(&guard);
     }
     schedule_save();
 }

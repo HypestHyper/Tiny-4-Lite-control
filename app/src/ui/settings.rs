@@ -88,6 +88,11 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
             card.append(&divider);
         }
         first = false;
+        // Camera power is two plain buttons, as on the Camera controls card, not a switch.
+        if setting.id == "obsbot:sleep" {
+            card.append(&super::joystick::power_buttons(store, None));
+            continue;
+        }
         let row = SettingRow::new(store, setting, density);
         card.append(row.widget());
         keep.borrow_mut().push(row);

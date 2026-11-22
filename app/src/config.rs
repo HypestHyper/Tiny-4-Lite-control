@@ -105,8 +105,22 @@ pub struct AppConfig {
     /// range, −30 to +70, unless changed.
     pub tilt_limit_low: f64,
     pub tilt_limit_high: f64,
+    /// What the four shortcut buttons beside the joystick do. None: the first four app presets.
+    pub quick_presets: Option<Vec<QuickPreset>>,
+    /// Keep pan inside a range: OBSBOT's published ±140° unless changed. Off, the mechanical ±150°.
+    pub pan_limit: bool,
+    pub pan_limit_low: f64,
+    pub pan_limit_high: f64,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
+}
+
+/// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct QuickPreset {
+    pub app: Option<String>,
+    pub camera: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -200,6 +214,10 @@ impl Default for AppConfig {
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,
             service_setup_dismissed: false,
+            quick_presets: None,
+            pan_limit: true,
+            pan_limit_low: -140.0,
+            pan_limit_high: 140.0,
         }
     }
 }

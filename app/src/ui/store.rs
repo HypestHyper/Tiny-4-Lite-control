@@ -257,6 +257,7 @@ impl Store {
     /// is waiting, so a button never has to wait for them.
     pub fn call_now<T: Send + 'static>(&self, job: impl FnOnce(&str) -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
         use std::sync::atomic::{AtomicU64, Ordering};
+        crate::backend::usage::note_activity();
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let (sender, receiver) = async_channel::bounded::<T>(1);
         let run = move |device: &str| { let value = job(device); let _ = sender.send_blocking(value); };
@@ -294,6 +295,7 @@ impl Store {
     /// `done` gets `Ok(Some(value))` when the camera confirmed what it now has, `Ok(None)` when the
     /// command was sent but cannot be confirmed.
     pub fn write(&self, setting: &'static Setting, value: Value, done: impl FnOnce(Result<Option<Value>, String>) + 'static) {
+        crate::backend::usage::note_activity();
         let this = self.clone();
         let run = move |device: &str| setting.write(device, value);
         let finish = move |result: Result<Option<Value>, String>| {

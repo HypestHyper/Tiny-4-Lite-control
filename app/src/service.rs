@@ -23,6 +23,8 @@ const SLICE: Duration = Duration::from_millis(200);
 const ROUND_SLICES: u32 = 10;
 /// A new camera gets this long to settle before anything is sent to it.
 const SETTLE: Duration = Duration::from_secs(2);
+/// A control used in the window this recently counts as using the camera.
+const ACTIVITY_SECONDS: u64 = 10;
 
 // ── Decisions ─────────────────────────────────────────────────────────────
 
@@ -222,21 +224,6 @@ fn write_status(status: &Status) {
 
 // ── Looking around ────────────────────────────────────────────────────────
 
-/// Is the control window of this app running?
-fn window_open() -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
-    let me = std::process::id();
-    entries.flatten().any(|entry| {
-        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { return false };
-        if pid == me { return false; }
-        let Some(words) = command_words(pid) else { return false };
-        let ours = is_our_program(pid, &words);
-        // Someone else's window is not ours to keep the camera awake for.
-        let same_user = { use std::os::unix::fs::MetadataExt; entry.metadata().is_ok_and(|m| m.uid() == user_id()) };
-        // A command line run (`list`, `set`, `service ...`) is not a window; the same test as main() uses.
-        ours && same_user && !crate::cli::is_cli(words.get(1..).unwrap_or(&[]))
-    })
-}
 
 // ── Doing it ──────────────────────────────────────────────────────────────
 
@@ -427,9 +414,12 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             let camera = device_override.clone().filter(|d| Path::new(d).exists() || backend::ui_test_mode())
                 .or_else(|| backend::discover_tiny4lite().into_iter().next());
             *shared_device.lock().unwrap_or_else(|e| e.into_inner()) = camera.clone();
-            let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode() && !backend::usage::holders(c).is_empty());
-            let window = brain.auto_sleep && !backend::ui_test_mode() && window_open();
-            let sight = Sight { camera: camera.as_deref(), in_use, window_open: window };
+            // In use: a program streaming from the camera (this app's preview counts), or a control used in the
+            // window just now. An open window on its own does not keep the camera awake.
+            let in_use = brain.auto_sleep && camera.as_deref().is_some_and(|c| !backend::ui_test_mode()
+                && (!backend::usage::streaming_holders(c).is_empty()
+                    || backend::usage::seconds_since_activity().is_some_and(|s| s < ACTIVITY_SECONDS)));
+            let sight = Sight { camera: camera.as_deref(), in_use, window_open: false };
             for action in brain.step(Instant::now(), &sight) {
                 if let Some(device) = camera.as_deref() {
                     let restoring = action == Action::Restore;
@@ -443,7 +433,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             }
             // A capture mode that was asked for while another program had the camera is applied now that it is free.
             if let Some(device) = camera.as_deref() {
-                if current_config().pending_video_mode.is_some() && (backend::ui_test_mode() || backend::usage::holders(device).is_empty()) {
+                if current_config().pending_video_mode.is_some() && (backend::ui_test_mode() || backend::usage::streaming_holders(device).is_empty()) {
                     apply_pending_mode(device, &mut status);
                 }
             }

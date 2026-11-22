@@ -145,8 +145,8 @@ echo "ok: the joystick follows the mirror"
 
 # ── 1° step buttons send small signed moves ──
 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start step
-xdotool mousemove --window "$WINDOW" 283 776 click 1; sleep 0.5      # Pan +1°
-xdotool mousemove --window "$WINDOW" 210 818 click 1; sleep 0.5      # Tilt -1°
+xdotool mousemove --window "$WINDOW" 283 802 click 1; sleep 0.5      # Pan +1°
+xdotool mousemove --window "$WINDOW" 210 843 click 1; sleep 0.5      # Tilt -1°
 shot step-buttons
 stop_app
 grep -q -- '--set-ctrl=pan_absolute=3600' "$OUT/step.commands.log" || fail "Pan +1° did not send a one-degree pan step"

@@ -14,7 +14,7 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-pub use crate::backend::angles::{PAN_LIMIT, PAN_RANGE, TILT_LIMIT};
+pub use crate::backend::angles::{PAN_LIMIT, TILT_LIMIT};
 
 type V3 = (f64, f64, f64);
 
@@ -76,6 +76,15 @@ fn toward_viewer(yaw: f64) -> V3 {
 }
 
 /// World point to screen offset (right, down) in units of the model, with a little perspective.
+/// False where the perspective breaks down: a point so far towards the viewer that it would be drawn
+/// huge or flipped.
+pub fn projects_sanely(p: V3, yaw: f64) -> bool {
+    let (_, y, z) = pan_by(p, -yaw);
+    let (s, c) = VIEW_PITCH.to_radians().sin_cos();
+    let z = y * s + z * c;
+    1.0 - z * 0.06 > 0.35
+}
+
 pub fn project(p: V3, yaw: f64) -> (f64, f64) {
     let (x, y, z) = pan_by(p, -yaw);
     // Tilt the whole scene towards the viewer by the view pitch.
@@ -280,7 +289,9 @@ fn model(pan: f64, tilt: f64, zoom: f64, yaw: f64) -> Vec<Line> {
     close_loop(&usb, Kind::BaseBack, &mut lines);
     // The floor ring, with marks for front and the two pan limits.
     close_loop(&ring_xz(FLOOR_RING, 0.0, 44), Kind::Base, &mut lines);
-    for (deg, kind, length) in [(0.0, Kind::Base, 9.0), (PAN_RANGE.1, Kind::Limit, 6.0), (PAN_RANGE.0, Kind::Limit, 6.0)] {
+    // The marks follow the pan limits in force (the published ±140° unless changed).
+    let (pan_low, pan_high) = crate::backend::angles::pan_range();
+    for (deg, kind, length) in [(0.0, Kind::Base, 9.0), (pan_high, Kind::Limit, 6.0), (pan_low, Kind::Limit, 6.0)] {
         let f = forward(deg, 0.0);
         lines.push(Line { a: (f.0 * FLOOR_RING, 0.0, f.2 * FLOOR_RING), b: (f.0 * (FLOOR_RING + length), 0.0, f.2 * (FLOOR_RING + length)), kind });
     }
@@ -427,19 +438,24 @@ const FIXED_SCALE: f64 = 185.0 / 3.15;
 /// The view cone ends this far inside the edge of the drawing.
 const CONE_MARGIN: f64 = 6.0;
 
-/// How much of the cone fits: the largest share (up to all of it) of each line from the lens that stays
-/// inside the box, the same for every line so the cone keeps its shape.
-pub fn cone_fit(apex: (f64, f64), points: &[(f64, f64)], bounds: (f64, f64, f64, f64)) -> f64 {
-    let (left, top, right, bottom) = bounds;
-    let mut fit: f64 = 1.0;
-    for &(x, y) in points {
-        let (dx, dy) = (x - apex.0, y - apex.1);
-        if dx > 0.0 && x > right { fit = fit.min((right - apex.0) / dx); }
-        if dx < 0.0 && x < left { fit = fit.min((left - apex.0) / dx); }
-        if dy > 0.0 && y > bottom { fit = fit.min((bottom - apex.1) / dy); }
-        if dy < 0.0 && y < top { fit = fit.min((top - apex.1) / dy); }
-    }
-    fit.clamp(0.0, 1.0)
+/// How much of the view cone to draw, 0 to 1: the largest share of it (every edge pulled towards the lens
+/// by the same amount, in the model) that projects sanely and stays inside the drawing.
+fn cone_share(lines: &[Line], yaw: f64, centre: (f64, f64), scale: f64, size: (f64, f64)) -> f64 {
+    let aim: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
+    let Some(first) = aim.first() else { return 0.0 };
+    let apex = first.a;
+    let pull = |p: V3, k: f64| (apex.0 + (p.0 - apex.0) * k, apex.1 + (p.1 - apex.1) * k, apex.2 + (p.2 - apex.2) * k);
+    let fits = |k: f64| aim.iter().flat_map(|l| [l.a, l.b]).all(|p| {
+        let q = pull(p, k);
+        if !projects_sanely(q, yaw) { return false; }
+        let (x, y) = project(q, yaw);
+        let (x, y) = (centre.0 + x * scale, centre.1 + y * scale);
+        x >= CONE_MARGIN && y >= CONE_MARGIN && x <= size.0 - CONE_MARGIN && y <= size.1 - CONE_MARGIN
+    });
+    if fits(1.0) { return 1.0; }
+    let (mut low, mut high) = (0.0, 1.0);
+    for _ in 0..16 { let mid = (low + high) / 2.0; if fits(mid) { low = mid; } else { high = mid; } }
+    low
 }
 /// The cone fades in over this many degrees above the sleeping pose (and out again going down).
 pub const CONE_FADE_DEGREES: f64 = 1.5;
@@ -664,13 +680,14 @@ impl GimbalModel {
                 let on_screen = |p: V3| { let (x, y) = project(p, yaw); (cx + x * scale, cy + y * scale) };
                 let chosen: Vec<((f64, f64), (f64, f64))> = lines.iter().filter(|l| kinds.contains(&l.kind)).map(|l| (on_screen(l.a), on_screen(l.b))).collect();
                 // The cone is drawn shorter rather than cut off at the edge.
+                // It is shortened in the model itself (every edge pulled towards the lens by the same share),
+                // so a cone pointing at the viewer stays a cone instead of blowing up in the perspective.
                 let chosen = if kinds[0] == Kind::Aim && !chosen.is_empty() {
-                    let apex = chosen[0].0;
-                    let far: Vec<(f64, f64)> = chosen.iter().flat_map(|(a, b)| [*a, *b]).collect();
-                    let bounds = (CONE_MARGIN, CONE_MARGIN, f64::from(width) - CONE_MARGIN, f64::from(height) - CONE_MARGIN);
-                    let k = cone_fit(apex, &far, bounds);
-                    let pull = |p: (f64, f64)| (apex.0 + (p.0 - apex.0) * k, apex.1 + (p.1 - apex.1) * k);
-                    chosen.into_iter().map(|(a, b)| (pull(a), pull(b))).collect()
+                    let aim: Vec<&Line> = lines.iter().filter(|l| l.kind == Kind::Aim).collect();
+                    let apex = aim[0].a;
+                    let k = cone_share(&lines, yaw, (cx, cy), scale, (f64::from(width), f64::from(height)));
+                    let pull = |p: V3| (apex.0 + (p.0 - apex.0) * k, apex.1 + (p.1 - apex.1) * k, apex.2 + (p.2 - apex.2) * k);
+                    aim.iter().map(|l| (on_screen(pull(l.a)), on_screen(pull(l.b)))).collect()
                 } else { chosen };
                 for (a, b) in chosen {
                     cr.move_to(a.0, a.1);
@@ -716,7 +733,7 @@ mod tests {
 
     #[test]
     fn the_marks_are_the_driven_range_and_the_clamp_is_the_mechanical_one() {
-        assert_eq!(PAN_RANGE, (-140.0, 140.0));
+        assert_eq!(crate::backend::angles::PAN_RANGE, (-140.0, 140.0));
         assert_eq!(PAN_LIMIT, 150.0);
         assert_eq!(TILT_LIMIT, 90.0);
     }
@@ -740,13 +757,18 @@ mod tests {
     }
 
     #[test]
-    fn the_cone_is_shortened_to_stay_inside_and_keeps_its_shape() {
-        let bounds = (0.0, 0.0, 100.0, 100.0);
-        // Inside already: all of it.
-        assert_eq!(cone_fit((50.0, 50.0), &[(60.0, 60.0), (40.0, 70.0)], bounds), 1.0);
-        // One point twice as far as the edge allows: half of every line.
-        assert!((cone_fit((50.0, 50.0), &[(150.0, 50.0), (60.0, 60.0)], bounds) - 0.5).abs() < 1e-9);
-        assert!((cone_fit((50.0, 50.0), &[(50.0, -50.0)], bounds) - 0.5).abs() < 1e-9);
+    fn the_cone_stays_visible_and_inside_at_every_angle() {
+        // The narrowest drawing, at the fixed scale, with the model where draw() puts it.
+        let (w, h) = (f64::from(MIN_WIDTH), f64::from(MODEL_HEIGHT));
+        for yaw in [FRONT_YAW, 0.0, 90.0, 135.0, 225.0] {
+            for pan in (-150..=150).step_by(10) {
+                for tilt in [-25.0, 0.0, 30.0, 70.0] {
+                    let lines = model(f64::from(pan), tilt, 0.0, yaw);
+                    let k = cone_share(&lines, yaw, (w / 2.0, h * 0.58), FIXED_SCALE, (w, h));
+                    assert!(k > 0.2, "cone nearly gone at yaw {yaw} pan {pan} tilt {tilt}: {k}");
+                }
+            }
+        }
     }
 
     #[test]

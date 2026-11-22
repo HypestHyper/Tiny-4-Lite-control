@@ -93,6 +93,139 @@ struct State {
     save_timer: RefCell<Option<glib::SourceId>>,
 }
 
+/// What a shortcut button does.
+#[derive(Clone, Debug, PartialEq)]
+enum QuickTarget { App(String), Camera(u8) }
+
+/// The target of shortcut `index`: the one chosen, or, if none have been chosen yet, the app preset in
+/// that place in the list.
+fn quick_slot(index: usize) -> Option<QuickTarget> {
+    let config = current_config();
+    match &config.quick_presets {
+        None => config.presets.get(index).map(|p| QuickTarget::App(p.name.clone())),
+        Some(slots) => {
+            let slot = slots.get(index)?;
+            if let Some(name) = &slot.app { return Some(QuickTarget::App(name.clone())); }
+            slot.camera.filter(|s| *s < 3).map(QuickTarget::Camera)
+        }
+    }
+}
+
+/// Save what shortcut `index` does. The first choice turns the defaults into a list of their own.
+fn set_quick_slot(index: usize, target: Option<QuickTarget>) {
+    update_config(|c| {
+        let mut slots = c.quick_presets.clone().unwrap_or_else(|| (0..4).map(|i| crate::config::QuickPreset {
+            app: c.presets.get(i).map(|p| p.name.clone()), camera: None }).collect());
+        slots.resize(4, crate::config::QuickPreset::default());
+        slots[index] = match target {
+            Some(QuickTarget::App(name)) => crate::config::QuickPreset { app: Some(name), camera: None },
+            Some(QuickTarget::Camera(slot)) => crate::config::QuickPreset { app: None, camera: Some(slot) },
+            None => crate::config::QuickPreset::default(),
+        };
+        c.quick_presets = Some(slots);
+    });
+}
+
+/// A small menu beside a shortcut button: the app presets, the camera's memory positions, or empty.
+fn open_quick_chooser(button: &gtk::Button, index: usize, store: &Store, camera_names: &Rc<RefCell<[Option<String>; 3]>>, refresh: Rc<dyn Fn()>) {
+    let popover = gtk::Popover::new();
+    popover.add_css_class("quick-chooser");
+    popover.set_parent(button);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    list.set_margin_top(6); list.set_margin_bottom(6); list.set_margin_start(6); list.set_margin_end(6);
+    list.append(&widgets::line(&format!("Shortcut {}", index + 1), &["setting-label"]));
+    let current = quick_slot(index);
+    let choice = |label: &str, target: Option<QuickTarget>| {
+        let item = gtk::Button::with_label(label);
+        item.add_css_class("flat-item");
+        if target == current { item.add_css_class("chosen"); }
+        if let Some(text) = item.child().and_then(|c| c.downcast::<gtk::Label>().ok()) { text.set_xalign(0.0); }
+        let (popover, refresh) = (popover.clone(), refresh.clone());
+        item.connect_clicked(move |_| { set_quick_slot(index, target.clone()); refresh(); popover.popdown(); });
+        item
+    };
+    list.append(&widgets::line("App presets", &["small", "dim", "chooser-head"]));
+    let presets = current_config().presets;
+    if presets.is_empty() { list.append(&widgets::line("None saved yet (Presets tab)", &["small", "dim"])); }
+    for preset in presets { list.append(&choice(&preset.name, Some(QuickTarget::App(preset.name.clone())))); }
+    list.append(&widgets::line("Camera memory", &["small", "dim", "chooser-head"]));
+    for slot in 0..3u8 {
+        let label = match &camera_names.borrow()[usize::from(slot)] {
+            Some(name) => format!("{} · {name}", slot + 1),
+            None => format!("Position {}", slot + 1),
+        };
+        list.append(&choice(&label, Some(QuickTarget::Camera(slot))));
+    }
+    let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    divider.add_css_class("divider");
+    list.append(&divider);
+    list.append(&choice("Empty", None));
+    let _ = store;
+    popover.set_child(Some(&list));
+    popover.connect_closed(|popover| { let popover = popover.clone(); glib::idle_add_local_once(move || popover.unparent()); });
+    popover.popup();
+}
+
+/// Camera power as two plain buttons, Wake and Sleep, each sending its command, with the state the camera
+/// reports beside the title. Used on the Camera controls card and the Device tab. `sent` runs as each
+/// command goes out (the joystick reads the position more often for a while).
+pub fn power_buttons(store: &Store, sent: Option<Rc<dyn Fn()>>) -> gtk::Box {
+    let store = store.clone();
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let title = widgets::line("Camera power", &["setting-label"]);
+    let state = widgets::line("", &["small", "dim"]);
+    state.set_hexpand(true);
+    head.append(&title);
+    head.append(&state);
+    head.append(&widgets::info_button("Camera power", &[
+        "Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position.".into(),
+        "The camera can take a moment to report its new state.".into(),
+    ]));
+    row.append(&head);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_homogeneous(true);
+    let wake = gtk::Button::with_label("Wake");
+    let sleep = gtk::Button::with_label("Sleep");
+    for button in [&wake, &sleep] { button.add_css_class("small"); }
+    wake.set_tooltip_text(Some("Wake the camera"));
+    sleep.set_tooltip_text(Some("Put the camera to sleep"));
+    buttons.append(&wake);
+    buttons.append(&sleep);
+    row.append(&buttons);
+
+    let send = Rc::new(move |store: Store, sleep: bool| {
+        let done = store.clone();
+        if let Some(sent) = &sent { sent(); }
+        store.call_now(move |d| backend::set_sleep_mode(d, sleep), move |result| {
+            match result {
+                Ok(()) => done.toast(if sleep { "Sleep sent to the camera" } else { "Wake sent to the camera" }),
+                Err(error) => done.error(&format!("Could not {}: {error}", if sleep { "put the camera to sleep" } else { "wake the camera" })),
+            }
+            // The camera takes a moment to report the new state.
+            let later = done.clone();
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || later.refresh());
+        });
+    });
+    let s = store.clone();
+    let wake_send = send.clone();
+    wake.connect_clicked(move |_| wake_send(s.clone(), false));
+    let s = store.clone();
+    sleep.connect_clicked(move |_| send(s.clone(), true));
+
+    // The state the camera reports, beside the title; nothing while it has not said.
+    store.subscribe({
+        let state = state.downgrade();
+        move |snapshot| {
+            let Some(state) = state.upgrade() else { return false };
+            state.set_text(match snapshot.byte(0x02) { Some(0) => "Awake", Some(1) => "Asleep", _ => "" });
+            true
+        }
+    });
+    row
+}
+
 #[derive(Clone)]
 pub struct Joystick(Rc<State>);
 
@@ -206,33 +339,34 @@ impl Joystick {
         // A wireframe of the camera that follows the live pan and tilt, with the numbers on top.
         let model = GimbalModel::new(&state.store);
         if compact { model.widget().set_content_height(120); model.widget().set_content_width(120); }
-        // Pan, tilt and zoom listed small down one side of the card, clear of the model.
-        let readouts = gtk::Grid::new();
-        readouts.set_row_spacing(2);
-        readouts.set_column_spacing(8);
-        readouts.set_halign(gtk::Align::End);
-        readouts.set_valign(gtk::Align::Start);
-        readouts.set_margin_end(12);
-        readouts.set_margin_top(10);
-        readouts.set_can_target(false);
+        // Pan, tilt and zoom in a row under the model: never over the drawing, and short enough to fit
+        // the narrowest panel.
+        let readouts = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        readouts.set_homogeneous(true);
         readouts.add_css_class("model-readouts");
+        readouts.set_can_target(false);
         let mut values: Vec<(&str, &gtk::Label)> = vec![("Pan", &state.pan_value), ("Tilt", &state.tilt_value)];
         // The slim window keeps the zoom in its heading.
         if !compact { values.push(("Zoom", &state.zoom_value)); }
-        for (row, (name, value)) in values.into_iter().enumerate() {
-            let caption = widgets::text(name, &["small", "dim"]);
-            caption.set_wrap(false);
-            caption.set_xalign(1.0);
-            value.set_xalign(1.0);
-            readouts.attach(&caption, 0, row as i32, 1, 1);
-            readouts.attach(value, 1, row as i32, 1, 1);
+        for (name, value) in values {
+            let cell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            cell.set_halign(gtk::Align::Center);
+            let caption = widgets::line(name, &["small", "dim"]);
+            caption.set_valign(gtk::Align::Baseline);
+            value.set_valign(gtk::Align::Baseline);
+            value.set_xalign(0.0);
+            // Whole words always: never cut to "P…" in a narrow panel.
+            caption.set_ellipsize(gtk::pango::EllipsizeMode::None);
+            value.set_ellipsize(gtk::pango::EllipsizeMode::None);
+            cell.append(&caption);
+            cell.append(value);
+            readouts.append(&cell);
         }
-        // The numbers sit in the top corner, clear of the model, which stays centred in the card.
-        let stage = gtk::Overlay::new();
+        let stage = gtk::Box::new(gtk::Orientation::Vertical, 0);
         stage.add_css_class("model-frame");
         model.widget().set_hexpand(true);
-        stage.set_child(Some(model.widget()));
-        stage.add_overlay(&readouts);
+        stage.append(model.widget());
+        stage.append(&readouts);
         if compact {
             // Side by side: the model takes what the pad leaves.
             state.pad.set_content_width(124);
@@ -326,47 +460,86 @@ impl Joystick {
         let buttons: Vec<gtk::Button> = (1..=4).map(|n| {
             let button = gtk::Button::with_label(&n.to_string());
             button.add_css_class("preset");
-            widgets::label_accessible(&button, &format!("Preset {n}"));
+            widgets::label_accessible(&button, &format!("Shortcut {n}"));
             button
         }).collect();
-        let refresh = {
-            let buttons = buttons.clone();
-            move || {
-                let presets = current_config().presets;
+        // Names of the camera's memory positions, once read, for the tooltips and the chooser.
+        let camera_names: Rc<RefCell<[Option<String>; 3]>> = Rc::default();
+        let refresh: Rc<dyn Fn()> = {
+            let (buttons, camera_names) = (buttons.clone(), camera_names.clone());
+            Rc::new(move || {
                 for (index, button) in buttons.iter().enumerate() {
-                    match presets.get(index) {
-                        Some(preset) => {
-                            button.set_sensitive(true);
-                            button.set_tooltip_text(Some(&format!("Apply the preset “{}”", preset.name)));
-                        }
-                        None => {
-                            button.set_sensitive(false);
-                            button.set_tooltip_text(Some("Empty. Save a preset on the Presets tab and it shows up here."));
-                        }
-                    }
+                    let (tip, set) = match quick_slot(index) {
+                        Some(QuickTarget::App(name)) => (format!("App preset “{name}”"), true),
+                        Some(QuickTarget::Camera(slot)) => (match &camera_names.borrow()[usize::from(slot)] {
+                            Some(name) => format!("Camera memory {}: “{name}”", slot + 1),
+                            None => format!("Camera memory position {}", slot + 1),
+                        }, true),
+                        None => ("Empty".to_string(), false),
+                    };
+                    if set { button.remove_css_class("empty"); } else { button.add_css_class("empty"); }
+                    if matches!(quick_slot(index), Some(QuickTarget::Camera(_))) { button.add_css_class("memory"); } else { button.remove_css_class("memory"); }
+                    button.set_tooltip_text(Some(&format!("{tip}\nRight-click (or press and hold) to choose what this button does.")));
                 }
-            }
+            })
         };
         refresh();
         // The list changes on the Presets tab; looking again whenever the camera is read is enough.
-        let again = refresh.clone();
-        store.subscribe(move |_| { again(); true });
+        { let again = refresh.clone(); store.subscribe(move |_| { again(); true }); }
+        // The camera's own names for its memory positions, read once.
+        {
+            let (camera_names, refresh) = (camera_names.clone(), refresh.clone());
+            store.call(Some("quick-camera-presets"), |d| backend::read_camera_presets(d), move |result| {
+                if let Ok(entries) = result {
+                    for entry in entries { if let Some(cell) = camera_names.borrow_mut().get_mut(usize::from(entry.slot)) { *cell = Some(entry.name); } }
+                    refresh();
+                }
+            });
+        }
         for (index, button) in buttons.iter().enumerate() {
-            let (store, joystick) = (store.clone(), self.clone());
+            let choose = {
+                let (store, refresh, camera_names, button) = (store.clone(), refresh.clone(), camera_names.clone(), button.clone());
+                Rc::new(move || open_quick_chooser(&button, index, &store, &camera_names, refresh.clone()))
+            };
+            let (store, joystick, chooser) = (store.clone(), self.clone(), choose.clone());
             button.connect_clicked(move |_| {
-                let Some(preset) = current_config().presets.get(index).cloned() else { return };
-                let name = preset.name.clone();
                 let done = store.clone();
                 let again = joystick.clone();
-                store.call_now(move |d| crate::presets::apply(d, &preset), move |result| {
-                    match result {
-                        Ok(_) => done.toast(&format!("Applied {name}")),
-                        Err(error) => done.error(&format!("{name}: {error}")),
+                match quick_slot(index) {
+                    None => chooser(),
+                    Some(QuickTarget::App(name)) => {
+                        let Some(preset) = current_config().presets.into_iter().find(|p| p.name == name) else {
+                            store.error(&format!("There is no app preset called “{name}” any more. Right-click to choose another."));
+                            return;
+                        };
+                        store.call_now(move |d| crate::presets::apply(d, &preset), move |result| {
+                            match result {
+                                Ok(_) => done.toast(&format!("Applied {name}")),
+                                Err(error) => done.error(&format!("{name}: {error}")),
+                            }
+                            again.boost_polling();
+                            done.refresh_soon();
+                        });
                     }
-                    again.boost_polling();
-                    done.refresh_soon();
-                });
+                    Some(QuickTarget::Camera(slot)) => {
+                        store.call_now(move |d| backend::recall_camera_preset(d, slot), move |result| {
+                            match result {
+                                Ok(()) => done.toast(&format!("Moving to camera memory {}", slot + 1)),
+                                Err(error) => done.error(&format!("Could not move to camera memory {}: {error}", slot + 1)),
+                            }
+                            again.boost_polling();
+                        });
+                    }
+                }
             });
+            // Right-click, or a long press on a touch screen, chooses.
+            let right = gtk::GestureClick::new();
+            right.set_button(gtk::gdk::BUTTON_SECONDARY);
+            { let choose = choose.clone(); right.connect_pressed(move |_, _, _, _| choose()); }
+            button.add_controller(right);
+            let hold = gtk::GestureLongPress::new();
+            { let choose = choose.clone(); hold.connect_pressed(move |_, _, _| choose()); }
+            button.add_controller(hold);
         }
         buttons
     }
@@ -374,61 +547,8 @@ impl Joystick {
     /// Wake and Sleep: two plain buttons that each send their command, whatever the camera says it is
     /// doing. The state the camera reports is shown beside the title.
     fn power_row(&self) -> gtk::Box {
-        let store = self.0.store.clone();
-        let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let title = widgets::line("Camera power", &["setting-label"]);
-        let state = widgets::line("", &["small", "dim"]);
-        state.set_hexpand(true);
-        head.append(&title);
-        head.append(&state);
-        head.append(&widgets::info_button("Camera power", &[
-            "Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position.".into(),
-            "The camera can take a moment to report its new state.".into(),
-        ]));
-        row.append(&head);
-
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        buttons.set_homogeneous(true);
-        let wake = gtk::Button::with_label("Wake");
-        let sleep = gtk::Button::with_label("Sleep");
-        for button in [&wake, &sleep] { button.add_css_class("small"); }
-        wake.set_tooltip_text(Some("Wake the camera"));
-        sleep.set_tooltip_text(Some("Put the camera to sleep"));
-        buttons.append(&wake);
-        buttons.append(&sleep);
-        row.append(&buttons);
-
         let joystick = self.clone();
-        let send = Rc::new(move |store: Store, sleep: bool| {
-            let done = store.clone();
-            joystick.boost_polling();
-            store.call_now(move |d| backend::set_sleep_mode(d, sleep), move |result| {
-                match result {
-                    Ok(()) => done.toast(if sleep { "Sleep sent to the camera" } else { "Wake sent to the camera" }),
-                    Err(error) => done.error(&format!("Could not {}: {error}", if sleep { "put the camera to sleep" } else { "wake the camera" })),
-                }
-                // The camera takes a moment to report the new state.
-                let later = done.clone();
-                glib::timeout_add_local_once(Duration::from_millis(1500), move || later.refresh());
-            });
-        });
-        let s = store.clone();
-        let wake_send = send.clone();
-        wake.connect_clicked(move |_| wake_send(s.clone(), false));
-        let s = store.clone();
-        sleep.connect_clicked(move |_| send(s.clone(), true));
-
-        // The state the camera reports, beside the title; nothing while it has not said.
-        store.subscribe({
-            let state = state.downgrade();
-            move |snapshot| {
-                let Some(state) = state.upgrade() else { return false };
-                state.set_text(match snapshot.byte(0x02) { Some(0) => "Awake", Some(1) => "Asleep", _ => "" });
-                true
-            }
-        });
-        row
+        power_buttons(&self.0.store, Some(Rc::new(move || joystick.boost_polling())))
     }
 
     /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
@@ -720,9 +840,9 @@ impl Joystick {
             return (pan.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP), tilt.clamp(-UNKNOWN_POSITION_CAP, UNKNOWN_POSITION_CAP));
         };
         let (sign_pan, sign_tilt) = state.axis_sign.get();
-        use backend::angles::{speed_allowance, tilt_range, PAN_RANGE};
+        use backend::angles::{pan_range, speed_allowance, tilt_range};
         (
-            pan * speed_allowance(at_pan, pan.signum() * sign_pan, PAN_RANGE),
+            pan * speed_allowance(at_pan, pan.signum() * sign_pan, pan_range()),
             tilt * speed_allowance(at_tilt, tilt.signum() * sign_tilt, tilt_range()),
         )
     }
@@ -753,7 +873,7 @@ impl Joystick {
         let camera = self.0.store.camera();
         // A failed send leaves the camera on the old speed, so try again rather than assume.
         if self.0.send_failed.swap(false, Ordering::Relaxed) { self.0.sent.set((i64::MIN, i64::MIN)); }
-        if want != (0, 0) { camera.hold_motion(); } else { camera.release_motion(); }
+        if want != (0, 0) { camera.hold_motion(); crate::backend::usage::note_activity(); } else { camera.release_motion(); }
         if want == self.0.sent.get() { return; }
         let before = self.0.sent.get();
         if want.0.signum() != before.0.signum() || want.1.signum() != before.1.signum() {

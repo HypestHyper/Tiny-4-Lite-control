@@ -84,6 +84,18 @@ pub fn scroller() -> gtk::ScrolledWindow {
     scroll
 }
 
+/// The marks under a slider: the ones its setting lists that fall inside the range the camera reports,
+/// and always one at the middle of that range, so every slider shows where its middle is.
+fn mark_slider(scale: &gtk::Scale, spec: &crate::backend::registry::SliderSpec) {
+    scale.clear_marks();
+    let (min, max, step) = (spec.min, spec.max.max(spec.min + spec.step), spec.step.max(f64::EPSILON));
+    let marks: Vec<(f64, String)> = spec.ticks.iter().filter(|(at, _)| (min..=max).contains(at)).map(|(at, label)| (*at, label.to_string())).collect();
+    let middle = min + ((max - min) / 2.0 / step).round() * step;
+    let has_middle = marks.iter().any(|(at, _)| (at - middle).abs() <= step / 2.0 + f64::EPSILON);
+    for (at, label) in &marks { scale.add_mark(*at, gtk::PositionType::Bottom, Some(label)); }
+    if !has_middle { scale.add_mark(middle, gtk::PositionType::Bottom, Some(&spec.fmt.format(middle))); }
+}
+
 pub fn lock_wheel(widget: &impl IsA<gtk::Widget>) {
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -323,7 +335,15 @@ impl SettingRow {
                 scale.set_draw_value(false);
                 scale.set_hexpand(true);
                 scale.set_round_digits(if spec.step < 1.0 { 2 } else { 0 });
-                for (at, label) in &spec.ticks { scale.add_mark(*at, gtk::PositionType::Bottom, Some(label)); }
+                mark_slider(&scale, spec);
+                // Colour settings show their colours along the bar.
+                match setting.id {
+                    "v4l2:white_balance_temperature" => scale.add_css_class("grad-temperature"),
+                    "v4l2:red_balance" => scale.add_css_class("grad-red"),
+                    "v4l2:blue_balance" => scale.add_css_class("grad-blue"),
+                    "v4l2:hue" => scale.add_css_class("grad-hue"),
+                    _ => {}
+                }
                 label_accessible(&scale, setting.label);
                 lock_wheel(&scale);
                 let value = line("", &["setting-value", "tnum"]);
@@ -331,6 +351,7 @@ impl SettingRow {
                 value.set_valign(gtk::Align::Center);
                 let reset = icon_button("restart_alt", "Reset to default", true);
                 reset.add_css_class("flat-icon");
+                reset.add_css_class("reset");
                 // Always there, so the slider never changes width; dimmed while there is nothing to reset.
                 reset.set_sensitive(false);
                 (Control::Slider { scale, value, reset }, false)
@@ -597,6 +618,7 @@ impl SettingRow {
                         scale.set_range(spec.min, spec.max.max(spec.min + spec.step));
                         scale.adjustment().set_step_increment(spec.step);
                         scale.adjustment().set_page_increment((spec.max - spec.min) / 10.0);
+                        mark_slider(scale, &spec);
                         row.suppress.set(false);
                         row.shown_range.set(range);
                     }
