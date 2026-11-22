@@ -88,7 +88,9 @@ impl Route {
 /// small, which is plenty for a webcam and light on the graphics chip.
 pub fn vulkan_filter(strength: u8) -> String {
     let s = 1.0 + f64::from(strength.clamp(1, 100) - 1) * 9.0 / 99.0;
-    format!("nlmeans_vulkan=s={s:.2}:p=5:r=7")
+    // A 9 × 9 search window (r=4) and small patches (p=3): about a third of the work of 15 × 15, still a good
+    // denoise for webcam grain, and fast enough for 30 fps on modest graphics chips.
+    format!("nlmeans_vulkan=s={s:.2}:p=3:r=4")
 }
 
 // ── The commands ──────────────────────────────────────────────────────────
@@ -168,7 +170,10 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, denoise: Opt
     ]);
     // A camera set to 60 fps is brought down first, which halves all the work after it.
     let limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
-    args.extend(["-vf".into(), filter_chain(denoise, route, choice.vulkan_422, &limit), "-f".into(), "v4l2".into(), loopback.into()]);
+    args.extend(["-vf".into(), filter_chain(denoise, route, choice.vulkan_422, &limit)]);
+    // Progress every second (frames done so far), to measure the frame rate the Studio camera really gets.
+    args.extend(["-progress".into(), progress_path().to_string_lossy().to_string(), "-stats_period".into(), "1".into()]);
+    args.extend(["-f".into(), "v4l2".into(), loopback.into()]);
     args
 }
 
@@ -294,6 +299,11 @@ pub struct Report {
     pub detail: String,
     pub pid: Option<u32>,
     pub cpu_percent: Option<f64>,
+    /// Frames a second the Studio camera actually gets, and what it should get.
+    #[serde(default)]
+    pub fps: Option<f64>,
+    #[serde(default)]
+    pub target_fps: Option<f64>,
     pub memory_mb: Option<f64>,
     pub gpu: bool,
     pub device: Option<String>,
@@ -321,10 +331,21 @@ pub struct Denoiser {
     chosen: Option<(Choice, Vec<(String, Result<(), String>)>)>,
     last_error: Option<String>,
     cpu_sample: Option<(Instant, u64)>,
+    /// The last frame count ffmpeg reported, and when, for the frame rate.
+    frame_sample: Option<(Instant, u64)>,
     format: Option<(String, Format)>,
 }
 
 fn log_path() -> PathBuf { crate::service::runtime_dir().join("denoise.log") }
+
+/// Where ffmpeg writes its progress (frames done) every second.
+fn progress_path() -> PathBuf { crate::service::runtime_dir().join("denoise.progress") }
+
+/// The last frame count in the progress file.
+fn last_frame_count() -> Option<u64> {
+    let text = std::fs::read_to_string(progress_path()).ok()?;
+    text.lines().rev().find_map(|l| l.strip_prefix("frame=")).and_then(|v| v.trim().parse().ok())
+}
 
 fn last_lines(path: &Path, count: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -357,6 +378,8 @@ impl Denoiser {
             let _ = running.child.wait();
         }
         self.cpu_sample = None;
+        self.frame_sample = None;
+        let _ = std::fs::remove_file(progress_path());
     }
 
     pub fn stop_all(&mut self) { self.stop(); }
@@ -491,6 +514,17 @@ impl Denoiser {
                 report.pid = Some(pid);
                 report.gpu = running.route != Route::Cpu;
                 report.memory_mb = memory_mb(pid);
+                if running.want == Want::Pipeline {
+                    // The frame rate it really keeps up: frames done since the last look, over the time.
+                    if let Some(frames) = last_frame_count() {
+                        if let Some((at, before)) = self.frame_sample {
+                            let seconds = at.elapsed().as_secs_f64();
+                            if seconds > 0.5 && frames >= before { report.fps = Some((frames - before) as f64 / seconds); }
+                        }
+                        self.frame_sample = Some((Instant::now(), frames));
+                    }
+                    report.target_fps = self.format.as_ref().map(|(_, f)| if config.limit_fps { f.fps.min(30.0) } else { f.fps });
+                }
                 if let Some(ticks) = cpu_ticks(pid) {
                     if let Some((at, before)) = self.cpu_sample {
                         let seconds = at.elapsed().as_secs_f64();
@@ -652,7 +686,7 @@ mod tests {
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
         let cpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Choice::CPU, None, None).join(" ");
         assert!(cpu.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{cpu}");
-        assert!(cpu.contains("-vf atadenoise=0a=0.0200:0b=0.0400:1a=0.0200:1b=0.0400:2a=0.0200:2b=0.0400:s=9,format=yuyv422 -f v4l2 /dev/video42"), "{cpu}");
+        assert!(cpu.contains("-vf atadenoise=0a=0.0200:0b=0.0400:1a=0.0200:1b=0.0400:2a=0.0200:2b=0.0400:s=9,format=yuyv422 -progress") && cpu.ends_with("-f v4l2 /dev/video42"), "{cpu}");
         let gpu = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Choice { route: Route::Vaapi, vulkan_422: false }, Some("/dev/dri/renderD128"), None).join(" ");
         assert!(gpu.contains("-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va"), "{gpu}");
         assert!(gpu.contains("denoise_vaapi=denoise=32"), "{gpu}");
@@ -661,11 +695,11 @@ mod tests {
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");
         // No filter on: the picture passes through, and no graphics chip is set up for nothing.
         let plain = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, Choice { route: Route::Vaapi, vulkan_422: false }, Some("/dev/dri/renderD128"), None).join(" ");
-        assert!(plain.contains("-vf format=yuyv422 -f v4l2") && !plain.contains("vaapi") && !plain.contains("atadenoise"), "{plain}");
+        assert!(plain.contains("-vf format=yuyv422 -progress") && !plain.contains("vaapi") && !plain.contains("atadenoise"), "{plain}");
         // Vulkan (AMD and the rest): uploaded, denoised, downloaded.
         let vulkan = pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(50), Choice { route: Route::Vulkan, vulkan_422: true }, None, None).join(" ");
         assert!(vulkan.contains("-init_hw_device vulkan=vk -filter_hw_device vk"), "{vulkan}");
-        assert!(vulkan.contains("format=yuv422p,hwupload,nlmeans_vulkan=s=5.45:p=5:r=7,hwdownload,format=yuv422p,format=yuyv422"), "{vulkan}");
+        assert!(vulkan.contains("format=yuv422p,hwupload,nlmeans_vulkan=s=5.45:p=3:r=4,hwdownload,format=yuv422p,format=yuyv422"), "{vulkan}");
         // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
         let sixty = Format { fps: 60.0, ..fmt() };
         assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(50), Choice::CPU, None, Some(30.0)).join(" ").contains("-vf fps=30,atadenoise"));

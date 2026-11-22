@@ -750,6 +750,10 @@ pub fn denoise_card(store: &Store) -> gtk::Box {
                         "off" => "Off".to_string(),
                         other => other.to_string(),
                     };
+                    if let (Some(fps), Some(target)) = (r.fps, r.target_fps) {
+                        line.push_str(&format!(" · {fps:.0} of {target:.0} fps"));
+                        if fps < target * 0.9 { line.push_str(" (not keeping up)"); }
+                    }
                     if let Some(cpu) = r.cpu_percent { line.push_str(&format!(" · CPU {cpu:.0}%")); }
                     if let Some(mb) = r.memory_mb { line.push_str(&format!(" · {mb:.0} MB")); }
                     if r.gpu { line.push_str(" · graphics chip"); }
