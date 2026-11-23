@@ -345,12 +345,41 @@ fn apply_pending_mode(device: &str, status: &mut Status) {
     status.last_event_at = now_unix();
 }
 
+/// The exit code that asks systemd to start the service again (it restarts on failure): the app's file was
+/// replaced by a new version.
+pub const RESTART_FOR_UPDATE: i32 = 75;
+
+/// What identifies the AppImage this service runs from: its inode, size and modification time. None when it
+/// is not an AppImage (a program replaced on disk by a package manager or `cargo install` gets a new inode,
+/// and the running one keeps its old file, so it needs nothing).
+fn appimage_identity() -> Option<(u64, u64, Option<SystemTime>)> {
+    use std::os::unix::fs::MetadataExt;
+    let path = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty())?;
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.ino(), meta.size(), meta.modified().ok()))
+}
+
+/// Start the service again on the replaced AppImage. Under systemd, by exiting with a code it restarts on;
+/// elsewhere (a desktop autostart entry), by starting the new file before leaving.
+fn restart_on_new_file(lock: Lock) -> i32 {
+    if std::env::var_os("INVOCATION_ID").is_some() { drop(lock); return RESTART_FOR_UPDATE; }
+    drop(lock);
+    let program = std::env::var_os("APPIMAGE").map(PathBuf::from).unwrap_or_else(program_path_buf);
+    use std::process::{Command, Stdio};
+    match Command::new(&program).args(["service", "run"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        Ok(_) => crate::cli::OK,
+        Err(error) => { log(&format!("Could not start the new version: {error}")); crate::cli::FAILED }
+    }
+}
+
+fn program_path_buf() -> PathBuf { PathBuf::from(program_path()) }
+
 /// Run until stopped. With `once`, stop after the camera has been found and restored.
 ///
 /// SIGINT, SIGTERM and SIGHUP all mean the same: stop. That is what a shutdown, a reboot, a logout and
 /// `systemctl stop` do to a program in every init system, so one handler covers them all.
 pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
-    let _lock = match Lock::acquire(&lock_path()) {
+    let lock = match Lock::acquire(&lock_path()) {
         Ok(lock) => lock,
         Err(error) => { eprintln!("{error}"); return crate::cli::ALREADY_RUNNING; }
     };
@@ -381,6 +410,13 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let mut restored_once = false;
     let mut last_device: Option<String> = None;
     let mut slice = 0u32;
+    // The AppImage this runs from. Overwriting it in place (a new download saved over the old one) breaks the
+    // running copy: the next code it has not loaded yet comes from the new file and the service dies with a
+    // bus error, at a shutdown say, before the camera is put to sleep. So a change is noticed, and once the
+    // file has stayed the same for a moment (the copy has finished), the service starts again on it.
+    let identity = appimage_identity();
+    let mut replaced_since: Option<(Instant, Option<(u64, u64, Option<SystemTime>)>)> = None;
+    let mut restart = false;
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // Looking around takes a round of slices: the wait is cut into small ones so a stop is answered
         // within a fifth of a second.
@@ -503,12 +539,34 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             status.camera = camera;
             write_status(&status);
             if once && restored_once { break; }
+            if identity.is_some() {
+                let now_identity = appimage_identity();
+                if now_identity == identity {
+                    replaced_since = None;
+                } else if now_identity.is_some() {
+                    match &replaced_since {
+                        Some((at, seen)) if *seen == now_identity => {
+                            if at.elapsed() >= Duration::from_secs(4) {
+                                log("The app's file was replaced by a new version; starting again on it.");
+                                restart = true;
+                                break;
+                            }
+                        }
+                        // Changed (again): wait until it stops changing.
+                        _ => replaced_since = Some((Instant::now(), now_identity)),
+                    }
+                }
+            }
         }
         std::thread::sleep(SLICE);
         slice = slice.wrapping_add(1);
     }
     drop(watcher);
     studio.stop_all();
+    if restart {
+        let _ = std::fs::remove_file(state_path());
+        return restart_on_new_file(lock);
+    }
     // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep. (At a
     // shutdown the watcher has normally done this already, earlier; sending it again does no harm, and it
     // covers a logout, and systems where the watcher could not run.)
@@ -690,7 +748,7 @@ fn config_home() -> PathBuf {
 }
 
 pub(crate) fn systemd_unit(program: &str) -> String {
-    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nRestartPreventExitStatus=6\nNice=10\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n", quoted(program))
+    format!("[Unit]\nDescription=Tiny 2 Lite Control background service\nDocumentation=https://github.com/HypestHyper/Tiny-4-Lite-control\n\n[Service]\nType=simple\nExecStart={} service run\nRestart=on-failure\nRestartSec=3\nRestartForceExitStatus=75\nRestartPreventExitStatus=6\nNice=10\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n", quoted(program))
 }
 
 pub(crate) fn desktop_entry(program: &str) -> String {

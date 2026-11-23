@@ -509,6 +509,40 @@ fn the_service_puts_the_camera_to_sleep_as_soon_as_a_shutdown_is_announced() {
 }
 
 #[test]
+fn the_service_starts_again_when_its_appimage_is_replaced() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-replaced");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    // A stand-in for the AppImage file the service runs from.
+    let appimage = run.config.join("Tiny4LiteControl.AppImage");
+    std::fs::write(&appimage, "version one").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("APPIMAGE", &appimage)
+        .env("INVOCATION_ID", "test")
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(child.try_wait().unwrap().is_none(), "it keeps running while the file is unchanged");
+    // A new version saved over it, in place.
+    std::fs::write(&appimage, "version two, longer").unwrap();
+    let started = Instant::now();
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() { break status.code(); }
+        if started.elapsed() > Duration::from_secs(20) { let _ = child.kill(); break None; }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    // Under systemd it leaves with the code systemd restarts on.
+    assert_eq!(code, Some(75));
+}
+
+#[test]
 fn a_capture_mode_waiting_for_a_free_camera_is_applied_by_the_service() {
     let run = Run::new("service-pending");
     let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
