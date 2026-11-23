@@ -17,6 +17,7 @@
 | Current implementation and protocol status | [APP-IMPLEMENTATION-STATUS.md](APP-IMPLEMENTATION-STATUS.md) |
 | Exposure compensation: verified OBSBOT Center label mapping, standard UVC BLC requests, implementation and read-back behavior | [reference/14-2026-11-20-exposure-compensation-implementation.md](reference/14-2026-11-20-exposure-compensation-implementation.md) |
 | 2026-11-20 AI mode tuple verification, selector inventory, Target Selection status read-back, and gesture read-back limits | [reference/15-2026-11-20-ai-mode-and-gesture-readback.md](reference/15-2026-11-20-ai-mode-and-gesture-readback.md) |
+| 2026-11-24 SDK probe: AI auto zoom, pan reverse, limited-zone tracking (limits, reset, enable), preset list and start-up position reads, captured from OBSBOT's SDK on a Tiny 2 Lite | [reference/16-2026-11-24-sdk-probe-captures.md](reference/16-2026-11-24-sdk-probe-captures.md) |
 | Project purpose, confidence model, repository shortlist, USB identity, V4L2 and UVC XU transport | [reference/01-device-and-repositories.md](reference/01-device-and-repositories.md) |
 | Feature findings: sleep/wake, PTZ, zoom, AI modes, tracking speed, gestures, presets, FOV, image controls, status block | [reference/02-feature-inventory.md](reference/02-feature-inventory.md) |
 | 2026-11-17 Windows OBSBOT Center capture, Focus/Zoom UVC writes, XU selector 0x02 records | [reference/06-2026-11-17-capture-findings.md](reference/06-2026-11-17-capture-findings.md) |

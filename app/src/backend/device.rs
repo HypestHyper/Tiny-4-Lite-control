@@ -1990,4 +1990,26 @@ mod settle_tests {
         assert!(result.is_err());
         assert_eq!(calls, 1);
     }
+
+    /// Frames captured from OBSBOT's SDK on a Tiny 2 Lite (Assistant/reference/16-2026-11-24-sdk-probe-captures.md):
+    /// our frame builder must reproduce each one exactly (sequence, command and payload as captured).
+    #[test]
+    fn sdk_probe_frames_are_reproduced_exactly() {
+        let cases: [(u16, u16, &[u8], &str); 8] = [
+            (0x10, 0x0a44, &[1], "aa 25 10 00 0c 00 4a f6 0a 04 44 0a 01 00 27 ff 01"),
+            (0x11, 0x0a44, &[0], "aa 25 11 00 0c 00 1b 33 0a 04 44 0a 01 00 e6 3f 00"),
+            (0x12, 0x3b84, &[1], "aa 25 12 00 0c 00 7a e8 0a 04 84 3b 01 00 27 ff 01"),
+            (0x1c, 0x5084, &[1], "aa 25 1c 00 0c 00 5a f2 0a 04 84 50 01 00 27 ff 01"),
+            (0x14, 0x4c04, &(-30.0f32).to_le_bytes(), "aa 25 14 00 0c 00 bb 11 0a 04 04 4c 04 00 3b 97 00 00 f0 c1"),
+            (0x16, 0x4c84, &30.0f32.to_le_bytes(), "aa 25 16 00 0c 00 7b 1b 0a 04 84 4c 04 00 3a 37 00 00 f0 41"),
+            (0x18, 0x4d04, &(-10.0f32).to_le_bytes(), "aa 25 18 00 0c 00 ba ee 0a 04 04 4d 04 00 66 57 00 00 20 c1"),
+            (0x1a, 0x4d84, &10.0f32.to_le_bytes(), "aa 25 1a 00 0c 00 7a e4 0a 04 84 4d 04 00 67 f7 00 00 20 41"),
+        ];
+        for (sequence, command, payload, captured) in cases {
+            let expected: Vec<u8> = captured.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+            let frame = obsbot_frame_with_payload(sequence, command, payload).unwrap();
+            assert_eq!(&frame[..expected.len()], &expected[..], "command 0x{command:04x}");
+            assert!(frame[expected.len()..].iter().all(|b| *b == 0), "the rest of the frame is zeros");
+        }
+    }
 }
