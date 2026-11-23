@@ -273,13 +273,15 @@ pub struct Setting {
     /// Shown as experimental in the info dialog.
     pub experimental: bool,
     pub source: Source,
+    /// How long the control rests after a change, for settings the camera is slow to switch.
+    pub cooldown: Option<std::time::Duration>,
 }
 
 impl Setting {
     fn new(id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind, source: Source) -> Setting {
         Setting {
             id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true,
-            readback: Readback::Camera, experimental: false, source,
+            readback: Readback::Camera, experimental: false, source, cooldown: None,
         }
     }
     fn v4l2(name: &'static str, id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind) -> Setting {
@@ -296,6 +298,7 @@ impl Setting {
     fn last_sent(mut self) -> Setting { self.readback = Readback::LastSent; self }
     fn experimental(mut self) -> Setting { self.experimental = true; self }
     fn not_quick(mut self) -> Setting { self.quick = false; self }
+    fn cooldown(mut self, wait: std::time::Duration) -> Setting { self.cooldown = Some(wait); self }
 
     // Reading
 
@@ -539,6 +542,13 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("power_line_frequency", "v4l2:power_line_frequency", Exposure, "Anti-flicker",
             "Match your mains frequency to remove banding under artificial light.", Kind::DriverMenu)
             .info("Use 50 Hz in most of Europe, Asia and Africa, and 60 Hz in the Americas."),
+        Setting::custom("obsbot:hdr", Exposure, "HDR",
+            "Keeps detail in bright and dark areas of the same scene.", Kind::Toggle,
+            |s| from_camera(s.status.as_ref().and_then(hdr_state_from_status).map(Value::Bool))
+                .or_else(|| if s.status.is_none() { from_saved(s.config.hdr_enabled.map(Value::Bool)) } else { None }),
+            |d, v| sent(set_hdr_enabled(d, v.as_bool())))
+            .cooldown(HDR_SETTLE)
+            .info("The camera combines two exposures of each frame. It reconfigures its sensor to switch, which takes a moment and can make the picture flicker, so the switch rests for 3 seconds after each change (OBSBOT's own guidance). Some capture modes may not support HDR. The state is read back from the camera."),
 
         // ── White balance ──
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
@@ -1111,8 +1121,15 @@ mod tests {
     }
 
     #[test]
-    fn exposure_compensation_is_one_setting_and_hdr_is_gone() {
-        assert!(find("obsbot:hdr").is_none(), "the HDR switch was removed");
+    fn exposure_compensation_is_one_setting_and_hdr_reads_back() {
+        // HDR: status byte 0x06, read from the camera; the switch rests after a change.
+        let hdr = find("obsbot:hdr").expect("the HDR switch");
+        assert_eq!(hdr.cooldown, Some(HDR_SETTLE));
+        let mut status = [0u8; 60];
+        status[0x06] = 1;
+        let mut snap = Snapshot::default();
+        snap.status = Some(status);
+        assert_eq!(hdr.reading(&snap), Some((Value::Bool(true), Origin::Camera)));
         assert!(find("v4l2:backlight_compensation").is_none());
         // Backlight compensation is the same hardware control as Exposure compensation (V4L2 backlight_compensation).
         let snap = snapshot(vec![control("backlight_compensation", 9, false), control("gamma", 1, false)]);

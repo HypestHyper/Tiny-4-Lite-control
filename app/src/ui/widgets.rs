@@ -275,6 +275,8 @@ struct Row {
     density: Density,
     suppress: Cell<bool>,
     last_edit: Cell<Option<Instant>>,
+    /// Resting after a change, for a setting the camera is slow to switch (HDR).
+    cooling: Cell<bool>,
     dragging: Cell<bool>,
     current: Cell<Option<Value>>,
     shown_options: RefCell<Vec<(i64, String)>>,
@@ -339,7 +341,7 @@ impl SettingRow {
 
         let row = Rc::new(Row {
             setting, store: store.clone(), root, control, control_box, summary, reason, reason_text, info_slot, unknown,
-            density, suppress: Cell::new(false), last_edit: Cell::new(None), dragging: Cell::new(false),
+            density, suppress: Cell::new(false), last_edit: Cell::new(None), cooling: Cell::new(false), dragging: Cell::new(false),
             current: Cell::new(None), shown_options: RefCell::default(), shown_range: Cell::new((f64::NAN, 0.0, 0.0)),
             shown_info: RefCell::default(),
         });
@@ -489,6 +491,20 @@ impl SettingRow {
     fn commit(&self, value: Value) {
         let row = &self.0;
         row.last_edit.set(Some(Instant::now()));
+        // A setting the camera is slow to switch rests for a moment, so it cannot be flipped back and forth.
+        if let Some(wait) = row.setting.cooldown {
+            row.cooling.set(true);
+            row.control_box.set_sensitive(false);
+            row.control_box.set_tooltip_text(Some("The camera is switching. Wait a moment before changing it again."));
+            let weak = Rc::downgrade(&self.0);
+            glib::timeout_add_local_once(wait, move || {
+                let Some(row) = weak.upgrade() else { return };
+                row.cooling.set(false);
+                row.control_box.set_tooltip_text(None);
+                let snapshot = row.store.snapshot();
+                SettingRow(row).apply(&snapshot);
+            });
+        }
         row.current.set(Some(value));
         let snapshot = row.store.snapshot();
         let message = self.describe(&snapshot, value);
@@ -599,7 +615,7 @@ impl SettingRow {
 
         let blockers = setting.blockers(snapshot);
         let blocked = !blockers.is_empty();
-        row.control_box.set_sensitive(!blocked);
+        row.control_box.set_sensitive(!blocked && !row.cooling.get());
         if blocked { row.root.add_css_class("blocked"); } else { row.root.remove_css_class("blocked"); }
         row.reason.set_visible(blocked);
         if let Some(first) = blockers.first() { row.reason_text.set_text(first); }

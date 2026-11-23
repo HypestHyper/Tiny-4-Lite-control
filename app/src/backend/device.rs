@@ -1127,11 +1127,21 @@ pub(crate) fn hdr_state_from_status(status: &[u8; 60]) -> Option<bool> {
     }
 }
 
+/// How long the camera needs between two HDR switches: switching reconfigures the sensor, and OBSBOT's own
+/// guidance is to leave 3 seconds between them.
+pub const HDR_SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+static LAST_HDR_SWITCH: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 pub(crate) fn set_hdr_enabled(device: &str, enabled: bool) -> Result<(), String> {
+    // Never switch again within 3 seconds of the last switch (the window's switch rests that long, so this
+    // only waits for the command line or presets).
+    let since = LAST_HDR_SWITCH.lock().ok().and_then(|last| last.map(|at| at.elapsed()));
+    if let Some(since) = since { if since < HDR_SETTLE { std::thread::sleep(HDR_SETTLE - since); } }
     let payload = hdr_payload(enabled);
     let mut data = [0u8; 60];
     data[..payload.len()].copy_from_slice(&payload);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    if let Ok(mut last) = LAST_HDR_SWITCH.lock() { *last = Some(std::time::Instant::now()); }
     update_config(|config| config.hdr_enabled = Some(enabled));
     Ok(())
 }
