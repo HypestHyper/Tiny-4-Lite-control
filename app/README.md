@@ -87,11 +87,11 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Presets and the capture mode.** Applying a preset skips the capture mode if the camera is already in it. If another program is streaming, the capture mode is saved and the background service changes it once the camera is free; the rest of the preset is applied straight away.
 
-**Gestures.** Target selection, the zoom gesture and dynamic zoom each show Google's Material Symbol for the hand pose (front_hand, pan_tool_alt, pinch_zoom_out) in a round tonal container.
+**Gestures.** Target selection, the zoom gesture and dynamic zoom each show a line drawing of the gesture in a round tonal container: an open palm with a target, an L-shaped hand with a magnifier, and two L-shaped hands with an arrow between them. The hand takes the container's colour and the mark the accent colour.
 
 **A sleeping camera wakes for a move.** The stick, the 1° steps, Centre, the shortcut buttons, Apply on a preset and Go on a camera position all send Wake first when the camera reports it is asleep; a position or preset then waits a moment for the camera to come up.
 
-**Focus peaking.** The focus button on the preview (beside pause, in every window) outlines what is in focus in green. While it is on, a strictness slider sits beside it: to the right, only the very sharpest edges are marked (from the sharpest 12% of edges at the left end to the sharpest 1% at the right, and never weak edges). It works on the picture as the preview shows it, so it costs little, and both choices are remembered.
+**Focus peaking.** The focus button on the preview (beside pause, in every window) outlines what is in focus in green. It judges how narrow each edge is, not how strong: in focus, nearly all of a step in brightness happens across two pixels, while a blurred edge spreads it out, however much contrast it has. While it is on, the picture is decoded at up to 1920 pixels wide so focus is judged on the real pixels (shrinking the picture makes soft edges look sharp). The strictness slider beside it sets how narrow an edge must be (from half of the step across two pixels at the left end to 90% at the right) and the smallest step that counts. Both choices are remembered.
 
 **Studio camera.** Other programs cannot be handed a changed picture from the real camera, so the Studio camera (Device tab) adds a second camera, **Tiny 2 Lite Studio**, made by the `v4l2loopback` kernel module, that apps can choose. It is the frame for filters on the camera's picture; for now it passes the picture through as it is (a denoise filter was tried and taken out: on the graphics chip it could not keep up). The preview has a **Camera / Studio** list to show either one; the capture-mode list always follows the camera itself. The background service runs it, as lightly as it can:
 
@@ -114,6 +114,8 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Preview.** The preview is pinned above the camera controls (and above the whole page when the layout is stacked), so it stays in view while you scroll. It does not start when the app opens unless **Start the preview when the app opens** is on (Device tab, Appearance), so opening the app does not turn the camera on; press play (in the middle of the preview or in its corner) to start it. Pausing ends the stream at once, so the camera is free to sleep; the stream also stops 1.5 s after the window is hidden. The camera model keeps one size; the left panel stops at the width the model and the joystick need, and the view cone is drawn shorter rather than cut off at the edge of the card. The window keeps the two panels side by side at every width; each stops at the width its contents need.
 
+**Look bubble.** While the Studio camera is on and has LUTs, a round button sits left of the search button (lit while a LUT is applied). It opens No LUT, the favourites, the other LUTs and the strength, so the look can be changed from any tab without the preview.
+
 **Layout.** There are three tabs. **Camera** starts with tracking, then exposure, white balance, focus and picture. **Presets** holds the saved positions and the app's presets. **Device** has gestures, microphone, light, power, capture mode, the start-up position, appearance and developer tools. Next to the preview is the **Camera controls** card: the model, the joystick with four preset buttons beside it (they apply the first four presets), the 1° steps, Centre, zoom, field of view, speed and Wake/Sleep. Wide, the preview and card sit in a column on the left (drag the divider to size the preview) and the tabs on the right. When the right-hand panel would get narrower than about 470 px, whatever the window size, the page stacks and scrolls as one: preview and controls, then the tabs, then the content.
 
 **Live camera model.** The Camera controls card starts with a wireframe camera on its gimbal that follows the camera's
@@ -121,8 +123,8 @@ real pan and tilt, with the numbers on top. It is drawn straight on from the fro
 face you. Click it to see it from behind instead (the choice is remembered). From the front, positive pan turns toward
 your left, because it is the camera's right. A blue cone shows the view and follows the zoom: OBSBOT's published 67.2° horizontal at zoom 0 (79.4° diagonal at 4:3), narrowed by the documented zoom factors (1.15× at 5, 1.47× at 15) up to the published 4× at 100; the line between 15 and 100 is an assumption, and so is that the 16:9 picture keeps the full sensor width. The inner lens glass sits deeper as you zoom in. It is a drawing of the angles the camera reports (the same position
 query as the readout), never a command. It glides between readings rather than jumping, asks for the position
-about six times a second while the camera is moving and about once a second when it is still, and stops asking when the
-window is in the background or the card is hidden. With no reading it dims and shows no view cone.
+about six times a second while the camera is moving and about once a second when it is still, and keeps following when
+the window is behind others; it only stops asking while the window is minimised or the card is hidden. With no reading it dims and shows no view cone.
 
 The drawing is traced from OBSBOT's product photos (front, back, both sides and an angled view) and calibrated to the
 published overall size (48.37 × 46.46 × 64.2 mm); the view cone uses the published 79.4° diagonal field of view.

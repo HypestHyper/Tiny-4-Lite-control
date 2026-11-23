@@ -250,6 +250,7 @@ impl FullWindow {
         let bar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         bar_spacer.set_hexpand(true);
         bar_row.append(&bar_spacer);
+        bar_row.append(&super::look::bubble(&ctx.store));
         bar_row.append(&search_toggle);
 
         let banner = connection_banner(ctx);

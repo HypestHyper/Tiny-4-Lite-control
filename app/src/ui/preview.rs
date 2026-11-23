@@ -702,7 +702,7 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
                 // Drop frames we cannot show in time: decoding is the expensive part.
                 if last_decode.elapsed() < min_gap || sender.is_full() { continue; }
                 last_decode = Instant::now();
-                if let Some(mut frame) = decode_jpeg(&jpeg, width_hint.load(Ordering::Relaxed)) {
+                if let Some(mut frame) = decode_jpeg(&jpeg, decode_width(width_hint.load(Ordering::Relaxed))) {
                     if FOCUS_PEAKING.load(Ordering::Relaxed) { focus_peaking(&mut frame); }
                     if sender.send_blocking(frame).is_err() { return; }
                 }
@@ -754,13 +754,14 @@ pub fn set_peaking_strictness(value: u8) {
     update_config(|c| c.preview_peaking_strictness = value.min(100));
 }
 
-/// What strictness means: the share of the picture's edges that are marked (12% at 0, 1% at 100), and
-/// the smallest step in brightness that can count as an edge at all (30 at 0, 140 at 100).
+/// What strictness means: how narrow an edge must be to count as in focus (the brightness step over two
+/// pixels against the step over six: 50% at 0, 90% at 100), and the smallest step that counts at all (12 at
+/// 0, 40 at 100), so noise and faint texture are left alone.
 fn peaking_levels(strictness: u8) -> (u32, u16) {
     let s = u32::from(strictness.min(100));
-    let per_thousand = 120 - s * 110 / 100;
-    let floor = 30 + (s * 110 / 100) as u16;
-    (per_thousand, floor)
+    let narrow_percent = 50 + s * 40 / 100;
+    let floor = 12 + (s * 28 / 100) as u16;
+    (narrow_percent, floor)
 }
 
 pub fn set_focus_peaking(on: bool) {
@@ -771,39 +772,46 @@ pub fn set_focus_peaking(on: bool) {
 /// The colour edges in focus are painted.
 const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
 
-/// Mark the pixels with the strongest local contrast. The contrast of each pixel is the difference
-/// to its neighbours left/right and up/down (in brightness). What counts as sharp adapts to the
-/// picture: the strongest few per cent, but never weak edges in a flat or blurred picture.
+/// Mark the edges that are in focus. Contrast alone does not say that: a blurred edge between a dark and a
+/// light thing is still a big step in brightness. What does is how narrow the step is. In focus, nearly the
+/// whole step happens across two pixels; out of focus it is spread over many, so the step across two pixels
+/// is only a small part of the step across six. Both directions are looked at, and the marks are drawn two
+/// pixels wide so they stay visible when the picture is shown smaller.
 fn focus_peaking(frame: &mut Frame) {
     let (w, h) = (frame.width as usize, frame.height as usize);
-    if w < 3 || h < 3 || frame.rgb.len() < w * h * 3 { return; }
-    let luma: Vec<u16> = frame.rgb.chunks_exact(3).map(|p| (u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8).collect();
-    let mut strength = vec![0u16; w * h];
-    let mut histogram = [0u32; 512];
-    for y in 1..h - 1 {
-        for x in 1..w - 1 {
+    if w < 8 || h < 8 || frame.rgb.len() < w * h * 3 { return; }
+    let luma: Vec<i16> = frame.rgb.chunks_exact(3).map(|p| ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as i16).collect();
+    let (narrow_percent, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
+    let floor = i32::from(floor);
+    let narrow_percent = narrow_percent as i32;
+    let mut marks = vec![false; w * h];
+    let sharp = |narrow: i32, wide: i32| narrow >= floor && narrow * 100 >= wide * narrow_percent;
+    for y in 3..h - 3 {
+        for x in 3..w - 3 {
             let i = y * w + x;
-            let dx = luma[i + 1].abs_diff(luma[i - 1]);
-            let dy = luma[i + w].abs_diff(luma[i - w]);
-            let s = (dx + dy).min(511);
-            strength[i] = s;
-            histogram[usize::from(s)] += 1;
+            let l = |k: usize| i32::from(luma[k]);
+            let (nx, wx) = ((l(i + 1) - l(i - 1)).abs(), (l(i + 3) - l(i - 3)).abs());
+            let (ny, wy) = ((l(i + w) - l(i - w)).abs(), (l(i + 3 * w) - l(i - 3 * w)).abs());
+            // Only the middle of the step: its two-pixel step is at least as big as its neighbours'.
+            let peak_x = nx >= (l(i + 2) - l(i)).abs() && nx >= (l(i) - l(i - 2)).abs();
+            let peak_y = ny >= (l(i + 2 * w) - l(i)).abs() && ny >= (l(i) - l(i - 2 * w)).abs();
+            if (peak_x && sharp(nx, wx)) || (peak_y && sharp(ny, wy)) { marks[i] = true; }
         }
     }
-    // The threshold: the strongest few per cent of edges, and at least a clear step in brightness, both
-    // set by the strictness.
-    let (per_thousand, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
-    let wanted = ((w - 2) * (h - 2)) as u32 * per_thousand / 1000;
-    let mut count = 0u32;
-    let mut threshold = 511u16;
-    for level in (0..512).rev() {
-        count += histogram[level];
-        if count >= wanted { threshold = level as u16; break; }
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if marks[i] || (x > 0 && marks[i - 1]) || (y > 0 && marks[i - w]) {
+                frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR);
+            }
+        }
     }
-    let threshold = threshold.max(floor);
-    for (i, s) in strength.iter().enumerate() {
-        if *s >= threshold { frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR); }
-    }
+}
+
+/// How wide to decode for the preview: the window's width, or, with focus peaking on, up to 1920 pixels, so
+/// it judges focus on the real picture (shrinking it makes a soft edge look sharp).
+fn decode_width(target: u32) -> u32 {
+    if FOCUS_PEAKING.load(Ordering::Relaxed) { target.max(1920) } else { target }
 }
 
 fn decode_jpeg(data: &[u8], target_width: u32) -> Option<Frame> {
@@ -876,7 +884,9 @@ fn decode_yuyv(frame: &[u8], mode: &VideoMode) -> Option<Frame> {
     if frame.len() < width * height * 2 { return None; }
     // A big picture (the Studio camera at 1080p or 4K) is shown at half size, each pixel the average of
     // the four it covers: smooth edges, a quarter of the work.
-    if width >= 1280 && height % 2 == 0 { return Some(decode_yuyv_half(frame, width, height)); }
+    // With focus peaking on, a 1080p picture is kept whole, so focus is judged on the real pixels.
+    let peaking_full = FOCUS_PEAKING.load(Ordering::Relaxed) && width <= 1920;
+    if width >= 1280 && height % 2 == 0 && !peaking_full { return Some(decode_yuyv_half(frame, width, height)); }
     let mut rgb = Vec::with_capacity(width * height * 3);
     for pair in frame[..width * height * 2].chunks_exact(4) {
         let u = i32::from(pair[1]) - 128;
@@ -947,7 +957,7 @@ mod peaking_tests {
         let mut sharp = frame(64, 32, |x, _| if x < 32 { 20 } else { 230 });
         focus_peaking(&mut sharp);
         assert!(green(&sharp) > 0);
-        let at_edge = (1..31).all(|y| { let i = (y * 64 + 32) as usize * 3; sharp.rgb[i..i + 3] == PEAK_COLOUR });
+        let at_edge = (4..28).all(|y| { let i = (y * 64 + 32) as usize * 3; sharp.rgb[i..i + 3] == PEAK_COLOUR });
         assert!(at_edge, "the step itself is marked");
         // A flat picture and a gentle gradient (out of focus) have no edges worth marking.
         let mut flat = frame(64, 32, |_, _| 120);
@@ -956,5 +966,9 @@ mod peaking_tests {
         let mut soft = frame(64, 32, |x, _| (x * 3) as u8);
         focus_peaking(&mut soft);
         assert_eq!(green(&soft), 0);
+        // A big but blurred step (dark to light over twelve pixels) is high contrast, yet not in focus.
+        let mut blurred = frame(64, 32, |x, _| (20 + (x - 26).clamp(0, 12) * 17) as u8);
+        focus_peaking(&mut blurred);
+        assert_eq!(green(&blurred), 0, "a blurred edge is not marked");
     }
 }

@@ -1094,7 +1094,7 @@ impl Joystick {
     // ── Position readout ──
 
     /// Ask for the position now and keep asking: quickly while the camera is moving, slowly when it
-    /// is still, and not at all when the pad is hidden or the window is in the background.
+    /// is still, and not at all when the pad is hidden or the window is minimised.
     fn start_polling(&self) {
         if self.0.polling.replace(true) { return; }
         self.poll_now();
@@ -1121,8 +1121,12 @@ impl Joystick {
     fn poll_now(&self) {
         let state = &self.0;
         if !state.polling.get() { return; }
-        let active = state.pad.root().and_then(|r| r.downcast::<gtk::Window>().ok()).is_some_and(|w| w.is_active());
-        if !(active && state.pad.is_mapped()) {
+        // Followed whenever the window can be seen, in front or not; not while it is minimised.
+        let window = state.pad.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        let minimised = window.as_ref().and_then(|w| w.surface()).and_then(|s| s.downcast::<gtk::gdk::Toplevel>().ok())
+            .is_some_and(|t| t.state().contains(gtk::gdk::ToplevelState::MINIMIZED));
+        let visible = window.is_some_and(|w| w.is_visible()) && !minimised;
+        if !(visible && state.pad.is_mapped()) {
             self.schedule_poll(1000);
             return;
         }

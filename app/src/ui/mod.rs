@@ -7,6 +7,7 @@ pub mod gesture_draw;
 pub mod gimbal_model;
 pub mod icons;
 pub mod joystick;
+pub mod look;
 pub mod panels;
 pub mod popup;
 pub mod preview;
