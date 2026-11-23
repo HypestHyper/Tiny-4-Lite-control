@@ -372,3 +372,28 @@ So the number sent is 1 for Face and 0 for Global. The first versions of this ap
 `0x000007BE`, which the camera did not take as either state, so switching priority left the camera
 where it was. The camera's reply is read by its number (1 or 0), with the old byte pattern as a second
 opinion. Run with `TINY4LITE_DEBUG_XU=1` to see what is sent and what the camera answers.
+
+## 2026-11-23 measured colour controls (white wall, warm room lighting)
+
+Measured with `tools/probe-colour-controls.py` on a Tiny 2 Lite: Auto white balance off, Auto exposure on, each
+value held 1.5 s, the mean R, G, B (0–255) of one frame. Values before and after: Auto white balance on,
+5000 K, red 1024, blue 1024, hue 50.
+
+| Setting | R | G | B | Notes |
+|---|---:|---:|---:|---|
+| 2000 K | 124.8 | 122.2 | 97.6 | most neutral under warm light |
+| 3000 K | 144.2 | 105.7 | 46.4 | |
+| 4000 K | 173.1 | 89.2 | 19.6 | |
+| 5000 K | 184.4 | 91.2 | 0.1 | blue at zero from here up |
+| 10000 K | 201.4 | 87.1 | 0.0 | |
+| red 0 / 512 / 1024 / 1536 / 2048 (at 5000 K) | 0 / 83.5 / 130.1 / 252.6 / 255 | 134 / 131 / 124 / 55 / 85 | 0 / 0 / 0 / 29 / 55 | steep above 1024; exposure reacts |
+| blue 0 / 1024 / 1536 / 2048 (at 5000 K) | 132 / 131 / 128 / 119 | 127 / 124 / 107 / 87 | 0 / 0 / 118 / 174 | nothing below 1024 while blue is already 0 |
+| hue 0 / 25 / 50 / 75 / 100 | 130 / 131 / 131 / 126 / 114 | 86 / 108 / 124 / 132 / 132 | 0 | magenta (0) to green (100) |
+
+Findings:
+
+- Colour temperature: lower is bluer, higher is redder; set it to the light's colour for neutral white.
+- Red and blue balance never changed when the temperature was changed, and the temperature never changed when
+  they were: they are independent gains that stack on top of it, neutral at 1024.
+- Hue is a magenta–green tint, not a blue–red one.
+- Auto exposure stays on during this test, so boosting one channel can darken the others.

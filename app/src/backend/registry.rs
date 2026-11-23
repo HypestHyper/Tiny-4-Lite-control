@@ -596,13 +596,16 @@ fn build() -> Vec<Setting> {
             "Let the camera correct for the colour of your lighting.", Kind::Toggle),
         Setting::v4l2("white_balance_temperature", "v4l2:white_balance_temperature", WhiteBalance, "Colour temperature",
             "Match it to your light: lower makes the picture bluer, higher makes it redder.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
-            .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature."),
+            .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature.")
+            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero). Set this first; Red and Blue balance then fine-tune on top of it."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
-            "Fine-tune the red channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
-            .needs(awb, OFF, "Turn off Auto white balance to adjust red."),
+            "Less red (towards cyan) or more red. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            .needs(awb, OFF, "Turn off Auto white balance to adjust red.")
+            .info("A gain on the red channel, applied on top of Colour temperature (the two do not change each other). It is steep above the middle: measured, from 1024 to 1536 red nearly doubles. Small moves around the middle are usually enough."),
         Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
-            "Fine-tune the blue channel.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
-            .needs(awb, OFF, "Turn off Auto white balance to adjust blue."),
+            "Less blue (towards yellow) or more blue. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            .needs(awb, OFF, "Turn off Auto white balance to adjust blue.")
+            .info("A gain on the blue channel, applied on top of Colour temperature (the two do not change each other). If the temperature is set too high for warm light, blue is already at zero and turning this down changes nothing: lower the temperature first."),
 
         // ── Focus ──
         Setting::v4l2("focus_automatic_continuous", af, Focus, "Autofocus",
@@ -641,7 +644,8 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("brightness", "v4l2:brightness", Picture, "Brightness", "Lighten or darken the whole picture.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("contrast", "v4l2:contrast", Picture, "Contrast", "Separate light from dark.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("saturation", "v4l2:saturation", Picture, "Saturation", "How vivid colours look.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
-        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Shift the tint of the picture, from bluish to reddish.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")])),
+        Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Shift the tint between magenta and green.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")]))
+            .info("Measured on the camera: lower pulls the picture towards magenta, higher towards green; 50 leaves it as it is. It does not make it warmer or cooler: use Colour temperature for that."),
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,

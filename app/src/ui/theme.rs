@@ -435,7 +435,7 @@ window.t4.csd { border-radius: §18§; }
 .t4 scale.grad-red trough { background-image: linear-gradient(to right, #3fb8b4, #9aa3a6 50%, #e5484d); }
 .t4 scale.grad-blue trough { background-image: linear-gradient(to right, #e2bf3c, #a3a39b 50%, #4a7de3); }
 /* Hue on this camera only shifts the tint a little, from bluish to reddish, through neutral in the middle. */
-.t4 scale.grad-hue trough { background-image: linear-gradient(to right, #5b7fe0, #9aa0b4 50%, #e0605b); }
+.t4 scale.grad-hue trough { background-image: linear-gradient(to right, #d05bc0, #a49aa8 50%, #5bbf6a); }
 .t4 scale.grad-temperature highlight, .t4 scale.grad-red highlight, .t4 scale.grad-blue highlight, .t4 scale.grad-hue highlight { background: transparent; }
 .t4 scale slider { min-width: 4px; min-height: §32§; margin: -§8§ 0; border-radius: 3px; background: @t_primary; border: none; box-shadow: 0 0 0 §4§ @t_surface; transition: min-width 160ms cubic-bezier(0.2,0,0,1); }
 .card-inner scale slider { box-shadow: 0 0 0 §4§ @t_surface_high; }
