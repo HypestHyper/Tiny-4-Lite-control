@@ -397,3 +397,13 @@ Findings:
   they were: they are independent gains that stack on top of it, neutral at 1024.
 - Hue is a magenta–green tint, not a blue–red one.
 - Auto exposure stays on during this test, so boosting one channel can darken the others.
+
+### Follow-up: the camera uses temperature or red/blue gains, whichever was written last
+
+Reported on the camera (2026-11-23): with Auto white balance off, any change to Blue balance or Red balance,
+even back to the middle, turns the picture yellow-green; any small change to Colour temperature brings it
+back. So the camera does not combine them: writing red or blue switches it to raw channel gains (1024 = no
+gain, and an uncorrected sensor looks green), and writing the temperature switches it back to gains worked out
+from the temperature. The red/blue values it reports do not follow the temperature (see the table above). The
+app therefore keeps manual white balance to one of the two (Manual white balance by: Temperature or Red &
+blue) and writes that one's values again when switching, and presets record and re-apply the choice last.

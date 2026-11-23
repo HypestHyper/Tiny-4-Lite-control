@@ -44,6 +44,10 @@ pub struct AppConfig {
     pub tracking_speed: Option<String>,
     pub focus_mode: Option<String>,
     pub auto_exposure_mode: Option<String>,
+    /// Manual white balance by red and blue gains (true) or by colour temperature (false). The camera uses
+    /// whichever was written last, so the app keeps to one.
+    #[serde(default)]
+    pub white_balance_by_gains: bool,
     /// OBSBOT exposure compensation slider position, 0..=18 (-3.0..=+3.0).
     pub exposure_compensation_position: Option<u8>,
     /// Last successfully submitted microphone auto-gain state; camera GET_CUR is authoritative.
@@ -232,6 +236,7 @@ impl Default for AppConfig {
             tracking_speed: None,
             focus_mode: None,
             auto_exposure_mode: None,
+            white_balance_by_gains: false,
             exposure_compensation_position: None,
             audio_auto_gain: None,
             audio_microphone_disabled: None,

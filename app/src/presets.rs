@@ -113,6 +113,8 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     }
 
     let saved = current_config();
+    // Which way manual white balance is done; applied last, so the camera ends on that one.
+    settings.insert("app:white_balance_by".into(), i64::from(saved.white_balance_by_gains));
     if let Some(ratio) = saved.gesture_zoom_ratio {
         settings.insert("obsbot:gesture_zoom_ratio_milli".into(), (ratio * 1000.0).round() as i64);
     }
@@ -194,6 +196,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 1 => set_auto_exposure_mode(device, true).map(|_| ()),
                 _ => Err("Unknown Auto Exposure priority in preset.".into()),
             }
+        } else if key == "app:white_balance_by" {
+            // Only matters with auto white balance off; the camera ignores both while it is on.
+            let auto_wb = preset.settings.get("v4l2:white_balance_automatic").copied().unwrap_or(1);
+            if auto_wb == 0 { set_white_balance_by_gains(device, *value == 1) } else { crate::backend::update_config(|c| c.white_balance_by_gains = *value == 1); Ok(()) }
         } else if key == "obsbot:gesture_zoom_ratio_milli" {
             set_gesture_zoom_ratio(device, *value as f32 / 1000.0)
         } else if let Some(name) = key.strip_prefix("obsbot:gesture:") {

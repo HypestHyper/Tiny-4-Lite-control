@@ -259,6 +259,27 @@ pub(crate) fn get_control(device: &str, name: &str) -> Result<i64, String> {
         .map_err(|_| format!("Could not parse {name} value: {output}"))
 }
 
+/// Make the camera use one way of manual white balance. It uses whichever of colour temperature and red/blue
+/// balance was written last (measured: touching blue balance switched the picture to raw gains, touching the
+/// temperature switched it back), so the chosen mode's current values are written again. Each is first
+/// moved one step and back, in case the driver skips a write of the value it already has.
+pub(crate) fn set_white_balance_by_gains(device: &str, gains: bool) -> Result<(), String> {
+    let rewrite = |name: &str, step: i64, low: i64, high: i64| -> Result<(), String> {
+        let value = get_control(device, name)?;
+        let nudged = if value + step <= high { value + step } else { (value - step).max(low) };
+        set_control(device, name, nudged)?;
+        set_control(device, name, value)
+    };
+    if gains {
+        rewrite("red_balance", 1, 0, 2048)?;
+        rewrite("blue_balance", 1, 0, 2048)?;
+    } else {
+        rewrite("white_balance_temperature", 100, 2000, 10000)?;
+    }
+    crate::backend::update_config(|c| c.white_balance_by_gains = gains);
+    Ok(())
+}
+
 pub(crate) fn set_control(device: &str, name: &str, value: i64) -> Result<(), String> {
     run_v4l2(device, &format!("--set-ctrl={name}={value}"))?;
     // Position and speed are transient movement commands, never preferences.

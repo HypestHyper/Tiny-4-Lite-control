@@ -127,6 +127,8 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **HDR.** A switch in the Exposure card (and `tiny4lite-control set hdr on|off`). It sends the HDR command captured from OBSBOT's own app (selector `0x06`, `01 01 01` on, `01 01 00` off) and reads the state back from status byte `0x06`. Switching reconfigures the camera's sensor, so, following OBSBOT's guidance of 3 seconds between switches, the switch rests for 3 seconds after each change, and the command itself waits if it is sent again sooner. Some capture modes may not support HDR.
 
+**Manual white balance.** With Auto white balance off, the camera uses either the colour temperature or the red and blue gains, whichever was changed last (measured; see `docs/controls-and-protocol.md`). Touching red or blue switches it to raw gains, where the middle means no correction and the picture looks green. So the White balance card has **Manual white balance by: Temperature / Red & blue**: only that one's sliders are active, switching sends its values again, and presets record the choice and apply it last.
+
 **Fine steps.** Each slider's value sits in a pill with a small up and down arrow: each moves the slider by one step (one stop on the shutter speed), and holding an arrow keeps stepping, slowly at first, then faster. The pill greys out with the slider when the setting is unavailable.
 
 **Folding cards.** Every card in the three tabs has an arrow at the right of its heading that folds it down to the heading, and opens it again. Folded cards stay folded the next time the app opens. Search results always show in full.

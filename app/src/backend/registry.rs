@@ -167,6 +167,8 @@ pub enum Kind {
 pub enum Cond { Is(i64), IsNot(i64), OneOf(&'static [i64]) }
 pub const ON: Cond = Cond::Is(1);
 pub const OFF: Cond = Cond::Is(0);
+/// Manual white balance by colour temperature (0) or by red and blue gains (1).
+pub const WB_BY: &str = "app:white_balance_by";
 /// Zoom can be set by hand while tracking is off (0) or Normal (1). The other modes frame the picture themselves.
 pub const ZOOM_TRACKING: Cond = Cond::OneOf(&[0, 1]);
 
@@ -594,18 +596,28 @@ fn build() -> Vec<Setting> {
         // ── White balance ──
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
             "Let the camera correct for the colour of your lighting.", Kind::Toggle),
+        Setting::custom("app:white_balance_by", WhiteBalance, "Manual white balance by",
+            "The camera uses one or the other, not both.",
+            Kind::Choice(vec![opt(0, "Temperature", "Set the colour of your light; the camera works out the red and blue"), opt(1, "Red & blue", "Set the red and blue gains yourself")]),
+            |s| from_saved(Some(Value::Int(i64::from(s.config.white_balance_by_gains)))),
+            |d, v| set_white_balance_by_gains(d, v.as_i64() == 1).map(|()| Some(v)))
+            .needs(awb, OFF, "Turn off Auto white balance to set white balance by hand.")
+            .info("Measured on the camera: it uses whichever of Colour temperature and Red/Blue balance was changed last. Changing red or blue switches it to raw red and blue gains, where the middle (1024) is no correction at all, which looks green; changing the temperature switches back. So the app keeps to the one you choose here, and switching sends that one's values again."),
         Setting::v4l2("white_balance_temperature", "v4l2:white_balance_temperature", WhiteBalance, "Colour temperature",
             "Match it to your light: lower makes the picture bluer, higher makes it redder.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature.")
-            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero). Set this first; Red and Blue balance then fine-tune on top of it."),
+            .needs(WB_BY, Cond::Is(0), "Choose Temperature under Manual white balance by.")
+            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero). The camera uses either this or Red and Blue balance: see Manual white balance by."),
         Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
             "Less red (towards cyan) or more red. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust red.")
-            .info("A gain on the red channel, applied on top of Colour temperature (the two do not change each other). It is steep above the middle: measured, from 1024 to 1536 red nearly doubles. Small moves around the middle are usually enough."),
+            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
+            .info("A raw gain on the red channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain. It is steep above the middle: measured, from 1024 to 1536 red nearly doubles."),
         Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
             "Less blue (towards yellow) or more blue. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
             .needs(awb, OFF, "Turn off Auto white balance to adjust blue.")
-            .info("A gain on the blue channel, applied on top of Colour temperature (the two do not change each other). If the temperature is set too high for warm light, blue is already at zero and turning this down changes nothing: lower the temperature first."),
+            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
+            .info("A raw gain on the blue channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain; under warm light, blue needs raising well above it."),
 
         // ── Focus ──
         Setting::v4l2("focus_automatic_continuous", af, Focus, "Autofocus",
@@ -1007,9 +1019,16 @@ mod tests {
     fn manual_white_balance_needs_auto_white_balance_off() {
         let on = snapshot(vec![control("white_balance_automatic", 1, false), control("red_balance", 1043, true)]);
         let setting = find("v4l2:red_balance").unwrap();
-        assert_eq!(setting.blockers(&on), vec!["Turn off Auto white balance to adjust red.".to_string()]);
-        let off = snapshot(vec![control("white_balance_automatic", 0, false), control("red_balance", 1043, false)]);
+        assert_eq!(setting.blockers(&on).first(), Some(&"Turn off Auto white balance to adjust red.".to_string()));
+        // With it off, red and blue work when white balance is done by red & blue, and the temperature does not
+        // (the camera uses whichever was written last).
+        let mut off = snapshot(vec![control("white_balance_automatic", 0, false), control("red_balance", 1043, false), control("white_balance_temperature", 5000, false)]);
+        off.config.white_balance_by_gains = true;
         assert!(setting.blockers(&off).is_empty());
+        assert_eq!(find("v4l2:white_balance_temperature").unwrap().blockers(&off), vec!["Choose Temperature under Manual white balance by.".to_string()]);
+        off.config.white_balance_by_gains = false;
+        assert_eq!(setting.blockers(&off), vec!["Choose Red & blue under Manual white balance by.".to_string()]);
+        assert!(find("v4l2:white_balance_temperature").unwrap().blockers(&off).is_empty());
     }
 
     #[test]

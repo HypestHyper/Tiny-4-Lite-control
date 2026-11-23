@@ -103,7 +103,13 @@ fn a_blocked_setting_explains_what_to_change_and_exits_3() {
     let out = run.run(&["set", "red-balance", "1000"]);
     assert_eq!(out.status.code(), Some(3));
     assert!(text(&out.stderr).contains("Turn off Auto white balance"), "{}", text(&out.stderr));
-    // The same setting works once its dependency is met (manual white balance fixture).
+    // With manual white balance by temperature, red is still unavailable, and says why.
+    let by_temperature = run.command("manual", &["set", "red-balance", "1000"]);
+    assert_eq!(by_temperature.status.code(), Some(3));
+    assert!(text(&by_temperature.stderr).contains("Choose Red & blue"), "{}", text(&by_temperature.stderr));
+    // It works once white balance is done by red and blue.
+    let choose = run.command("manual", &["set", "manual-white-balance-by", "Red & blue"]);
+    assert_eq!(choose.status.code(), Some(0), "{}", text(&choose.stderr));
     let manual = run.command("manual", &["set", "red-balance", "1000"]);
     assert_eq!(manual.status.code(), Some(0), "{}", text(&manual.stderr));
     // --force sends it anyway.
