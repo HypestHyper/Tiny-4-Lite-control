@@ -34,6 +34,36 @@ fn card(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     (card, body)
 }
 
+/// A part of a card: a smaller heading with its icon and summary, then its content.
+fn section(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
+    let part = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    head.append(&widgets::icon(glyph));
+    head.append(&widgets::text(title, &["setting-label"]));
+    part.append(&head);
+    if !subtitle.is_empty() {
+        let sub = widgets::text(subtitle, &["setting-summary"]);
+        sub.set_margin_top(2);
+        part.append(&sub);
+    }
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    body.set_margin_top(10);
+    part.append(&body);
+    (part, body)
+}
+
+/// The app and the background service together, at the top of the Device tab: installing, updating and
+/// running both in one place.
+pub fn setup_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("App and background service", "install_desktop", "");
+    body.append(&app_section(store));
+    let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    divider.add_css_class("divider");
+    body.append(&divider);
+    body.append(&service_section(store));
+    card
+}
+
 const fn opt(value: i64, label: &'static str) -> Opt { Opt { value, label, hint: "", confirm: None } }
 
 // ── Presets page ──────────────────────────────────────────────────────────
@@ -518,7 +548,7 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
 pub fn sleep_timer_card() -> gtk::Box {
     let (card, body) = card("Sleep timer", "bedtime",
         "Puts the camera to sleep when it is not needed, so it does not stay on. All of these need the background service.");
-    body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it under Background service, further down this tab."));
+    body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it at the top of this tab."));
     let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -581,9 +611,9 @@ pub fn sleep_timer_card() -> gtk::Box {
 
 /// The app itself: whether it is installed (AppImage in ~/Applications, the tiny4lite-control command, the
 /// app-menu entry), with Install, Update and Remove.
-pub fn app_card(store: &Store) -> gtk::Box {
-    let (card, body) = card("App", "open_in_full",
-        "Install keeps the AppImage in ~/Applications and adds the tiny4lite-control command and an app menu entry. The background service uses the installed copy.");
+fn app_section(store: &Store) -> gtk::Box {
+    let (card, body) = section("App", "open_in_full",
+        "Install keeps the AppImage in ~/Applications and adds the tiny4lite-control command and an app menu entry. The background service uses the installed copy. A new version opened from ~/Applications takes over by itself.");
     let status = widgets::text("", &["setting-summary"]);
     status.set_wrap(true);
     status.set_xalign(0.0);
@@ -881,7 +911,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
 pub fn studio_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Studio camera", "blur_on",
         "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, that apps can choose. It only uses the camera while an app has it open.");
-    body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it under Background service, further down this tab."));
+    body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it at the top of this tab."));
     let config = current_config().studio;
     body.append(&plain_switch_row("Studio camera",
         "Make \u{201c}Tiny 2 Lite Studio\u{201d} available to apps.",
@@ -1054,9 +1084,9 @@ fn how_long(seconds: u64) -> String {
 
 /// The background service: its status, installing it, and starting, stopping and removing it. The status
 /// is watched and refreshed every couple of seconds.
-pub fn service_card(store: &Store) -> gtk::Box {
+fn service_section(store: &Store) -> gtk::Box {
     use crate::setup::{self, InstalledAs};
-    let (card, body) = card("Background service", "terminal",
+    let (card, body) = section("Background service", "terminal",
         "Watches the camera and does the sleep timer, shutdown and suspend sleep, restoring settings and waiting capture changes.");
     let status = widgets::text("", &["setting-summary"]);
     status.set_wrap(true);

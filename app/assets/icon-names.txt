@@ -48,3 +48,4 @@ blur_on
 memory
 star
 photo_filter
+install_desktop

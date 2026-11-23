@@ -193,13 +193,12 @@ impl FullWindow {
                     let built = settings::tab_page(&store, tab, &rows);
                     if tab == Tab::Device {
                         // Extra cards that are not registry settings.
-                        built.masonry.add(&panels::app_card(&store), 3);
+                        built.holder.prepend(&panels::setup_card(&store));
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
                         built.masonry.add(&panels::studio_card(&store), 5);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::gimbal_limits_card(&store), 3);
                         built.masonry.add(&panels::sleep_timer_card(), 5);
-                        built.masonry.add(&panels::service_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
                         built.masonry.add(&panels::developer_card(&store), 4);
                     }
