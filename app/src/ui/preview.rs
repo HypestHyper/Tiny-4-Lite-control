@@ -216,68 +216,6 @@ impl PreviewHub {
         picker
     }
 
-    /// The Look list beside it: no LUT, or one of the favourite LUTs (Device tab \u{2192} Studio camera, the
-    /// star). Only shown when there are favourites; it changes the Studio camera, so every app using it.
-    pub fn look_picker(&self) -> gtk::DropDown {
-        let picker = gtk::DropDown::from_strings(&[]);
-        picker.add_css_class("on-stage-picker");
-        picker.set_valign(gtk::Align::Center);
-        picker.set_tooltip_text(Some("Look: a favourite LUT on the Studio camera, for every app using it (mark favourites with the star in Device \u{2192} Studio camera)"));
-        widgets::label_accessible(&picker, "Studio camera look");
-        let names: Rc<RefCell<Vec<String>>> = Rc::default();
-        let filling = Rc::new(Cell::new(false));
-        type Seen = (Vec<String>, Option<String>, bool);
-        let seen: Rc<RefCell<Option<Seen>>> = Rc::default();
-        let refresh: Rc<dyn Fn()> = {
-            let (weak, names, filling, seen) = (picker.downgrade(), names.clone(), filling.clone(), seen.clone());
-            Rc::new(move || {
-                let Some(picker) = weak.upgrade() else { return };
-                let studio = current_config().studio;
-                let favourites = crate::lut::favourites();
-                let now = (favourites.clone(), studio.lut.clone(), studio.lut_on);
-                if seen.borrow().as_ref() == Some(&now) { return; }
-                *seen.borrow_mut() = Some(now);
-                filling.set(true);
-                let mut labels = vec!["No LUT".to_string()];
-                labels.extend(favourites.iter().map(|n| crate::lut::label(n)));
-                // The LUT that is on but not a favourite is shown too, so the list says what is on.
-                let mut list = favourites;
-                if let Some(name) = studio.lut.clone().filter(|n| studio.lut_on && !list.contains(n)) {
-                    labels.push(crate::lut::label(&name));
-                    list.push(name);
-                }
-                picker.set_model(Some(&gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>())));
-                let at = studio.lut.as_ref().filter(|_| studio.lut_on).and_then(|n| list.iter().position(|f| f == n)).map(|i| i as u32 + 1);
-                picker.set_selected(at.unwrap_or(0));
-                picker.set_visible(studio.enabled && list.len() > 0);
-                *names.borrow_mut() = list;
-                filling.set(false);
-            })
-        };
-        refresh();
-        {
-            let (names, filling, store) = (names.clone(), filling.clone(), self.0.store.clone());
-            picker.connect_selected_notify(move |p| {
-                if filling.get() { return; }
-                match p.selected() {
-                    0 => { update_config(|c| c.studio.lut_on = false); store.toast("No LUT"); }
-                    i => if let Some(name) = names.borrow().get(i as usize - 1).cloned() {
-                        update_config(|c| c.studio.pick_lut(&name));
-                        store.toast(&format!("Look: {}", crate::lut::label(&name)));
-                    },
-                }
-            });
-        }
-        // Favourites or the LUT changed elsewhere (the Device tab, another window, a preset).
-        let weak = picker.downgrade();
-        glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
-            if weak.upgrade().is_none() { return glib::ControlFlow::Break; }
-            refresh();
-            glib::ControlFlow::Continue
-        });
-        picker
-    }
-
     /// The round button that turns focus peaking on and off, lit while it is on, with its strictness
     /// slider beside it while it is on.
     pub fn peaking_button(&self) -> gtk::Box {

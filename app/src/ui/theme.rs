@@ -311,6 +311,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 .quick-chooser button.flat-item.chosen { background: alpha(@t_primary, 0.16); color: @t_primary; }
 .t4 .quick-chooser .chooser-head { margin-top: §6§; }
 .t4 button.look-bubble { border-radius: 999px; padding: §6§ §14§ §6§ §10§; min-height: §28§; background: @t_surface_highest; }
+.t4 button.look-bubble.on-stage { background: alpha(#000000, 0.45); color: @t_on_stage; min-height: §24§; padding: §4§ §12§ §4§ §8§; }
+.t4 button.look-bubble.on-stage.lit { background: alpha(#000000, 0.6); color: @t_primary; }
 .t4 button.look-bubble.lit { background: alpha(@t_primary, 0.22); color: @t_primary; }
 .t4 button.round.small { min-height: §32§; min-width: §32§; padding: 0; border-radius: §16§; }
 .t4 button.round.small:active { border-radius: §8§; }

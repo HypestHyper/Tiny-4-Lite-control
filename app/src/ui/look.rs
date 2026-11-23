@@ -1,4 +1,4 @@
-//! The Look bubble beside the search button: change the Studio camera's LUT and its strength from any tab,
+//! The LUTs button (beside search, in the quick-controls header, and on the popped-out preview): change the Studio camera's LUT and its strength from any tab,
 //! without the preview. Favourites come first, then the other LUTs.
 
 use super::store::Store;
@@ -10,10 +10,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-/// The round button, shown while the Studio camera is on and has LUTs; lit while a LUT is applied.
-pub fn bubble(store: &Store) -> gtk::Button {
+/// Where the button sits: in a window's header, or on the picture of the popped-out preview.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Place { Header, Stage }
+
+/// The LUTs button, shown while the Studio camera is on and has LUTs; lit while a LUT is applied.
+pub fn bubble(store: &Store, place: Place) -> gtk::Button {
     let button = widgets::icon_text_button("photo_filter", "LUTs");
     button.add_css_class("look-bubble");
+    if place == Place::Stage { button.add_css_class("on-stage"); }
     button.set_valign(gtk::Align::Center);
     let popover = gtk::Popover::new();
     popover.add_css_class("quick-chooser");

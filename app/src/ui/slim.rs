@@ -65,7 +65,6 @@ impl SlimWindow {
         header.set_size_request(-1, 56);
         let title = widgets::line("Quick controls", &["heading"]);
         title.set_valign(gtk::Align::Center);
-        title.set_hexpand(true);
         let chip = StatusChip::new();
         chip.root.set_valign(gtk::Align::Center);
         chip.set_compact(true);
@@ -76,6 +75,11 @@ impl SlimWindow {
         { let (c, s) = (controls.clone(), ctx.style.clone()); ctx.style.on_change(move || c.set_visible(s.window_buttons())); }
         header.append(&title);
         header.append(&chip.root);
+        let luts = super::look::bubble(&ctx.store, super::look::Place::Header);
+        header.append(&luts);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        header.append(&spacer);
         header.append(&customise);
         header.append(&full);
         header.append(&controls);
@@ -91,7 +95,6 @@ impl SlimWindow {
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
         pause_row.append(&ctx.hub.source_picker());
-        pause_row.append(&ctx.hub.look_picker());
         pause_row.append(&ctx.hub.peaking_button());
         pause_row.append(&ctx.hub.pause_button());
         pause_row.append(&pop);
@@ -183,8 +186,12 @@ impl SlimWindow {
         dialogs.overlay().add_overlay(&sensor);
         let weak_ctx = Rc::downgrade(ctx);
         let preview_state = state.clone();
+        let (narrow_title, narrow_luts) = (title.clone(), luts.clone());
         sensor.connect_resize(move |_, width, _| {
             if let Some(ctx) = weak_ctx.upgrade() { ctx.style.report_width(width); }
+            // With the LUTs button there, a narrow header leaves no room for the title: the window
+            // manager still shows it.
+            narrow_title.set_visible(width >= 450 || !narrow_luts.is_visible());
             // Keep the preview 16:9 as the window is resized (the slim root has 14 px margins).
             let height = (f64::from(width - 28) * 9.0 / 16.0).round().clamp(110.0, 420.0) as i32;
             preview_state.preview.widget().set_size_request(-1, height);

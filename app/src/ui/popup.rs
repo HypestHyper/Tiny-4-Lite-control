@@ -36,7 +36,8 @@ impl PreviewWindow {
         let weak_ctx = Rc::downgrade(ctx);
         dock.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(false); } });
         controls.append(&ctx.hub.source_picker());
-        controls.append(&ctx.hub.look_picker());
+        // Popped out, the picture has the LUTs button itself (in the main window it is beside search).
+        controls.append(&super::look::bubble(&ctx.store, super::look::Place::Stage));
         controls.append(&ctx.hub.peaking_button());
         controls.append(&pause);
         controls.append(&dock);
