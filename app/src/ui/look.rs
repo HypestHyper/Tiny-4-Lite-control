@@ -12,8 +12,9 @@ use std::time::Duration;
 
 /// The round button, shown while the Studio camera is on and has LUTs; lit while a LUT is applied.
 pub fn bubble(store: &Store) -> gtk::Button {
-    let button = widgets::icon_button("photo_filter", "Look: the Studio camera's LUT", false);
+    let button = widgets::icon_text_button("photo_filter", "LUTs");
     button.add_css_class("look-bubble");
+    button.set_valign(gtk::Align::Center);
     let popover = gtk::Popover::new();
     popover.add_css_class("quick-chooser");
     popover.set_has_arrow(false);
@@ -77,7 +78,7 @@ fn contents(popover: &gtk::Popover, store: &Store) -> gtk::Box {
             match &pick {
                 None => { update_config(|c| c.studio.lut_on = false); store.toast("No LUT"); }
                 Some(name) => {
-                    update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
+                    update_config(|c| c.studio.pick_lut(&name));
                     store.toast(&format!("Look: {}", crate::lut::label(name)));
                 }
             }
@@ -116,7 +117,7 @@ fn contents(popover: &gtk::Popover, store: &Store) -> gtk::Box {
             let slot = timer.clone();
             *timer.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(600), move || {
                 slot.borrow_mut().take();
-                update_config(|c| c.studio.lut_strength = value);
+                update_config(|c| c.studio.set_lut_strength(value));
             }));
         });
     }

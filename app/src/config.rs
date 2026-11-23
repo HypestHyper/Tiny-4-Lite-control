@@ -152,10 +152,27 @@ pub struct StudioConfig {
     pub lut_gpu: bool,
     /// LUTs marked as favourites, offered on the preview.
     pub lut_favourites: Vec<String>,
+    /// The strength last set for each LUT, brought back when it is picked again.
+    pub lut_strengths: BTreeMap<String, u8>,
+}
+
+impl StudioConfig {
+    /// Pick a LUT (and turn it on), at the strength last set for it, or full strength the first time.
+    pub fn pick_lut(&mut self, name: &str) {
+        self.lut = Some(name.to_string());
+        self.lut_on = true;
+        self.lut_strength = self.lut_strengths.get(name).copied().unwrap_or(100).min(100);
+    }
+
+    /// Set the strength of the LUT picked now, and remember it for that LUT.
+    pub fn set_lut_strength(&mut self, value: u8) {
+        self.lut_strength = value.min(100);
+        if let Some(name) = &self.lut { self.lut_strengths.insert(name.clone(), self.lut_strength); }
+    }
 }
 
 impl Default for StudioConfig {
-    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new() } }
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new(), lut_strengths: BTreeMap::new() } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
@@ -449,5 +466,19 @@ mod tests {
         assert_eq!(decoded.video_mode.as_ref().map(|mode| mode.pixel_format.as_str()), Some("MJPG"));
         assert_eq!(decoded.presets.len(), 1);
         assert_eq!(decoded.presets[0].settings.get("obsbot:led_brightness"), Some(&2));
+    }
+
+    #[test]
+    fn each_lut_keeps_its_own_strength() {
+        let mut studio = StudioConfig::default();
+        studio.pick_lut("Warm.cube");
+        assert_eq!((studio.lut_strength, studio.lut_on), (100, true), "full strength the first time");
+        studio.set_lut_strength(40);
+        studio.pick_lut("Teal.cube");
+        studio.set_lut_strength(70);
+        studio.pick_lut("Warm.cube");
+        assert_eq!(studio.lut_strength, 40);
+        studio.pick_lut("Teal.cube");
+        assert_eq!(studio.lut_strength, 70);
     }
 }

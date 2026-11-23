@@ -1,35 +1,20 @@
-//! Pictures of the hand gestures, beside the gesture settings, drawn from the reference the gestures were
-//! designed from: an open palm with a target on it, an L-shaped hand with a magnifier, and two L-shaped
-//! hands moving apart. Line drawings in a round tonal container like a Material list item's leading icon;
-//! the hand takes the container's text colour and the mark (target, magnifier, arrow) the accent colour.
+//! Pictures of the hand gestures, beside the gesture settings: the reference drawings the gestures were
+//! designed from (an open palm with a target, an L-shaped hand with a magnifier, two L-shaped hands with an
+//! arrow between them), traced into smooth outlines by tools/trace-gestures.py. Shown in a round tonal
+//! container like a Material list item's leading icon; the hand takes the container's text colour and the
+//! mark the accent colour.
 
+use super::gesture_paths as paths;
 use gtk::cairo;
 use gtk::prelude::*;
 use std::f64::consts::PI;
 
-/// One stroke in a 48-unit box: an SVG-style path (M, L, H, V, C, A, and O cx cy r for a circle),
-/// placed with an offset and a scale (a negative x scale mirrors it).
-struct Stroke { path: &'static str, at: (f64, f64), scale: (f64, f64) }
-
-const fn plain(path: &'static str) -> Stroke { Stroke { path, at: (0.0, 0.0), scale: (1.0, 1.0) } }
-
-const PALM: &str = "M14 46 V40.5 C10 37.5 6.5 33 6.5 27.5 V18.5 A2.25 2.25 0 0 1 11 18.5 V24.5 A1.3 1.3 0 0 0 13.6 24.5 \
-    V10.5 A2.2 2.2 0 0 1 18 10.5 V23 A1.3 1.3 0 0 0 20.6 23 V7.2 A2.2 2.2 0 0 1 25 7.2 V23 A1.3 1.3 0 0 0 27.6 23 \
-    V11 A2.2 2.2 0 0 1 32 11 V28 L36.6 22.9 A2.3 2.3 0 0 1 40.1 25.9 L34.6 33.8 C33 36.5 31 38.8 31 41 V46";
-const L_HAND: &str = "M19 46 V41 C15.5 38 12 35.5 8 34 A2.6 2.6 0 0 1 9.6 29 C13 30 15 31 17 31.5 V8.5 A2.5 2.5 0 0 1 22 8.5 \
-    V21 A2.5 2.5 0 0 1 27 21 A2.5 2.5 0 0 1 32 22 A2.5 2.5 0 0 1 37 23 V35 C37 38.5 35 40.5 35 42 V46 M27 21 V27 M32 22 V27.5";
-
 /// The hand and the mark for each picture.
-fn strokes(kind: Kind) -> (Vec<Stroke>, Vec<Stroke>) {
+fn outlines(kind: Kind) -> (&'static str, &'static str) {
     match kind {
-        Kind::Target => (vec![plain(PALM)],
-            vec![plain("O19.5 33 3.4 M19.5 27.4 V28.6 M19.5 37.4 V38.6 M13.9 33 H15.1 M23.9 33 H25.1")]),
-        Kind::Zoom => (vec![plain(L_HAND)], vec![plain("O35 10 4.5 M38.2 13.2 L42 17 M33 10 H37 M35 8 V12")]),
-        Kind::Apart => (vec![
-                Stroke { path: L_HAND, at: (22.5, 14.0), scale: (0.62, 0.62) },
-                Stroke { path: L_HAND, at: (25.5, 14.0), scale: (-0.62, 0.62) },
-            ],
-            vec![plain("M18 9 H30 M20.5 6.5 L18 9 L20.5 11.5 M27.5 6.5 L30 9 L27.5 11.5")]),
+        Kind::Target => (paths::TARGET_HAND, paths::TARGET_MARK),
+        Kind::Zoom => (paths::ZOOM_HAND, paths::ZOOM_MARK),
+        Kind::Apart => (paths::APART_HAND, paths::APART_MARK),
     }
 }
 
@@ -112,6 +97,7 @@ fn trace(cr: &cairo::Context, path: &str) {
                 arc_to(cr, at, v[0], v[3] != 0.0, v[4] != 0.0, (v[5], v[6]));
                 at = (v[5], v[6]);
             }
+            'Z' => { cr.close_path(); }
             'O' => {
                 let (Some(x), Some(y), Some(r)) = (take(&mut i), take(&mut i), take(&mut i)) else { break };
                 cr.new_sub_path();
@@ -121,27 +107,20 @@ fn trace(cr: &cairo::Context, path: &str) {
             }
             _ => break,
         }
-        if i == before { break; }
+        if i == before && command != 'Z' { break; }
+        if command == 'Z' { command = 'M'; }
     }
 }
 
-fn draw(cr: &cairo::Context, size: f64, strokes: &[Stroke], colour: gtk::gdk::RGBA) {
-    let box_scale = size / 48.0;
+fn draw(cr: &cairo::Context, size: f64, path: &str, colour: gtk::gdk::RGBA) {
     cr.set_source_rgba(f64::from(colour.red()), f64::from(colour.green()), f64::from(colour.blue()), f64::from(colour.alpha()));
-    cr.set_line_cap(cairo::LineCap::Round);
-    cr.set_line_join(cairo::LineJoin::Round);
-    for stroke in strokes {
-        cr.save().ok();
-        cr.scale(box_scale, box_scale);
-        cr.translate(stroke.at.0, stroke.at.1);
-        cr.scale(stroke.scale.0, stroke.scale.1);
-        cr.new_path();
-        trace(cr, stroke.path);
-        cr.restore().ok();
-        // The line is as wide on every stroke, however it is scaled.
-        cr.set_line_width(2.6 * box_scale);
-        let _ = cr.stroke();
-    }
+    cr.save().ok();
+    cr.scale(size / 48.0, size / 48.0);
+    cr.new_path();
+    trace(cr, path);
+    cr.set_fill_rule(cairo::FillRule::EvenOdd);
+    let _ = cr.fill();
+    cr.restore().ok();
 }
 
 /// The round container with the gesture's picture in it.
@@ -156,8 +135,8 @@ pub fn picture(kind: Kind, size: i32) -> gtk::Box {
     overlay.set_halign(gtk::Align::Center);
     overlay.set_valign(gtk::Align::Center);
     overlay.set_vexpand(true);
-    let (hand, mark) = strokes(kind);
-    let layer = |strokes: Vec<Stroke>, class: &str| {
+    let (hand, mark) = outlines(kind);
+    let layer = |path: &'static str, class: &str| {
         let area = gtk::DrawingArea::new();
         area.add_css_class(class);
         area.set_content_width(art);
@@ -165,7 +144,7 @@ pub fn picture(kind: Kind, size: i32) -> gtk::Box {
         area.set_draw_func(move |area, cr, w, h| {
             #[allow(deprecated)]
             let colour = area.style_context().color();
-            draw(cr, f64::from(w.min(h)), &strokes, colour);
+            draw(cr, f64::from(w.min(h)), path, colour);
         });
         area
     };
@@ -181,15 +160,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_three_gestures_have_pictures_whose_paths_read_whole() {
+    fn the_three_gestures_have_pictures_whose_outlines_read_whole() {
         for id in ["obsbot:gesture_target", "obsbot:gesture_zoom", "obsbot:gesture_dynamic_zoom"] {
-            let kind = for_setting(id).expect("a picture");
-            let (hand, mark) = strokes(kind);
-            for stroke in hand.iter().chain(&mark) {
-                // Every number belongs to a command that takes it: nothing is left over or cut short.
+            let (hand, mark) = outlines(for_setting(id).expect("a picture"));
+            for path in [hand, mark] {
                 let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 48, 48).unwrap();
                 let cr = cairo::Context::new(&surface).unwrap();
-                trace(&cr, stroke.path);
+                trace(&cr, path);
                 let (x1, y1, x2, y2) = cr.path_extents().unwrap();
                 assert!(x1 >= 0.0 && y1 >= 0.0 && x2 <= 48.0 && y2 <= 48.0, "{id}: outside the box");
                 assert!(x2 - x1 > 5.0, "{id}: drew almost nothing");

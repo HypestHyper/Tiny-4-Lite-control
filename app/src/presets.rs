@@ -274,7 +274,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             crate::backend::update_config(|c| {
                 if look.lut.is_some() { c.studio.lut = look.lut.clone(); }
                 c.studio.lut_on = look.lut.is_some();
-                c.studio.lut_strength = look.strength;
+                c.studio.set_lut_strength(look.strength);
             });
             applied += 1;
         }

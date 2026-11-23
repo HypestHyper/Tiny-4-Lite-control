@@ -119,7 +119,7 @@ pub fn list() -> Vec<String> {
 pub fn remove(name: &str) -> Result<(), String> {
     if name.contains('/') { return Err("Not a LUT name.".into()); }
     std::fs::remove_file(lut_dir().join(name)).map_err(|e| format!("Could not remove {name}: {e}"))?;
-    crate::backend::update_config(|c| c.studio.lut_favourites.retain(|f| f != name));
+    crate::backend::update_config(|c| { c.studio.lut_favourites.retain(|f| f != name); c.studio.lut_strengths.remove(name); });
     Ok(())
 }
 

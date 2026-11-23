@@ -4,6 +4,7 @@ pub mod app;
 pub mod devtools;
 pub mod full;
 pub mod gesture_draw;
+mod gesture_paths;
 pub mod gimbal_model;
 pub mod icons;
 pub mod joystick;

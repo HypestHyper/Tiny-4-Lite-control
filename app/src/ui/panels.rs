@@ -680,7 +680,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
             let slot = timer.clone();
             *timer.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(600), move || {
                 slot.borrow_mut().take();
-                update_config(|c| c.studio.lut_strength = value);
+                update_config(|c| c.studio.set_lut_strength(value));
             }));
         });
     }
@@ -723,7 +723,8 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
         picker.connect_selected_notify(move |picker| {
             if filling.get() { return; }
             let Some(name) = names.borrow().get(picker.selected() as usize).cloned() else { return };
-            update_config(|c| c.studio.lut = Some(name.clone()));
+            // Picked at the strength last set for it; whether it is on stays as it was.
+            update_config(|c| { let on = c.studio.lut_on; c.studio.pick_lut(&name); c.studio.lut_on = on; });
             switch.set_sensitive(true);
             if current_config().studio.lut_on { store.toast(&format!("LUT {name}")); }
         });
@@ -760,7 +761,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
                     }
                 }
                 if let Some(name) = last {
-                    update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
+                    update_config(|c| c.studio.pick_lut(&name));
                     fill(Some(&name));
                     switch.set_active(true);
                     store.toast(&format!("LUT {name} added"));
@@ -820,7 +821,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
             match crate::lut::remove(&name) {
                 Ok(()) => {
                     let next = crate::lut::list().into_iter().next();
-                    update_config(|c| { c.studio.lut = next.clone(); if next.is_none() { c.studio.lut_on = false; } });
+                    update_config(|c| { let on = c.studio.lut_on; match &next { Some(n) => { c.studio.pick_lut(n); c.studio.lut_on = on; } None => { c.studio.lut = None; c.studio.lut_on = false; } } });
                     if next.is_none() { switch.set_active(false); }
                     fill(next.as_deref());
                     store.toast(&format!("Removed {name}"));

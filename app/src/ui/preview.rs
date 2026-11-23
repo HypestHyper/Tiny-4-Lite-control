@@ -262,7 +262,7 @@ impl PreviewHub {
                 match p.selected() {
                     0 => { update_config(|c| c.studio.lut_on = false); store.toast("No LUT"); }
                     i => if let Some(name) = names.borrow().get(i as usize - 1).cloned() {
-                        update_config(|c| { c.studio.lut = Some(name.clone()); c.studio.lut_on = true; });
+                        update_config(|c| c.studio.pick_lut(&name));
                         store.toast(&format!("Look: {}", crate::lut::label(&name)));
                     },
                 }
@@ -754,14 +754,14 @@ pub fn set_peaking_strictness(value: u8) {
     update_config(|c| c.preview_peaking_strictness = value.min(100));
 }
 
-/// What strictness means: how narrow an edge must be to count as in focus (the brightness step over two
-/// pixels against the step over six: 50% at 0, 90% at 100), and the smallest step that counts at all (12 at
-/// 0, 40 at 100), so noise and faint texture are left alone.
-fn peaking_levels(strictness: u8) -> (u32, u16) {
+/// What strictness means: how much steeper an edge must be than the same edge slightly blurred (2.0 times at
+/// 0, 3.3 at 100; a perfect step is about 3.1, a webcam's own sharpening makes its edges a little more), and
+/// the smallest step in brightness that counts (10 at 0, 30 at 100).
+fn peaking_levels(strictness: u8) -> (u32, i32) {
     let s = u32::from(strictness.min(100));
-    let narrow_percent = 50 + s * 40 / 100;
-    let floor = 12 + (s * 28 / 100) as u16;
-    (narrow_percent, floor)
+    let ratio_tenths = 20 + s * 13 / 100;
+    let floor = 10 + (s * 20 / 100) as i32;
+    (ratio_tenths, floor)
 }
 
 pub fn set_focus_peaking(on: bool) {
@@ -773,29 +773,50 @@ pub fn set_focus_peaking(on: bool) {
 const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
 
 /// Mark the edges that are in focus. Contrast alone does not say that: a blurred edge between a dark and a
-/// light thing is still a big step in brightness. What does is how narrow the step is. In focus, nearly the
-/// whole step happens across two pixels; out of focus it is spread over many, so the step across two pixels
-/// is only a small part of the step across six. Both directions are looked at, and the marks are drawn two
-/// pixels wide so they stay visible when the picture is shown smaller.
+/// light thing is still a big step in brightness. What does is how much an edge loses when the picture is
+/// blurred a little more. An edge in focus loses most of its steepness; one already out of focus hardly
+/// changes. So each pixel's steepness is compared with the steepness of a slightly blurred copy, which does
+/// not depend on contrast, nor much on the camera's own sharpening. The marks are drawn two pixels wide so
+/// they stay visible when the picture is shown smaller.
 fn focus_peaking(frame: &mut Frame) {
     let (w, h) = (frame.width as usize, frame.height as usize);
     if w < 8 || h < 8 || frame.rgb.len() < w * h * 3 { return; }
-    let luma: Vec<i16> = frame.rgb.chunks_exact(3).map(|p| ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as i16).collect();
-    let (narrow_percent, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
-    let floor = i32::from(floor);
-    let narrow_percent = narrow_percent as i32;
+    let luma: Vec<i32> = frame.rgb.chunks_exact(3).map(|p| (i32::from(p[0]) * 77 + i32::from(p[1]) * 150 + i32::from(p[2]) * 29) >> 8).collect();
+    // The blurred copy: three passes of a 5-pixel box each way, close to a Gaussian of about 2.5 pixels.
+    // Kept at 16 times the brightness, so the small steps survive the whole-number division.
+    let mut soft: Vec<i32> = luma.iter().map(|v| v * 16).collect();
+    let mut scratch = vec![0i32; w * h];
+    let at = |v: usize, d: isize, n: usize| (v as isize + d).clamp(0, n as isize - 1) as usize;
+    for _ in 0..3 {
+        for y in 0..h {
+            let row = y * w;
+            for x in 0..w { scratch[row + x] = (-2..=2).map(|d| soft[row + at(x, d, w)]).sum::<i32>() / 5; }
+        }
+        for y in 0..h {
+            for x in 0..w { soft[y * w + x] = (-2..=2).map(|d| scratch[at(y, d, h) * w + x]).sum::<i32>() / 5; }
+        }
+    }
+    let (ratio_tenths, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
+    let ratio_tenths = ratio_tenths as i32;
     let mut marks = vec![false; w * h];
-    let sharp = |narrow: i32, wide: i32| narrow >= floor && narrow * 100 >= wide * narrow_percent;
-    for y in 3..h - 3 {
-        for x in 3..w - 3 {
+    for y in 2..h - 2 {
+        for x in 2..w - 2 {
             let i = y * w + x;
-            let l = |k: usize| i32::from(luma[k]);
-            let (nx, wx) = ((l(i + 1) - l(i - 1)).abs(), (l(i + 3) - l(i - 3)).abs());
-            let (ny, wy) = ((l(i + w) - l(i - w)).abs(), (l(i + 3 * w) - l(i - 3 * w)).abs());
-            // Only the middle of the step: its two-pixel step is at least as big as its neighbours'.
-            let peak_x = nx >= (l(i + 2) - l(i)).abs() && nx >= (l(i) - l(i - 2)).abs();
-            let peak_y = ny >= (l(i + 2 * w) - l(i)).abs() && ny >= (l(i) - l(i - 2 * w)).abs();
-            if (peak_x && sharp(nx, wx)) || (peak_y && sharp(ny, wy)) { marks[i] = true; }
+            let fine_x = (luma[i + 1] - luma[i - 1]).abs();
+            let fine_y = (luma[i + w] - luma[i - w]).abs();
+            let fine = fine_x.max(fine_y);
+            if fine < floor { continue; }
+            let blurred16 = (soft[i + 1] - soft[i - 1]).abs().max((soft[i + w] - soft[i - w]).abs());
+            // A real edge at the blurred scale too (noise and fine grain vanish there), and much steeper
+            // than it.
+            if blurred16 < 4 * 16 || fine * 160 < blurred16 * ratio_tenths { continue; }
+            // Only the middle of the step, so the marks are thin lines.
+            let peak = if fine_x >= fine_y {
+                fine_x >= (luma[i + 2] - luma[i]).abs() && fine_x >= (luma[i] - luma[i - 2]).abs()
+            } else {
+                fine_y >= (luma[i + 2 * w] - luma[i]).abs() && fine_y >= (luma[i] - luma[i - 2 * w]).abs()
+            };
+            if peak { marks[i] = true; }
         }
     }
     for y in 0..h {
