@@ -88,6 +88,11 @@ pub fn scroller() -> gtk::ScrolledWindow {
 /// and always one at the middle of that range, so every slider shows where its middle is.
 fn mark_slider(scale: &gtk::Scale, spec: &crate::backend::registry::SliderSpec) {
     scale.clear_marks();
+    // A slider over stops is marked at the stops nearest its ticks.
+    if !spec.stops.is_empty() {
+        for (at, label) in &spec.ticks { scale.add_mark(spec.position_of(*at), gtk::PositionType::Bottom, Some(label)); }
+        return;
+    }
     let (min, max, step) = (spec.min, spec.max.max(spec.min + spec.step), spec.step.max(f64::EPSILON));
     let marks: Vec<(f64, String)> = spec.ticks.iter().filter(|(at, _)| (min..=max).contains(at)).map(|(at, label)| (*at, label.to_string())).collect();
     let middle = min + ((max - min) / 2.0 / step).round() * step;
@@ -394,7 +399,11 @@ impl SettingRow {
                 (Control::Menu { drop, values: Rc::default() }, true)
             }
             Kind::Slider(spec) => {
-                let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, spec.min, spec.max, spec.step.max(f64::EPSILON));
+                let scale = if spec.stops.is_empty() {
+                    gtk::Scale::with_range(gtk::Orientation::Horizontal, spec.min, spec.max, spec.step.max(f64::EPSILON))
+                } else {
+                    gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, (spec.stops.len().max(2) - 1) as f64, 1.0)
+                };
                 scale.set_draw_value(false);
                 scale.set_hexpand(true);
                 scale.set_round_digits(if spec.step < 1.0 { 2 } else { 0 });
@@ -455,8 +464,9 @@ impl SettingRow {
                 let value_label = value.clone();
                 scale.connect_value_changed(move |scale| {
                     let Some(row) = weak.upgrade() else { return };
-                    let v = scale.value();
                     let snapshot = row.store.snapshot();
+                    // On a slider over stops, the position is a stop; the value is what it stands for.
+                    let v = row.setting.slider(&snapshot).map(|spec| spec.value_at(scale.value())).unwrap_or(scale.value());
                     value_label.set_text(&row.setting.format(&snapshot, v));
                     if row.suppress.get() { return; }
                     let wire = if matches!(&row.setting.kind, Kind::Slider(s) if s.step < 1.0) { Value::Float(v) } else { Value::Int(v.round() as i64) };
@@ -477,7 +487,9 @@ impl SettingRow {
                 reset.connect_clicked(move |_| {
                     let Some(row) = weak.upgrade() else { return };
                     let snapshot = row.store.snapshot();
-                    if let Some(default) = row.setting.slider(&snapshot).and_then(|s| s.default) { scale_reset.set_value(default); }
+                    if let Some(spec) = row.setting.slider(&snapshot) {
+                        if let Some(default) = spec.default { scale_reset.set_value(spec.position_of(default)); }
+                    }
                 });
             }
         }
@@ -605,11 +617,14 @@ impl SettingRow {
             }
             Control::Slider { scale, value: label, reset } => {
                 if let Some(v) = value {
-                    scale.set_value(v.as_f64());
                     let snapshot = row.store.snapshot();
+                    let position = row.setting.slider(&snapshot).map(|spec| spec.position_of(v.as_f64())).unwrap_or(v.as_f64());
+                    scale.set_value(position);
                     label.set_text(&row.setting.format(&snapshot, v.as_f64()));
-                    let default = row.setting.slider(&snapshot).and_then(|s| s.default);
-                    reset.set_sensitive(default.is_some_and(|d| (d - v.as_f64()).abs() > f64::EPSILON));
+                    // Lit when not at the default (on a slider over stops, when not at the default's stop).
+                    let spec = row.setting.slider(&snapshot);
+                    let off_default = spec.as_ref().and_then(|s| s.default.map(|d| (s.position_of(d) - s.position_of(v.as_f64())).abs() > f64::EPSILON)).unwrap_or(false);
+                    reset.set_sensitive(off_default);
                 } else {
                     label.set_text("—");
                     reset.set_sensitive(false);
@@ -692,9 +707,15 @@ impl SettingRow {
                     let shown = row.shown_range.get();
                     if shown.0.is_nan() || shown != range {
                         row.suppress.set(true);
-                        scale.set_range(spec.min, spec.max.max(spec.min + spec.step));
-                        scale.adjustment().set_step_increment(spec.step);
-                        scale.adjustment().set_page_increment((spec.max - spec.min) / 10.0);
+                        if spec.stops.is_empty() {
+                            scale.set_range(spec.min, spec.max.max(spec.min + spec.step));
+                            scale.adjustment().set_step_increment(spec.step);
+                            scale.adjustment().set_page_increment((spec.max - spec.min) / 10.0);
+                        } else {
+                            scale.set_range(0.0, (spec.stops.len().max(2) - 1) as f64);
+                            scale.adjustment().set_step_increment(1.0);
+                            scale.adjustment().set_page_increment(3.0);
+                        }
                         mark_slider(scale, &spec);
                         row.suppress.set(false);
                         row.shown_range.set(range);

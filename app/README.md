@@ -123,6 +123,8 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **LUTs button.** While the Studio camera is on and has LUTs, a **LUTs** button sits left of the search button in the main window, in the quick-controls header, and on the picture of the popped-out preview (lit while a LUT is applied). It opens No LUT, the favourites, the other LUTs and the strength. In a narrow quick-controls window the header leaves out its title to make room. Each LUT remembers the strength last set for it.
 
+**Shutter speed.** The standard V4L2 control `exposure_time_absolute` (in 0.1 ms, 1/10000 s to 1/4 s), used while Exposure mode is Manual. The slider moves through the usual stops (1/10000 … 1/1000, 1/500 … 1/60, 1/50, 1/40, 1/30 … 1/4) evenly, rather than 2500 equal steps of which the useful ones would fill the first eighth; the command line still takes any value (`set shutter-speed 1/60`). A frame cannot be exposed longer than it lasts (1/60 s at 60 fps, 1/30 s at 30 fps).
+
 **HDR.** A switch in the Exposure card (and `tiny4lite-control set hdr on|off`). It sends the HDR command captured from OBSBOT's own app (selector `0x06`, `01 01 01` on, `01 01 00` off) and reads the state back from status byte `0x06`. Switching reconfigures the camera's sensor, so, following OBSBOT's guidance of 3 seconds between switches, the switch rests for 3 seconds after each change, and the command itself waits if it is sent again sooner. Some capture modes may not support HDR.
 
 **Folding cards.** Every card in the three tabs has an arrow at the right of its heading that folds it down to the heading, and opens it again. Folded cards stay folded the next time the app opens. Search results always show in full.

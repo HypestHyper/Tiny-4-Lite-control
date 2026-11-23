@@ -128,6 +128,25 @@ pub struct SliderSpec {
     pub default: Option<f64>,
     pub fmt: Fmt,
     pub ticks: Vec<(f64, &'static str)>,
+    /// When not empty, the slider moves through these values, evenly spaced, instead of every value in
+    /// the range (shutter speeds, which matter in proportion, not in equal steps). The setting's value is
+    /// still the value itself.
+    pub stops: Vec<f64>,
+}
+
+impl SliderSpec {
+    /// The position on the slider for `value`: the nearest stop (in proportion), or the value itself.
+    pub fn position_of(&self, value: f64) -> f64 {
+        if self.stops.is_empty() { return value; }
+        let distance = |stop: f64| (stop.max(1e-9).ln() - value.max(1e-9).ln()).abs();
+        self.stops.iter().enumerate().min_by(|a, b| distance(*a.1).total_cmp(&distance(*b.1))).map(|(i, _)| i as f64).unwrap_or(0.0)
+    }
+    /// The value at a slider position.
+    pub fn value_at(&self, position: f64) -> f64 {
+        if self.stops.is_empty() { return position; }
+        let index = (position.round().max(0.0) as usize).min(self.stops.len().saturating_sub(1));
+        self.stops.get(index).copied().unwrap_or(position)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -378,6 +397,8 @@ impl Setting {
             spec.min = control.min as f64;
             spec.max = control.max.max(control.min) as f64;
             spec.step = control.step.max(1) as f64;
+            let (low, high) = (spec.min, spec.max);
+            spec.stops.retain(|stop| (low..=high).contains(stop));
             // A default this app knows better (the driver reports gain's as 1; the camera's own is 33) wins
             // while it is inside the range the camera reports; otherwise the driver's default is used.
             let ours = spec.default.filter(|d| (spec.min..=spec.max).contains(d));
@@ -470,7 +491,7 @@ pub fn dependency_map() -> String {
 // ── Catalogue ─────────────────────────────────────────────────────────────
 
 fn slider(min: f64, max: f64, step: f64, fmt: Fmt) -> Kind {
-    Kind::Slider(SliderSpec { min, max, step, default: None, fmt, ticks: Vec::new() })
+    Kind::Slider(SliderSpec { min, max, step, default: None, fmt, ticks: Vec::new(), stops: Vec::new() })
 }
 
 /// A slider that rests at `value` when reset (the middle, for centred ones).
@@ -479,7 +500,18 @@ fn resting_at(kind: Kind, value: f64) -> Kind {
 }
 
 fn ticked(min: f64, max: f64, step: f64, fmt: Fmt, ticks: Vec<(f64, &'static str)>) -> Kind {
-    Kind::Slider(SliderSpec { min, max, step, default: None, fmt, ticks })
+    Kind::Slider(SliderSpec { min, max, step, default: None, fmt, ticks, stops: Vec::new() })
+}
+
+/// The shutter speed slider: the usual photographic stops the camera can do (its control is in units of
+/// 0.1 ms, from 1/10000 s to 1/4 s), evenly spaced, rather than 2500 equal steps of which the useful ones
+/// (1/1000 to 1/30 s) would be the first eighth. Marks at 1/1000, 1/60 and 1/30.
+fn shutter_stops() -> Kind {
+    // In units of 0.1 ms: 1/10000, 1/5000, 1/2500, 1/2000, 1/1250, 1/1000, 1/500, 1/400, 1/250, 1/200, 1/125,
+    // 1/120, 1/100, 1/80, 1/60, 1/50, 1/40, 1/30, 1/20, 1/15, 1/10, 1/8, 1/4.
+    let stops = vec![1.0, 2.0, 4.0, 5.0, 8.0, 10.0, 20.0, 25.0, 40.0, 50.0, 80.0, 83.0, 100.0, 125.0, 167.0, 200.0, 250.0, 333.0, 500.0, 667.0, 1000.0, 1250.0, 2500.0];
+    Kind::Slider(SliderSpec { min: 1.0, max: 2500.0, step: 1.0, default: Some(333.0), fmt: Fmt::Shutter,
+        ticks: vec![(10.0, "1/1000"), (167.0, "1/60"), (333.0, "1/30")], stops })
 }
 
 fn flag(value: Option<bool>) -> Option<Value> { value.map(Value::Bool) }
@@ -534,9 +566,9 @@ fn build() -> Vec<Setting> {
             .needs(ae, Cond::Is(0), "Set Exposure mode to Auto to use exposure compensation.")
             .info("Makes automatic exposure brighter or darker, in steps of a third of a stop from −3 to +3 EV. Works while Exposure mode is Auto."),
         Setting::v4l2("exposure_time_absolute", "v4l2:exposure_time_absolute", Exposure, "Shutter speed",
-            "How long each frame is exposed.", slider(1.0, 2500.0, 1.0, Fmt::Shutter))
+            "How long each frame is exposed.", shutter_stops())
             .needs(ae, Cond::Is(1), "Set Exposure mode to Manual to choose a shutter speed.")
-            .info("Shorter times freeze motion and darken the picture. Very long times need a frame rate low enough to fit them."),
+            .info("Shorter times freeze motion and darken the picture. A frame cannot be exposed for longer than it lasts: at 60 fps, up to 1/60 s; at 30 fps, up to 1/30 s. Longer times make the camera lower its frame rate, or have no further effect. Under mains lighting, 1/50 or 1/100 s (50 Hz) and 1/60 or 1/120 s (60 Hz) avoid banding."),
         Setting::v4l2("gain", "v4l2:gain", Exposure, "Sensor gain",
             "Brightens the picture, with more noise.", resting_at(slider(1.0, 64.0, 1.0, Fmt::Plain), 33.0)),
         Setting::v4l2("power_line_frequency", "v4l2:power_line_frequency", Exposure, "Anti-flicker",
@@ -1012,6 +1044,15 @@ mod tests {
     #[test]
     fn shutter_speed_formats_as_a_fraction() {
         assert_eq!(Fmt::Shutter.format(330.0), "1/30 s");
+        // The shutter slider moves through stops; the camera's own value shows at the nearest one.
+        let Kind::Slider(spec) = shutter_stops() else { panic!("a slider") };
+        assert_eq!(spec.value_at(spec.position_of(330.0)), 333.0);
+        assert_eq!(spec.value_at(spec.position_of(167.0)), 167.0);
+        assert_eq!(spec.value_at(0.0), 1.0);
+        assert_eq!(spec.value_at(99.0), 2500.0);
+        assert_eq!(Fmt::Shutter.format(83.0), "1/120 s");
+        // Every stop is a whole number of the camera's units, inside its range.
+        assert!(spec.stops.iter().all(|s| s.fract() == 0.0 && (1.0..=2500.0).contains(s)));
         assert_eq!(Fmt::Shutter.format(167.0), "1/60 s");
         assert_eq!(Fmt::Shutter.format(2500.0), "1/4 s");
         assert_eq!(Fmt::Ev.format(9.0), "0.0 EV");
