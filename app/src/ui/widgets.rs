@@ -117,6 +117,20 @@ pub fn lock_wheel(widget: &impl IsA<gtk::Widget>) {
     widget.add_controller(controller);
 }
 
+/// The app's own icon (the same as in the app menu), at `size` pixels: for the top-left of the windows.
+pub fn app_logo(size: i32) -> gtk::Picture {
+    static PNG: &[u8] = include_bytes!("../../assets/tiny4lite-control-128.png");
+    let picture = gtk::Picture::new();
+    if let Ok(texture) = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(PNG)) { picture.set_paintable(Some(&texture)); }
+    picture.set_size_request(size, size);
+    picture.set_can_shrink(true);
+    picture.set_halign(gtk::Align::Center);
+    picture.set_valign(gtk::Align::Center);
+    picture.add_css_class("app-logo");
+    picture.set_accessible_role(gtk::AccessibleRole::Presentation);
+    picture
+}
+
 /// Let a card fold down to its heading: an arrow at the right of the heading hides or shows the rest. The
 /// choice is remembered by the card's title. Returns the box the card's content goes in.
 pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {

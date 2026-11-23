@@ -1,9 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4.4 11.6 H11.6 L12.2 14 H3.8 Z"/>
-    <rect x="2.6" y="1.8" width="7.6" height="6.8" rx="2.4"/>
-    <rect x="10.9" y="3.4" width="2.2" height="4" rx="1.1"/>
-    <path d="M12 7.4 V11.6"/>
-    <circle cx="6.4" cy="5.2" r="1.7"/>
+  <!-- The camera from the front, traced from the Tiny 2 Lite: head with its tilt motor, arm, two-step base. -->
+  <g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" transform="translate(-2.4 -2.3) scale(0.081)">
+    <path d="M73 147 H183 L190 154 V204 Q190 214 180 214 H76 Q66 214 66 204 V154 Z" stroke-width="15"/>
+    <path d="M78 147 V137 H178 V147" stroke-width="15"/>
+    <path d="M161 137 V113 M179 113 V137" stroke-width="15"/>
+    <path d="M161 47 H175 Q185 47 185 57 V103 Q185 113 175 113 H161" stroke-width="15"/>
+    <rect x="71" y="41" width="90" height="76" rx="26" stroke-width="15"/>
+    <circle cx="112" cy="79" r="13" stroke-width="13"/>
   </g>
 </svg>

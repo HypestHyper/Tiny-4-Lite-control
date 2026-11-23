@@ -5,18 +5,19 @@
       <stop offset="1" stop-color="#151921"/>
     </linearGradient>
   </defs>
-  <!-- Tile: rounded corners like the other apps in the family -->
   <rect x="4" y="4" width="248" height="248" rx="56" fill="url(#bg)"/>
   <rect x="5" y="5" width="246" height="246" rx="55" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
-  <!-- The camera from the front, outline only: base, arm and motor on the right, head, lens -->
-  <g fill="none" stroke="#eef2f6" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M80 184 H188 L196 214 H72 Z"/>
-    <path d="M184 128 V184"/>
-    <rect x="62" y="52" width="104" height="92" rx="30"/>
-    <rect x="170" y="72" width="28" height="56" rx="13"/>
-    <circle cx="114" cy="98" r="14"/>
+  <!-- Traced from the front view of the Tiny 2 Lite: head with its tilt motor on the right, the arm, and a
+       two-step base, all in the camera's own proportions; the base is centred under the whole camera. -->
+  <g fill="none" stroke="#eef2f6" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M73 147 H183 L190 154 V204 Q190 214 180 214 H76 Q66 214 66 204 V154 Z"/>
+    <path d="M78 147 V137 H178 V147"/>
+    <path d="M161 137 V113 M179 113 V137"/>
+    <path d="M161 47 H175 Q185 47 185 57 V103 Q185 113 175 113 H161"/>
+    <rect x="71" y="41" width="90" height="76" rx="26"/>
+    <circle cx="112" cy="79" r="6"/>
   </g>
-  <!-- The red ring round the lens -->
-  <circle cx="114" cy="98" r="30" fill="none" stroke="#ff4b4b" stroke-width="9"/>
-  <circle cx="86" cy="70" r="4.5" fill="#eef2f6"/>
+  <!-- The red ring round the edge of the face, as on the camera, and the lens ring -->
+  <rect x="78" y="48" width="76" height="62" rx="19.5" fill="none" stroke="#ff4b4b" stroke-width="5"/>
+  <circle cx="112" cy="79" r="17" fill="none" stroke="#eef2f6" stroke-opacity="0.5" stroke-width="4"/>
 </svg>

@@ -73,15 +73,9 @@ impl FullWindow {
         // ── Header ──
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         header.add_css_class("header");
-        let logo = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        logo.add_css_class("logo-tile");
+        // The app's own icon, as in the app menu.
+        let logo = widgets::app_logo(40);
         logo.set_halign(gtk::Align::Start);
-        logo.set_valign(gtk::Align::Center);
-        let logo_icon = widgets::icon("videocam");
-        logo_icon.set_halign(gtk::Align::Center);
-        logo_icon.set_hexpand(true);
-        logo.set_hexpand(false);
-        logo.append(&logo_icon);
         let title = widgets::line("Tiny 2 Lite", &["app-title"]);
         title.set_valign(gtk::Align::Center);
         let chip = StatusChip::new();
