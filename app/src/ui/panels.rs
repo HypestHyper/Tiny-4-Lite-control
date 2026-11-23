@@ -23,14 +23,15 @@ fn card(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     head.append(&widgets::icon(glyph));
     head.append(&widgets::text(title, &["group-title"]));
     card.append(&head);
+    let content = widgets::collapsible(&card, &head, title);
     if !subtitle.is_empty() {
         let sub = widgets::text(subtitle, &["setting-summary"]);
         sub.set_margin_top(2);
-        card.append(&sub);
+        content.append(&sub);
     }
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.set_margin_top(12);
-    card.append(&body);
+    content.append(&body);
     (card, body)
 }
 

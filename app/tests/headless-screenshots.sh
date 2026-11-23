@@ -90,6 +90,8 @@ for page in presets device; do scenario "page-$page" TINY4LITE_UI_TEST_PAGE=$pag
 # Favourite LUTs: the LUTs button (main and quick-controls headers), and the star on the Device tab.
 LOOKS_CONFIG=$'[studio]\nenabled = true\nlut = "Warm.cube"\nlut_on = true\nlut_favourites = ["Warm.cube", "Teal.cube"]'
 ( export START_LUTS="Warm.cube Teal.cube Plain.cube" START_CONFIG="$LOOKS_CONFIG"; scenario full-looks; scenario page-device-looks TINY4LITE_UI_TEST_PAGE=device; scenario slim-looks -- --slim )
+# Folded cards: Exposure and White balance folded on the Camera tab.
+START_CONFIG='collapsed_cards = ["Exposure", "White balance"]' scenario full-folded
 scenario full-light TINY4LITE_UI_TEST_THEME=light
 scenario full-wide TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
 scenario full-wide-manual TINY4LITE_UI_TEST_STATE=manual TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000

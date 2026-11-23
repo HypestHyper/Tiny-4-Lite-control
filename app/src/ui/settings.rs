@@ -67,7 +67,7 @@ impl Masonry {
 }
 
 /// A card holding the rows of one group.
-pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], density: Density, keep: &Rows) -> (gtk::Box, usize) {
+pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], density: Density, keep: &Rows, foldable: bool) -> (gtk::Box, usize) {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("card");
     card.set_accessible_role(gtk::AccessibleRole::Group);
@@ -79,18 +79,20 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
     head.append(&widgets::icon(group.icon()));
     head.append(&widgets::text(group.title(), &["group-title"]));
     card.append(&head);
+    // In a tab the card can be folded away; in search results it always shows.
+    let content = if foldable { widgets::collapsible(&card, &head, group.title()) } else { card.clone() };
 
     let mut first = true;
     for setting in settings {
         if !first {
             let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             divider.add_css_class("divider");
-            card.append(&divider);
+            content.append(&divider);
         }
         first = false;
         // Camera power is two plain buttons, as on the Camera controls card, not a switch.
         if setting.id == "obsbot:sleep" {
-            card.append(&super::joystick::power_buttons(store, None));
+            content.append(&super::joystick::power_buttons(store, None));
             continue;
         }
         let row = SettingRow::new(store, setting, density);
@@ -103,11 +105,11 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
             row.widget().set_hexpand(true);
             line.append(&picture);
             line.append(row.widget());
-            card.append(&line);
+            content.append(&line);
             keep.borrow_mut().push(row);
             continue;
         }
-        card.append(row.widget());
+        content.append(row.widget());
         keep.borrow_mut().push(row);
     }
     (card, settings.len() * 2 + 2)
@@ -131,7 +133,7 @@ pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
     for group in Group::ALL.iter().copied().filter(|g| g.tab() == tab && *g != Group::Zoom) {
         let settings = settings_in(group);
         if settings.is_empty() { continue; }
-        let (card, weight) = group_card(store, group, &settings, Density::Full, keep);
+        let (card, weight) = group_card(store, group, &settings, Density::Full, keep, true);
         masonry.add(&card, weight);
     }
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -160,7 +162,7 @@ pub fn search_results(store: &Store, query: &str, keep: &Rows) -> gtk::Box {
         let found: Vec<&'static Setting> = registry::all().iter().filter(|s| s.group == group && matches(s)).collect();
         if found.is_empty() { continue; }
         any = true;
-        let (card, _) = group_card(store, group, &found, Density::Full, keep);
+        let (card, _) = group_card(store, group, &found, Density::Full, keep, false);
         column.append(&card);
     }
     if !any {
@@ -182,5 +184,5 @@ pub fn discovered_card(store: &Store, keep: &Rows) -> Option<gtk::Box> {
     let extra = registry::discovered(&snapshot);
     if extra.is_empty() { return None; }
     let leaked: Vec<&'static Setting> = extra.into_iter().map(|s| &*Box::leak(Box::new(s))).collect();
-    Some(group_card(store, Group::Other, &leaked, Density::Full, keep).0)
+    Some(group_card(store, Group::Other, &leaked, Density::Full, keep, true).0)
 }

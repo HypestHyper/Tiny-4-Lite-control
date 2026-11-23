@@ -134,6 +134,9 @@ pub struct AppConfig {
     pub pan_limit_high: f64,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
+    /// Cards folded down to their heading, by title.
+    #[serde(default)]
+    pub collapsed_cards: Vec<String>,
     /// Removing the app took the background service with it: installing again brings it back.
     #[serde(default)]
     pub service_removed_with_app: bool,
@@ -283,6 +286,7 @@ impl Default for AppConfig {
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,
             service_setup_dismissed: false,
+            collapsed_cards: Vec::new(),
             service_removed_with_app: false,
             quick_presets: None,
             pan_limit: true,

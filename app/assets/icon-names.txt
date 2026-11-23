@@ -49,3 +49,5 @@ memory
 star
 photo_filter
 install_desktop
+expand_more
+expand_less

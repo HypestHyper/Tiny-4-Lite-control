@@ -117,6 +117,49 @@ pub fn lock_wheel(widget: &impl IsA<gtk::Widget>) {
     widget.add_controller(controller);
 }
 
+/// Let a card fold down to its heading: an arrow at the right of the heading hides or shows the rest. The
+/// choice is remembered by the card's title. Returns the box the card's content goes in.
+pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let reveal = gtk::Revealer::new();
+    reveal.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    reveal.set_transition_duration(180);
+    reveal.set_child(Some(&content));
+    card.append(&reveal);
+    let folded = crate::backend::current_config().collapsed_cards.iter().any(|t| t == title);
+    reveal.set_reveal_child(!folded);
+    if folded { card.add_css_class("folded"); }
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    head.append(&spacer);
+    let arrow = icon_button(if folded { "expand_more" } else { "expand_less" }, "", true);
+    arrow.add_css_class("flat-icon");
+    arrow.add_css_class("fold");
+    let show = |arrow: &gtk::Button, folded: bool, title: &str| {
+        if let Some(glyph) = arrow.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
+            if folded { set_icon(&glyph, "expand_more"); } else { set_icon(&glyph, "expand_less"); }
+        }
+        let words = if folded { format!("Show {title}") } else { format!("Fold {title} away") };
+        arrow.set_tooltip_text(Some(&words));
+        label_accessible(arrow, &words);
+    };
+    show(&arrow, folded, title);
+    head.append(&arrow);
+    let title = title.to_string();
+    let card = card.clone();
+    arrow.connect_clicked(move |arrow| {
+        let folded = reveal.reveals_child();
+        reveal.set_reveal_child(!folded);
+        if folded { card.add_css_class("folded"); } else { card.remove_css_class("folded"); }
+        show(arrow, folded, &title);
+        crate::backend::update_config(|c| {
+            c.collapsed_cards.retain(|t| t != &title);
+            if folded { c.collapsed_cards.push(title.clone()); }
+        });
+    });
+    content
+}
+
 /// An "i" button with a popover. Used instead of long help text in rows.
 pub fn info_button(title: &str, paragraphs: &[String]) -> gtk::Button {
     let body = gtk::Box::new(gtk::Orientation::Vertical, 8);

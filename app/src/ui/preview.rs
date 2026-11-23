@@ -225,7 +225,7 @@ impl PreviewHub {
         slider.set_size_request(110, -1);
         slider.set_value(f64::from(PEAKING_STRICTNESS.load(Ordering::Relaxed)));
         slider.add_css_class("on-stage-slider");
-        slider.set_tooltip_text(Some("Strictness: to the right, only the sharpest edges are outlined"));
+        slider.set_tooltip_text(Some("Strictness: to the right, only what is nearly as sharp as the sharpest part of the picture is outlined"));
         widgets::label_accessible(&slider, "Focus peaking strictness");
         slider.connect_value_changed(|s| set_peaking_strictness(s.value().round() as u8));
         let reveal = gtk::Revealer::new();
@@ -692,14 +692,10 @@ pub fn set_peaking_strictness(value: u8) {
     update_config(|c| c.preview_peaking_strictness = value.min(100));
 }
 
-/// What strictness means: how much steeper an edge must be than the same edge slightly blurred (2.0 times at
-/// 0, 3.3 at 100; a perfect step is about 3.1, a webcam's own sharpening makes its edges a little more), and
-/// the smallest step in brightness that counts (10 at 0, 30 at 100).
-fn peaking_levels(strictness: u8) -> (u32, i32) {
-    let s = u32::from(strictness.min(100));
-    let ratio_tenths = 20 + s * 13 / 100;
-    let floor = 10 + (s * 20 / 100) as i32;
-    (ratio_tenths, floor)
+/// What strictness means: how close to the sharpest part of the picture a region must be to be marked
+/// (60% as sharp at 0, 95% at 100).
+fn peaking_closeness(strictness: u8) -> f32 {
+    0.6 + f32::from(strictness.min(100)) * 0.35 / 100.0
 }
 
 pub fn set_focus_peaking(on: bool) {
@@ -710,15 +706,25 @@ pub fn set_focus_peaking(on: bool) {
 /// The colour edges in focus are painted.
 const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
 
-/// Mark the edges that are in focus. Contrast alone does not say that: a blurred edge between a dark and a
-/// light thing is still a big step in brightness. What does is how much an edge loses when the picture is
-/// blurred a little more. An edge in focus loses most of its steepness; one already out of focus hardly
-/// changes. So each pixel's steepness is compared with the steepness of a slightly blurred copy, which does
-/// not depend on contrast, nor much on the camera's own sharpening. The marks are drawn two pixels wide so
-/// they stay visible when the picture is shown smaller.
+/// Size of the squares sharpness is judged in, in pixels.
+const PEAK_BLOCK: usize = 16;
+/// How much sharper than its blurred copy a region must be before anything is called in focus: a perfect
+/// step is about 2.1 (a webcam's own sharpening adds to that), a picture blurred all over about 1.4.
+const PEAK_FLOOR: f32 = 1.7;
+
+/// Mark the edges in the part of the picture that is in focus.
+///
+/// A webcam has a deep depth of field, so most of the picture is nearly sharp, and contrast alone says
+/// nothing (a blurred edge between something dark and something light is still a big step). What does
+/// change with focus is how much of an edge's steepness is fine detail: blurring the picture a little more
+/// takes most of the steepness out of an edge in focus, and hardly changes one that is already soft. That
+/// ratio (of the edges' energy, the squared steepness, so a wide soft edge cannot add up to a narrow one)
+/// is measured over squares of 16 pixels (and their neighbours), which evens out noise and the
+/// camera's compression, and does not depend on contrast. Squares nearly as sharp as the sharpest part of the
+/// picture are the plane in focus; their edges are outlined. A picture blurred all over is not marked.
 fn focus_peaking(frame: &mut Frame) {
     let (w, h) = (frame.width as usize, frame.height as usize);
-    if w < 8 || h < 8 || frame.rgb.len() < w * h * 3 { return; }
+    if w < 4 * PEAK_BLOCK || h < 2 * PEAK_BLOCK || frame.rgb.len() < w * h * 3 { return; }
     let luma: Vec<i32> = frame.rgb.chunks_exact(3).map(|p| (i32::from(p[0]) * 77 + i32::from(p[1]) * 150 + i32::from(p[2]) * 29) >> 8).collect();
     // The blurred copy: three passes of a 5-pixel box each way, close to a Gaussian of about 2.5 pixels.
     // Kept at 16 times the brightness, so the small steps survive the whole-number division.
@@ -734,25 +740,65 @@ fn focus_peaking(frame: &mut Frame) {
             for x in 0..w { soft[y * w + x] = (-2..=2).map(|d| scratch[at(y, d, h) * w + x]).sum::<i32>() / 5; }
         }
     }
-    let (ratio_tenths, floor) = peaking_levels(PEAKING_STRICTNESS.load(Ordering::Relaxed));
-    let ratio_tenths = ratio_tenths as i32;
+    // Per pixel: steepness in the picture (×16, like the blurred copy) and in the blurred copy.
+    let mut fine = vec![0i32; w * h];
+    let mut coarse = vec![0i32; w * h];
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x;
+            fine[i] = 16 * (luma[i + 1] - luma[i - 1]).abs().max((luma[i + w] - luma[i - w]).abs());
+            coarse[i] = (soft[i + 1] - soft[i - 1]).abs().max((soft[i + w] - soft[i - w]).abs());
+        }
+    }
+    // Per square: the steepness of its edges in both, and how many edge pixels it has.
+    let (bw, bh) = (w / PEAK_BLOCK, h / PEAK_BLOCK);
+    let mut sums = vec![(0i64, 0i64, 0u32); bw * bh];
+    for y in 0..bh * PEAK_BLOCK {
+        for x in 0..bw * PEAK_BLOCK {
+            let i = y * w + x;
+            // An edge at the coarse scale: noise and fine grain do not count.
+            if coarse[i] < 4 * 16 { continue; }
+            let cell = &mut sums[(y / PEAK_BLOCK) * bw + x / PEAK_BLOCK];
+            cell.0 += i64::from(fine[i]) * i64::from(fine[i]);
+            cell.1 += i64::from(coarse[i]) * i64::from(coarse[i]);
+            cell.2 += 1;
+        }
+    }
+    // Sharpness of each square, with its neighbours, so one noisy square does not decide.
+    let mut sharpness = vec![None::<f32>; bw * bh];
+    for by in 0..bh {
+        for bx in 0..bw {
+            if sums[by * bw + bx].2 < 4 { continue; }
+            let (mut f, mut c, mut n) = (0i64, 0i64, 0u32);
+            for ny in by.saturating_sub(1)..(by + 2).min(bh) {
+                for nx in bx.saturating_sub(1)..(bx + 2).min(bw) {
+                    let cell = sums[ny * bw + nx];
+                    if cell.2 >= 4 { f += cell.0; c += cell.1; n += cell.2; }
+                }
+            }
+            if n as usize >= 3 * PEAK_BLOCK && c > 0 { sharpness[by * bw + bx] = Some((f as f64 / c as f64).sqrt() as f32); }
+        }
+    }
+    // The sharpest part of the picture: the 90th percentile, so a few odd squares do not set it.
+    let mut known: Vec<f32> = sharpness.iter().flatten().copied().collect();
+    if known.is_empty() { return; }
+    known.sort_by(|a, b| a.total_cmp(b));
+    let best = known[(known.len() * 9 / 10).min(known.len() - 1)];
+    let threshold = (best * peaking_closeness(PEAKING_STRICTNESS.load(Ordering::Relaxed))).max(PEAK_FLOOR);
+    // In the squares in focus, outline the edges: the middle of each step, two pixels wide.
     let mut marks = vec![false; w * h];
     for y in 2..h - 2 {
         for x in 2..w - 2 {
+            let Some(s) = sharpness.get((y / PEAK_BLOCK).min(bh - 1) * bw + (x / PEAK_BLOCK).min(bw - 1)).copied().flatten() else { continue };
+            if s < threshold { continue; }
             let i = y * w + x;
-            let fine_x = (luma[i + 1] - luma[i - 1]).abs();
-            let fine_y = (luma[i + w] - luma[i - w]).abs();
-            let fine = fine_x.max(fine_y);
-            if fine < floor { continue; }
-            let blurred16 = (soft[i + 1] - soft[i - 1]).abs().max((soft[i + w] - soft[i - w]).abs());
-            // A real edge at the blurred scale too (noise and fine grain vanish there), and much steeper
-            // than it.
-            if blurred16 < 4 * 16 || fine * 160 < blurred16 * ratio_tenths { continue; }
-            // Only the middle of the step, so the marks are thin lines.
-            let peak = if fine_x >= fine_y {
-                fine_x >= (luma[i + 2] - luma[i]).abs() && fine_x >= (luma[i] - luma[i - 2]).abs()
+            if fine[i] < 16 * 16 || fine[i] * 10 < coarse[i] * 15 { continue; }
+            let fx = (luma[i + 1] - luma[i - 1]).abs();
+            let fy = (luma[i + w] - luma[i - w]).abs();
+            let peak = if fx >= fy {
+                fx >= (luma[i + 2] - luma[i]).abs() && fx >= (luma[i] - luma[i - 2]).abs()
             } else {
-                fine_y >= (luma[i + 2 * w] - luma[i]).abs() && fine_y >= (luma[i] - luma[i - 2 * w]).abs()
+                fy >= (luma[i + 2 * w] - luma[i]).abs() && fy >= (luma[i] - luma[i - 2 * w]).abs()
             };
             if peak { marks[i] = true; }
         }
@@ -929,5 +975,22 @@ mod peaking_tests {
         let mut blurred = frame(64, 32, |x, _| (20 + (x - 26).clamp(0, 12) * 17) as u8);
         focus_peaking(&mut blurred);
         assert_eq!(green(&blurred), 0, "a blurred edge is not marked");
+    }
+
+    #[test]
+    fn only_the_part_in_focus_is_marked() {
+        // Bars across the picture: hard edges on the left, the same bars blurred on the right.
+        let bars = |x: i32| -> f64 {
+            let phase = (x % 32) as f64;
+            let soft = x >= 160;
+            let edge = |d: f64| if soft { (d / 6.0 + 0.5).clamp(0.0, 1.0) } else if d >= 0.0 { 1.0 } else { 0.0 };
+            40.0 + 180.0 * (edge(phase - 8.0) - edge(phase - 24.0))
+        };
+        let mut picture = frame(320, 96, |x, _| bars(x).round() as u8);
+        focus_peaking(&mut picture);
+        let marked = |from: i32, to: i32| (0..96).flat_map(|y| (from..to).map(move |x| (y * 320 + x) as usize * 3))
+            .filter(|i| picture.rgb[*i..*i + 3] == PEAK_COLOUR).count();
+        assert!(marked(16, 144) > 100, "the sharp side is outlined");
+        assert_eq!(marked(176, 304), 0, "the blurred side is not");
     }
 }
