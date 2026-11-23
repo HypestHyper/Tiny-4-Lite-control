@@ -600,7 +600,7 @@ pub fn sleep_timer_card() -> gtk::Box {
         Box::new({ let minutes = minutes.clone(); move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); } })));
     body.append(&minutes);
     body.append(&switch_row("Sleep when the computer shuts down",
-        "Also when you log out, so the camera is not left on.",
+        "Also at a reboot and when you log out, so the camera is not left on. Done as soon as the shutdown is announced, while the computer is still fully up (needs dbus-monitor and systemd-inhibit, or elogind-inhibit; without them, when the service is stopped).",
         config.service.sleep_on_shutdown,
         Box::new(|on| update_config(|c| c.service.sleep_on_shutdown = on))));
     body.append(&switch_row("Sleep when the computer suspends",

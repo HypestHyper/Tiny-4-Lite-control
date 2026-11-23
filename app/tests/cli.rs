@@ -477,6 +477,38 @@ fn the_service_puts_the_camera_to_sleep_before_a_suspend() {
 }
 
 #[test]
+fn the_service_puts_the_camera_to_sleep_as_soon_as_a_shutdown_is_announced() {
+    use std::time::{Duration, Instant};
+    let run = Run::new("service-shutdown");
+    let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
+    assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "shutdown", "on"]).status.code(), Some(0));
+    // A stand-in for dbus-monitor: after a few seconds it prints what logind prints before a shutdown.
+    let monitor = "sleep 4; echo 'signal time=1.0 sender=:1.4 -> destination=(null destination) serial=9 path=/org/freedesktop/login1; interface=org.freedesktop.login1.Manager; member=PrepareForShutdown'; echo '   boolean true'; sleep 30";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tiny4lite-control"))
+        .args(["service", "run"])
+        .env("TINY4LITE_UI_TEST", "1")
+        .env("TINY4LITE_UI_TEST_LOG", &log)
+        .env("TINY4LITE_TEST_SUSPEND_MONITOR", monitor)
+        .env("XDG_CONFIG_HOME", &run.config)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env_remove("DISPLAY")
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    // Put to sleep on the announcement itself, while the service is still running (not only when stopped).
+    let slept = loop {
+        if std::fs::read_to_string(&log).unwrap_or_default().contains("sleep=on") { break true; }
+        if started.elapsed() > Duration::from_secs(20) { break false; }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let still_running = child.try_wait().unwrap().is_none();
+    let _ = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    let _ = child.wait();
+    assert!(slept && still_running, "expected sleep when the shutdown was announced (slept {slept}, running {still_running})");
+}
+
+#[test]
 fn a_capture_mode_waiting_for_a_free_camera_is_applied_by_the_service() {
     let run = Run::new("service-pending");
     let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));

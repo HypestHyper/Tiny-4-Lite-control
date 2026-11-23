@@ -374,7 +374,7 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let mut watcher: Option<crate::suspend::Watcher> = None;
     // The Studio camera (virtual, with filters), run while it is turned on.
     let mut studio = crate::studio::Studio::new();
-    let mut watching_suspend = false;
+    let mut watching = crate::suspend::Watch::default();
     let mut suspend_retry_at: Option<Instant> = None;
     // When the computer last woke from suspend, until the camera has been put back to sleep.
     let resumed_at: std::sync::Arc<std::sync::Mutex<Option<Instant>>> = Default::default();
@@ -399,28 +399,30 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                         if auto { format!("after {minutes} min") } else { "off".into() }, words(on_shutdown), words(on_suspend)));
                 }
             }
-            // Suspend is watched while it is wanted, and the watcher is let go when it is not.
-            let want_suspend = current_config().service.sleep_on_suspend;
+            // Suspend and shutdown are watched while they are wanted, and the watcher is let go when neither is.
+            let want = crate::suspend::Watch { suspend: current_config().service.sleep_on_suspend, shutdown: current_config().service.sleep_on_shutdown };
             // The watcher ends if its dbus-monitor does (the system bus restarted): start it again, but
             // not more than once a minute.
-            if watching_suspend && watcher.as_ref().is_some_and(|w| !w.alive())
+            if watching.any() && watcher.as_ref().is_some_and(|w| !w.alive())
                 && suspend_retry_at.is_none_or(|at| Instant::now() >= at) {
-                log("The suspend watcher stopped; starting it again.");
+                log("The suspend and shutdown watcher stopped; starting it again.");
                 watcher = None;
-                watching_suspend = false;
+                watching = crate::suspend::Watch::default();
                 suspend_retry_at = Some(Instant::now() + Duration::from_secs(60));
             }
-            if want_suspend != watching_suspend {
-                watching_suspend = want_suspend;
-                if want_suspend {
+            if want != watching {
+                watching = want;
+                watcher = None;
+                if want.any() {
                     let device = shared_device.clone();
                     let resumed = resumed_at.clone();
-                    match crate::suspend::Watcher::start(move || {
+                    match crate::suspend::Watcher::start(want, move |shutdown| {
                         let node = device.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        // One try only: there is no time for more before the computer sleeps.
+                        // One try only: there is no time for more before the computer sleeps or shuts down.
+                        let what = if shutdown { "shutting down" } else { "suspending" };
                         match node.as_deref().map(|d| backend::set_sleep_mode(d, true)) {
-                            Some(Ok(())) => log("The computer is suspending, so the camera was put to sleep."),
-                            Some(Err(error)) => log(&format!("The computer is suspending, but the camera could not be put to sleep: {error}")),
+                            Some(Ok(())) => log(&format!("The computer is {what}, so the camera was put to sleep.")),
+                            Some(Err(error)) => log(&format!("The computer is {what}, but the camera could not be put to sleep: {error}")),
                             None => {}
                         }
                     }, move || {
@@ -428,12 +430,19 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                         log("The computer woke up; the camera will be put back to sleep.");
                         *resumed.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                     }) {
-                        Ok(started) => { watcher = Some(started); log("Watching for suspend."); }
-                        Err(error) => { log(&format!("Suspend is not watched: {error}")); status.last_event = format!("Suspend is not watched: {error}"); status.last_event_at = now_unix(); }
+                        Ok(started) => {
+                            watcher = Some(started);
+                            log(&format!("Watching for {}.", match (want.suspend, want.shutdown) { (true, true) => "suspend and shutdown", (true, false) => "suspend", _ => "shutdown" }));
+                        }
+                        Err(error) => {
+                            // Shutdown still has the fallback: the camera is put to sleep when the service is stopped.
+                            log(&format!("Suspend and shutdown are not watched: {error}"));
+                            status.last_event = format!("Suspend and shutdown are not watched: {error}");
+                            status.last_event_at = now_unix();
+                        }
                     }
                 } else {
-                    watcher = None;
-                    log("No longer watching for suspend.");
+                    log("No longer watching for suspend or shutdown.");
                 }
             }
             let camera = device_override.clone().filter(|d| Path::new(d).exists() || backend::ui_test_mode())
@@ -500,7 +509,9 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     }
     drop(watcher);
     studio.stop_all();
-    // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep.
+    // Stopped by a signal (not just finished): a shutdown or a logout. Leave the camera asleep. (At a
+    // shutdown the watcher has normally done this already, earlier; sending it again does no harm, and it
+    // covers a logout, and systems where the watcher could not run.)
     if stop.load(std::sync::atomic::Ordering::Relaxed) && current_config().service.sleep_on_shutdown {
         if let Some(device) = last_device.as_deref().filter(|d| Path::new(d).exists() || backend::ui_test_mode()) {
             sleep_for_shutdown(device, &mut status);

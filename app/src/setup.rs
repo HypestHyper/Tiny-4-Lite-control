@@ -24,7 +24,7 @@ pub struct Requirement {
 pub const REQUIREMENTS: &[Requirement] = &[
     Requirement { name: "v4l2-ctl", programs: &["v4l2-ctl"], why: "talks to the camera's controls and picture", required: true },
     Requirement { name: "dbus-monitor", programs: &["dbus-monitor"], why: "notices the computer suspending, to put the camera to sleep first", required: false },
-    Requirement { name: "systemd-inhibit or elogind-inhibit", programs: &["systemd-inhibit", "elogind-inhibit"], why: "holds the suspend back for a moment while the camera is put to sleep", required: false },
+    Requirement { name: "systemd-inhibit or elogind-inhibit", programs: &["systemd-inhibit", "elogind-inhibit"], why: "holds a suspend or shutdown back for a moment while the camera is put to sleep", required: false },
 ];
 
 /// The package that provides a requirement on a package manager, where one can be named.
