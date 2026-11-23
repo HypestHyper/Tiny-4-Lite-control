@@ -404,6 +404,15 @@ impl Setting {
             let ours = spec.default.filter(|d| (spec.min..=spec.max).contains(d));
             spec.default = ours.or(Some(control.default_value as f64));
         }
+        // The shutter cannot stay open longer than a frame lasts: at 30 fps 1/30 s, at 60 fps 1/60 s. Longer
+        // stops change nothing (the camera keeps to the frame), so they are left off.
+        if self.id == "v4l2:exposure_time_absolute" {
+            if let Some(longest) = snapshot.config.video_mode.as_ref().filter(|m| m.frame_rate_milli > 0).map(|m| 10_000.0 * 1000.0 / f64::from(m.frame_rate_milli)) {
+                let kept: Vec<f64> = spec.stops.iter().copied().filter(|stop| *stop <= longest + 0.5).collect();
+                if kept.len() >= 2 { spec.stops = kept; }
+                spec.ticks.retain(|(at, _)| *at <= longest + 0.5);
+            }
+        }
         Some(spec)
     }
 
@@ -1053,6 +1062,14 @@ mod tests {
         assert_eq!(Fmt::Shutter.format(83.0), "1/120 s");
         // Every stop is a whole number of the camera's units, inside its range.
         assert!(spec.stops.iter().all(|s| s.fract() == 0.0 && (1.0..=2500.0).contains(s)));
+        // At 60 fps the slider ends at 1/60 s, at 30 fps at 1/30 s.
+        let shutter = find("v4l2:exposure_time_absolute").unwrap();
+        let mut snap = snapshot(vec![control("exposure_time_absolute", 330, false)]);
+        let mode = |fps: u32| Some(crate::config::VideoModeConfig { width: 1920, height: 1080, pixel_format: "MJPG".into(), frame_rate_milli: fps * 1000 });
+        snap.config.video_mode = mode(60);
+        assert_eq!(shutter.slider(&snap).unwrap().stops.last(), Some(&167.0));
+        snap.config.video_mode = mode(30);
+        assert_eq!(shutter.slider(&snap).unwrap().stops.last(), Some(&333.0));
         assert_eq!(Fmt::Shutter.format(167.0), "1/60 s");
         assert_eq!(Fmt::Shutter.format(2500.0), "1/4 s");
         assert_eq!(Fmt::Ev.format(9.0), "0.0 EV");

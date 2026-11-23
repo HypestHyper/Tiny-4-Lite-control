@@ -703,7 +703,8 @@ impl SettingRow {
             }
             Control::Slider { scale, .. } => {
                 if let Some(spec) = setting.slider(snapshot) {
-                    let range = (spec.min, spec.max, spec.step);
+                    // A slider over stops is rebuilt when its stops change (the shutter's, with the frame rate).
+                    let range = (spec.min, spec.max, if spec.stops.is_empty() { spec.step } else { 1000.0 + spec.stops.len() as f64 });
                     let shown = row.shown_range.get();
                     if shown.0.is_nan() || shown != range {
                         row.suppress.set(true);
