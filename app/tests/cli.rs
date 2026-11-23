@@ -479,7 +479,7 @@ fn the_service_puts_the_camera_to_sleep_before_a_suspend() {
 #[test]
 fn the_service_puts_the_camera_to_sleep_as_soon_as_a_shutdown_is_announced() {
     use std::time::{Duration, Instant};
-    let run = Run::new("service-shutdown");
+    let run = Run::new("service-shutdown-announced");
     let (log, runtime) = (run.config.join("commands.log"), run.config.join("runtime"));
     assert_eq!(service_run(&run, &runtime, &log, &["service", "set", "shutdown", "on"]).status.code(), Some(0));
     // A stand-in for dbus-monitor: after a few seconds it prints what logind prints before a shutdown.
