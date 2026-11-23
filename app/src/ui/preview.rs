@@ -707,36 +707,88 @@ pub fn set_focus_peaking(on: bool) {
 /// The colour edges in focus are painted.
 const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
 
-/// Outline the edges in focus, the way cameras' focus peaking does: the Canny edge detector from the
-/// imageproc library (a light Gaussian blur against noise, Sobel gradients, thinning to one-pixel lines, and
-/// a strong/weak threshold pair so an edge is followed as long as it holds up), with the edges it finds drawn
-/// in green, two pixels wide so they stay visible when the picture is shown smaller. Sharper focus makes
-/// edges steeper, so more of them clear the threshold; the strictness slider sets the threshold.
-fn focus_peaking(frame: &mut Frame) {
-    let (w, h) = (frame.width as u32, frame.height as u32);
-    if w < 8 || h < 8 || frame.rgb.len() < (w * h * 3) as usize { return; }
-    let luma: Vec<u8> = frame.rgb.chunks_exact(3)
-        .map(|p| ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as u8).collect();
-    let Some(gray) = imageproc::image::GrayImage::from_raw(w, h, luma) else { return };
+/// The edges in focus, as a mask of the picture: the Canny edge detector from the imageproc library (a light
+/// Gaussian blur against noise, Sobel gradients, thinning to one-pixel lines, and a strong/weak threshold
+/// pair so an edge is followed as long as it holds up). Sharper focus makes edges steeper, so more of them
+/// clear the threshold; the strictness slider sets the threshold.
+fn peak_mask(width: u32, height: u32, luma: Vec<u8>) -> Option<Vec<u8>> {
+    let gray = imageproc::image::GrayImage::from_raw(width, height, luma)?;
     let high = peaking_threshold(PEAKING_STRICTNESS.load(Ordering::Relaxed));
-    let edges = imageproc::edges::canny(&gray, high / 2.0, high);
-    let (w, h) = (w as usize, h as usize);
-    let marks = edges.as_raw();
+    Some(imageproc::edges::canny(&gray, high / 2.0, high).into_raw())
+}
+
+fn luma_of(frame: &Frame) -> Vec<u8> {
+    frame.rgb.chunks_exact(3).map(|p| ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as u8).collect()
+}
+
+/// Paint a mask's edges green, two pixels wide so they stay visible when the picture is shown smaller.
+fn paint_mask(frame: &mut Frame, mask: &[u8]) {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    if mask.len() != w * h || frame.rgb.len() < w * h * 3 { return; }
     for y in 0..h {
         for x in 0..w {
             let i = y * w + x;
-            if marks[i] > 0 || (x > 0 && marks[i - 1] > 0) || (y > 0 && marks[i - w] > 0) {
+            if mask[i] > 0 || (x > 0 && mask[i - 1] > 0) || (y > 0 && mask[i - w] > 0) {
                 frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR);
             }
         }
     }
 }
 
-/// How wide to decode for the preview: the window's width, or, with focus peaking on, at least 1280 pixels,
-/// so edges are judged on a picture close to the real one (shrinking it makes a soft edge look sharp), while
-/// the edge detector still keeps up (about 50 ms a frame at 1280 × 720).
+/// The edges found last, with the picture size they belong to.
+struct PeakState { width: i32, height: i32, mask: Vec<u8>, found: Instant, asked: Option<Instant> }
+
+static PEAKS: std::sync::Mutex<Option<PeakState>> = std::sync::Mutex::new(None);
+static PEAK_WORKER: std::sync::OnceLock<std::sync::mpsc::SyncSender<(i32, i32, Vec<u8>)>> = std::sync::OnceLock::new();
+/// How often the edges are looked for: the detector is the expensive part, and focus changes slowly next to
+/// the frame rate, so the picture keeps its full speed and the outline follows a few times a second.
+const PEAK_EVERY: Duration = Duration::from_millis(200);
+
+/// Outline the edges in focus. The detector runs on its own thread, at most five times a second, on the
+/// newest picture; every picture is painted with the latest edges found, so the preview keeps its speed.
+fn focus_peaking(frame: &mut Frame) {
+    if frame.width < 8 || frame.height < 8 { return; }
+    let worker = PEAK_WORKER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<(i32, i32, Vec<u8>)>(1);
+        std::thread::spawn(move || {
+            while let Ok((width, height, luma)) = receiver.recv() {
+                if let Some(mask) = peak_mask(width as u32, height as u32, luma) {
+                    if let Ok(mut peaks) = PEAKS.lock() {
+                        let asked = peaks.as_ref().and_then(|p| p.asked);
+                        *peaks = Some(PeakState { width, height, mask, found: Instant::now(), asked });
+                    }
+                }
+            }
+        });
+        sender
+    });
+    let Ok(mut peaks) = PEAKS.lock() else { return };
+    let due = peaks.as_ref().and_then(|p| p.asked).is_none_or(|at| at.elapsed() >= PEAK_EVERY);
+    if due && worker.try_send((frame.width, frame.height, luma_of(frame))).is_ok() {
+        match peaks.as_mut() {
+            Some(p) => p.asked = Some(Instant::now()),
+            None => *peaks = Some(PeakState { width: 0, height: 0, mask: Vec::new(), found: Instant::now(), asked: Some(Instant::now()) }),
+        }
+    }
+    // The latest edges, if they belong to a picture of this size and are recent.
+    if let Some(p) = peaks.as_ref() {
+        if p.width == frame.width && p.height == frame.height && p.found.elapsed() < Duration::from_secs(2) {
+            paint_mask(frame, &p.mask);
+        }
+    }
+}
+
+/// Outline the edges at once, on this thread (for tests).
+#[cfg(test)]
+fn focus_peaking_now(frame: &mut Frame) {
+    if let Some(mask) = peak_mask(frame.width as u32, frame.height as u32, luma_of(frame)) { paint_mask(frame, &mask); }
+}
+
+/// How wide to decode for the preview: the window's width, or, with focus peaking on, at least 960 pixels,
+/// so edges are judged on a picture not shrunk too far (shrinking makes a soft edge look sharp). A JPEG is
+/// decoded at a half or a quarter of its size for that, which costs far less than a full decode.
 fn decode_width(target: u32) -> u32 {
-    if FOCUS_PEAKING.load(Ordering::Relaxed) { target.max(1280) } else { target }
+    if FOCUS_PEAKING.load(Ordering::Relaxed) { target.max(960) } else { target }
 }
 
 fn decode_jpeg(data: &[u8], target_width: u32) -> Option<Frame> {
@@ -878,20 +930,20 @@ mod peaking_tests {
     fn a_sharp_edge_is_painted_and_a_flat_or_soft_picture_is_not() {
         // A hard step from dark to light down the middle: the pixels at the step are marked.
         let mut sharp = frame(64, 32, |x, _| if x < 32 { 20 } else { 230 });
-        focus_peaking(&mut sharp);
+        focus_peaking_now(&mut sharp);
         assert!(green(&sharp) > 0);
         let at_edge = (4..28).all(|y| { let i = (y * 64 + 32) as usize * 3; sharp.rgb[i..i + 3] == PEAK_COLOUR });
         assert!(at_edge, "the step itself is marked");
         // A flat picture and a gentle gradient (out of focus) have no edges worth marking.
         let mut flat = frame(64, 32, |_, _| 120);
-        focus_peaking(&mut flat);
+        focus_peaking_now(&mut flat);
         assert_eq!(green(&flat), 0);
         let mut soft = frame(64, 32, |x, _| (x * 3) as u8);
-        focus_peaking(&mut soft);
+        focus_peaking_now(&mut soft);
         assert_eq!(green(&soft), 0);
         // A big but blurred step (dark to light over twelve pixels) is high contrast, yet not in focus.
         let mut blurred = frame(64, 32, |x, _| (20 + (x - 26).clamp(0, 12) * 17) as u8);
-        focus_peaking(&mut blurred);
+        focus_peaking_now(&mut blurred);
         assert_eq!(green(&blurred), 0, "a blurred edge is not marked");
     }
 
@@ -905,7 +957,7 @@ mod peaking_tests {
             40.0 + 180.0 * (edge(phase - 8.0) - edge(phase - 24.0))
         };
         let mut picture = frame(320, 96, |x, _| bars(x).round() as u8);
-        focus_peaking(&mut picture);
+        focus_peaking_now(&mut picture);
         let marked = |from: i32, to: i32| (8..88).flat_map(|y| (from..to).map(move |x| (y * 320 + x) as usize * 3))
             .filter(|i| picture.rgb[*i..*i + 3] == PEAK_COLOUR).count();
         assert!(marked(16, 144) > 100, "the sharp side is outlined");
@@ -914,11 +966,28 @@ mod peaking_tests {
 
     #[test]
     #[ignore]
+    fn time_jpeg_decodes() {
+        let dir = std::env::var("T4_JPEGS").unwrap_or_default();
+        for (name, width) in [("f4k.jpg", 640), ("f4k.jpg", 960), ("f4k.jpg", 1920), ("f1080.jpg", 640), ("f1080.jpg", 960)] {
+            let Ok(data) = std::fs::read(format!("{dir}/{name}")) else { continue };
+            let start = std::time::Instant::now();
+            for _ in 0..10 { decode_jpeg(&data, width).unwrap(); }
+            println!("{name} at {width}: {:?} a frame", start.elapsed() / 10);
+        }
+        let raw = vec![128u8; 3840 * 2160 * 2];
+        let mode = VideoMode { width: 3840, height: 2160, pixel_format: "YUYV".into(), frame_rate_milli: 30_000 };
+        let start = std::time::Instant::now();
+        for _ in 0..10 { decode_yuyv(&raw, &mode).unwrap(); }
+        println!("YUYV 4K: {:?} a frame", start.elapsed() / 10);
+    }
+
+    #[test]
+    #[ignore]
     fn time_a_1080p_frame() {
         for (w, h) in [(1920, 1080), (1280, 720), (960, 540)] {
             let mut picture = frame(w, h, |x, y| ((x * 7 + y * 13) % 251) as u8);
             let start = std::time::Instant::now();
-            focus_peaking(&mut picture);
+            focus_peaking_now(&mut picture);
             println!("focus peaking on {w}x{h}: {:?}", start.elapsed());
         }
     }
