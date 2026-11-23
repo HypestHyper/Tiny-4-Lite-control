@@ -481,7 +481,34 @@ impl SettingRow {
                 drag.connect_drag_end(move |_, _, _| {
                     if let Some(row) = weak.upgrade() { row.dragging.set(false); row.last_edit.set(Some(Instant::now())); }
                 });
+                // A drag can also be cancelled rather than ended: the pointer let go outside the window, or the
+                // window lost focus mid-drag (some window managers never send the release back). Without this
+                // the row would keep ignoring the camera's value for good.
+                let weak = Rc::downgrade(&self.0);
+                drag.connect_cancel(move |_, _| {
+                    if let Some(row) = weak.upgrade() { row.dragging.set(false); row.last_edit.set(Some(Instant::now())); }
+                });
                 scale.add_controller(drag);
+                // When the window stops being the active one in the middle of a drag, end the drag outright: the
+                // slider itself can otherwise stay half in a drag and pick up the pointer at an offset when it
+                // comes back. Making it insensitive for a moment resets its own pointer handling.
+                {
+                    let weak = Rc::downgrade(&self.0);
+                    let watched = Rc::new(Cell::new(false));
+                    scale.connect_map(move |scale| {
+                        if watched.replace(true) { return; }
+                        let Some(window) = scale.root().and_then(|r| r.downcast::<gtk::Window>().ok()) else { return };
+                        let (weak, scale) = (weak.clone(), scale.downgrade());
+                        window.connect_is_active_notify(move |window| {
+                            if window.is_active() { return; }
+                            let (Some(row), Some(scale)) = (weak.upgrade(), scale.upgrade()) else { return };
+                            if row.dragging.replace(false) {
+                                row.last_edit.set(Some(Instant::now()));
+                                if scale.is_sensitive() { scale.set_sensitive(false); scale.set_sensitive(true); }
+                            }
+                        });
+                    });
+                }
                 let weak = Rc::downgrade(&self.0);
                 let scale_reset = scale.clone();
                 reset.connect_clicked(move |_| {
@@ -651,7 +678,12 @@ impl SettingRow {
 
         self.sync_structure(snapshot);
 
-        let editing = row.dragging.get() || row.last_edit.get().is_some_and(|at| at.elapsed() < EDIT_HOLD);
+        // While the thumb is held, and for a moment after a change, the camera's value does not move it. A drag
+        // that has gone quiet for a while is over, whatever the pointer said, so a lost release cannot freeze it.
+        let recent = row.last_edit.get().is_some_and(|at| at.elapsed() < EDIT_HOLD);
+        let held = row.dragging.get() && row.last_edit.get().is_some_and(|at| at.elapsed() < Duration::from_secs(4));
+        if row.dragging.get() && !held { row.dragging.set(false); }
+        let editing = held || recent;
         if !editing {
             let (value, origin) = match setting.reading(snapshot) { Some((v, o)) => (Some(v), o), None => (None, Origin::Unknown) };
             row.current.set(value);
