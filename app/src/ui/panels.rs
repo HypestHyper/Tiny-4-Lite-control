@@ -702,8 +702,12 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
             filling.set(true);
             let list = crate::lut::list();
             // Shown without the .cube ending.
+            let favourites = current_config().studio.lut_favourites;
             let labels: Vec<String> = if list.is_empty() { vec!["No LUTs added yet".into()] } else {
-                list.iter().map(|n| n.strip_suffix(".cube").or_else(|| n.strip_suffix(".CUBE")).unwrap_or(n).to_string()).collect() };
+                list.iter().map(|n| {
+                    let label = crate::lut::label(n);
+                    if favourites.contains(n) { format!("\u{2605} {label}") } else { label }
+                }).collect() };
             picker.set_model(Some(&gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>())));
             picker.set_sensitive(!list.is_empty());
             let at = select.and_then(|name| list.iter().position(|n| n == name));
@@ -768,8 +772,46 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
             unsafe { button.set_data("lut-dialog", dialog); }
         });
     }
-    let remove = widgets::icon_button("delete", "Remove the picked LUT from the list", true);
-    remove.add_css_class("flat-icon");
+    // The star marks the picked LUT as a favourite: favourites are offered on the preview, under Look.
+    let star = widgets::icon_button("star", "Add to favourites (shown on the preview, under Look)", true);
+    star.add_css_class("flat-icon");
+    star.set_valign(gtk::Align::Center);
+    let show_star: Rc<dyn Fn()> = {
+        let (star, names, picker) = (star.clone(), names.clone(), picker.clone());
+        Rc::new(move || {
+            let name = names.borrow().get(picker.selected() as usize).cloned();
+            let favourite = name.as_ref().is_some_and(|n| current_config().studio.lut_favourites.contains(n));
+            star.set_sensitive(name.is_some());
+            let words = if favourite { "Remove from favourites" } else { "Add to favourites (shown on the preview, under Look)" };
+            star.set_tooltip_text(Some(words));
+            widgets::label_accessible(&star, words);
+            if let Some(glyph) = star.child() {
+                if favourite { glyph.add_css_class("filled"); star.add_css_class("lit"); } else { glyph.remove_css_class("filled"); star.remove_css_class("lit"); }
+            }
+        })
+    };
+    show_star();
+    {
+        let (names, picker, fill, show_star, store) = (names.clone(), picker.clone(), fill.clone(), show_star.clone(), store.clone());
+        star.connect_clicked(move |_| {
+            let Some(name) = names.borrow().get(picker.selected() as usize).cloned() else { return };
+            let mut added = false;
+            if let Err(error) = update_config_checked(|c| {
+                let list = &mut c.studio.lut_favourites;
+                if list.contains(&name) { list.retain(|f| f != &name); } else { list.push(name.clone()); added = true; }
+            }) { store.error(&format!("{error}")); return; }
+            fill(Some(&name));
+            show_star();
+            store.toast(&if added { format!("{} added to favourites", crate::lut::label(&name)) } else { format!("{} taken out of favourites", crate::lut::label(&name)) });
+        });
+    }
+    {
+        let show_star = show_star.clone();
+        picker.connect_selected_notify(move |_| show_star());
+    }
+    let remove = gtk::Button::with_label("Remove");
+    remove.add_css_class("small");
+    remove.set_tooltip_text(Some("Take the picked LUT out of the list (and out of favourites)"));
     remove.set_valign(gtk::Align::Center);
     {
         let (store, fill, names, picker, switch) = (store.clone(), fill.clone(), names.clone(), picker.clone(), switch.clone());
@@ -789,9 +831,30 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
     }
     let choose = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     choose.append(&picker);
+    choose.append(&star);
     choose.append(&remove);
     choose.append(&add);
     section.append(&choose);
+    // Changed elsewhere (the Look list on the preview, a preset): show the same here.
+    {
+        let seen = Rc::new(RefCell::new((config.lut.clone(), config.lut_on, config.lut_favourites.clone(), config.lut_strength)));
+        let (weak, switch, reveal, strength, fill, show_star) = (picker.downgrade(), switch.clone(), reveal.clone(), strength.clone(), fill.clone(), show_star.clone());
+        glib::timeout_add_local(Duration::from_secs(1), move || {
+            if weak.upgrade().is_none() { return glib::ControlFlow::Break; }
+            let s = current_config().studio;
+            let now = (s.lut.clone(), s.lut_on, s.lut_favourites.clone(), s.lut_strength);
+            if *seen.borrow() != now {
+                let strength_changed = seen.borrow().3 != now.3;
+                *seen.borrow_mut() = now;
+                fill(s.lut.as_deref());
+                if switch.is_active() != s.lut_on { switch.set_active(s.lut_on); }
+                reveal.set_reveal_child(s.lut_on);
+                if strength_changed && strength.value().round() as u8 != s.lut_strength { strength.set_value(f64::from(s.lut_strength)); }
+                show_star();
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     // A LUT made for flat log footage darkens a webcam picture: say so for the one picked.
     let log_note = widgets::text("This LUT looks made for flat log footage from a cinema camera. On a webcam's normal picture it makes everything darker and more contrasty; a LUT made for normal (Rec.709) video suits it better.", &["small", "warning-text"]);
     log_note.set_wrap(true);

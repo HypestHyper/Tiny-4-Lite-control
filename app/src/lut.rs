@@ -118,7 +118,20 @@ pub fn list() -> Vec<String> {
 /// Take a LUT out of the list (its kept copy; the original file is left alone).
 pub fn remove(name: &str) -> Result<(), String> {
     if name.contains('/') { return Err("Not a LUT name.".into()); }
-    std::fs::remove_file(lut_dir().join(name)).map_err(|e| format!("Could not remove {name}: {e}"))
+    std::fs::remove_file(lut_dir().join(name)).map_err(|e| format!("Could not remove {name}: {e}"))?;
+    crate::backend::update_config(|c| c.studio.lut_favourites.retain(|f| f != name));
+    Ok(())
+}
+
+/// The favourite LUTs that are still in the list, in list order.
+pub fn favourites() -> Vec<String> {
+    let favourites = crate::backend::current_config().studio.lut_favourites;
+    list().into_iter().filter(|n| favourites.contains(n)).collect()
+}
+
+/// The name to show: without the .cube ending.
+pub fn label(name: &str) -> String {
+    name.strip_suffix(".cube").or_else(|| name.strip_suffix(".CUBE")).unwrap_or(name).to_string()
 }
 
 /// The kept LUT blended to `strength`, written where ffmpeg can read it; the path (with nothing in it that

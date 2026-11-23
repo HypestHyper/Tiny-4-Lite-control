@@ -20,6 +20,16 @@ pub struct CameraPreset {
     /// Namespaced integer settings: v4l2:<control>, obsbot:<setting>.
     /// Movement commands are deliberately excluded from presets.
     pub settings: BTreeMap<String, i64>,
+    /// The Studio camera's look when the preset was saved: the LUT (none: off) and its strength. Presets
+    /// from before looks were saved have none, and leave the look alone.
+    #[serde(default)]
+    pub look: Option<PresetLook>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PresetLook {
+    pub lut: Option<String>,
+    pub strength: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -140,10 +150,12 @@ pub struct StudioConfig {
     pub lut_on: bool,
     pub lut_strength: u8,
     pub lut_gpu: bool,
+    /// LUTs marked as favourites, offered on the preview.
+    pub lut_favourites: Vec<String>,
 }
 
 impl Default for StudioConfig {
-    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true } }
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new() } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
@@ -410,6 +422,7 @@ mod tests {
                 ("v4l2:brightness".into(), 55),
                 ("obsbot:led_brightness".into(), 2),
             ]),
+            look: None,
         });
 
         let encoded = toml::to_string(&config).unwrap();

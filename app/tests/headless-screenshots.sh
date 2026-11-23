@@ -49,6 +49,11 @@ start() {
     local name="$1"; shift
     export XDG_CONFIG_HOME="$(mktemp -d)" XDG_CACHE_HOME="$(mktemp -d)" XDG_DATA_HOME="$(mktemp -d)"
     if [[ -n "${START_CONFIG:-}" ]]; then mkdir -p "$XDG_CONFIG_HOME/tiny4lite-control"; printf '%s\n' "$START_CONFIG" > "$XDG_CONFIG_HOME/tiny4lite-control/config.toml"; fi
+    # START_LUTS: names of small identity LUTs to put in the list.
+    for lut in ${START_LUTS:-}; do
+        mkdir -p "$XDG_CONFIG_HOME/tiny4lite-control/luts"
+        printf 'LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n' > "$XDG_CONFIG_HOME/tiny4lite-control/luts/$lut"
+    done
     export TINY4LITE_UI_TEST_LOG="$OUT/$name.commands.log"
     rm -f "$TINY4LITE_UI_TEST_LOG"
     ensure_display
@@ -82,6 +87,9 @@ scenario full-auto
 scenario full-manual TINY4LITE_UI_TEST_STATE=manual
 scenario full-aperture TINY4LITE_UI_TEST_STATE=aperture
 for page in presets device; do scenario "page-$page" TINY4LITE_UI_TEST_PAGE=$page; done
+# Favourite LUTs: the Look list on the preview, and the star on the Device tab.
+LOOKS_CONFIG=$'[studio]\nenabled = true\nlut = "Warm.cube"\nlut_on = true\nlut_favourites = ["Warm.cube", "Teal.cube"]'
+( export START_LUTS="Warm.cube Teal.cube Plain.cube" START_CONFIG="$LOOKS_CONFIG"; scenario full-looks; scenario page-device-looks TINY4LITE_UI_TEST_PAGE=device )
 scenario full-light TINY4LITE_UI_TEST_THEME=light
 scenario full-wide TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000
 scenario full-wide-manual TINY4LITE_UI_TEST_STATE=manual TINY4LITE_UI_TEST_WIDTH=1700 TINY4LITE_UI_TEST_HEIGHT=1000

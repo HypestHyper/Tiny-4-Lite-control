@@ -36,6 +36,7 @@ impl PreviewWindow {
         let weak_ctx = Rc::downgrade(ctx);
         dock.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(false); } });
         controls.append(&ctx.hub.source_picker());
+        controls.append(&ctx.hub.look_picker());
         controls.append(&ctx.hub.peaking_button());
         controls.append(&pause);
         controls.append(&dock);

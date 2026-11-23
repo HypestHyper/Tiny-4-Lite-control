@@ -246,7 +246,7 @@ pub fn restore_preset(config: &crate::config::AppConfig) -> Option<CameraPreset>
         Some(name) => config.presets.iter().find(|p| p.name.eq_ignore_ascii_case(name)).cloned()?,
         None => {
             let settings: BTreeMap<String, i64> = config.v4l2_controls.iter().map(|(k, v)| (format!("v4l2:{k}"), *v)).collect();
-            CameraPreset { name: "last settings".into(), settings }
+            CameraPreset { name: "last settings".into(), settings, look: None }
         }
     };
     if !config.service.allow_gimbal_move {
@@ -888,7 +888,7 @@ mod tests {
         let mut settings = BTreeMap::new();
         settings.insert("v4l2:contrast".to_string(), 55);
         settings.insert("v4l2:tilt_absolute".to_string(), -3600);
-        config.presets.push(CameraPreset { name: "Desk".into(), settings });
+        config.presets.push(CameraPreset { name: "Desk".into(), settings, look: None });
         let preset = restore_preset(&config).unwrap();
         assert_eq!(preset.settings.len(), 1);
         // A name that no longer exists restores nothing, rather than something else.

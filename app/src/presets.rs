@@ -121,7 +121,10 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         settings.entry(format!("obsbot:gesture:{name}")).or_insert(enabled as i64);
     }
 
-    Ok(config::CameraPreset { name: name.trim().to_string(), settings })
+    // The Studio camera's look goes with it: the LUT that is on and its strength, or none.
+    let studio = saved.studio.clone();
+    let look = config::PresetLook { lut: studio.lut.filter(|_| studio.lut_on), strength: studio.lut_strength };
+    Ok(config::CameraPreset { name: name.trim().to_string(), settings, look: Some(look) })
 }
 
 /// Apply settings in dependency order: automatic/manual modes first, ordinary
@@ -259,6 +262,21 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 }
             },
             None => errors.push("video mode: invalid preset capture settings".into()),
+        }
+    }
+
+    // The Studio camera's look, if the preset has one (the service picks it up within a couple of seconds).
+    if let Some(look) = &preset.look {
+        let missing = look.lut.as_ref().is_some_and(|name| !crate::lut::list().contains(name));
+        if missing {
+            errors.push(format!("look: the LUT {} is no longer in the list", look.lut.as_deref().unwrap_or("")));
+        } else {
+            crate::backend::update_config(|c| {
+                if look.lut.is_some() { c.studio.lut = look.lut.clone(); }
+                c.studio.lut_on = look.lut.is_some();
+                c.studio.lut_strength = look.strength;
+            });
+            applied += 1;
         }
     }
 

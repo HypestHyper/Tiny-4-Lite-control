@@ -177,7 +177,7 @@ pub struct Studio {
     last_error: Option<String>,
     cpu_sample: Option<(Instant, u64)>,
     /// The last frame count ffmpeg reported, and when, for the frame rate.
-    frame_sample: Option<(Instant, u64)>,
+    frame_samples: std::collections::VecDeque<(Instant, u64)>,
     format: Option<(String, Format)>,
     /// Whether the graphics chip can apply LUTs here (tested once, the first time one is needed), and if
     /// not, what it said.
@@ -226,7 +226,7 @@ impl Studio {
             let _ = running.child.wait();
         }
         self.cpu_sample = None;
-        self.frame_sample = None;
+        self.frame_samples.clear();
         let _ = std::fs::remove_file(progress_path());
     }
 
@@ -367,13 +367,19 @@ impl Studio {
                 report.pid = Some(pid);
                 report.memory_mb = memory_mb(pid);
                 if running.want == Want::Pipeline {
-                    // The frame rate it really keeps up: frames done since the last look, over the time.
+                    // The frame rate it really keeps up, over the last ten seconds or so: a short window makes a
+                    // steady 30 read 29 or 31, as frames and progress reports fall either side of it.
                     if let Some(frames) = last_frame_count() {
-                        if let Some((at, before)) = self.frame_sample {
-                            let seconds = at.elapsed().as_secs_f64();
-                            if seconds > 0.5 && frames >= before { report.fps = Some((frames - before) as f64 / seconds); }
+                        let now = Instant::now();
+                        if self.frame_samples.back().is_some_and(|(_, last)| frames < *last) { self.frame_samples.clear(); }
+                        self.frame_samples.push_back((now, frames));
+                        while self.frame_samples.len() > 2 && self.frame_samples.front().is_some_and(|(at, _)| now.duration_since(*at) > Duration::from_secs(10)) {
+                            self.frame_samples.pop_front();
                         }
-                        self.frame_sample = Some((Instant::now(), frames));
+                        if let (Some((first_at, first)), Some((_, last))) = (self.frame_samples.front(), self.frame_samples.back()) {
+                            let seconds = now.duration_since(*first_at).as_secs_f64();
+                            if seconds > 1.5 { report.fps = Some((last - first) as f64 / seconds); }
+                        }
                     }
                     report.target_fps = self.format.as_ref().map(|(_, f)| if config.limit_fps { f.fps.min(30.0) } else { f.fps });
                 }
