@@ -111,6 +111,14 @@ pub fn install() -> Result<String, String> {
     let service = crate::setup::move_service_to(&bin.to_string_lossy());
     let mut message = format!("Installed: {} (the AppImage), the tiny4lite-control command and the app menu entry.", target.display());
     if let Some(note) = service { message.push(' '); message.push_str(&note); }
+    // Removing the app took the service with it: put it back, on the installed copy.
+    if crate::backend::current_config().service_removed_with_app && crate::setup::installed().is_none() {
+        match crate::setup::install_service() {
+            Ok(_) => message.push_str(" The background service is back, as it was before the app was removed."),
+            Err(error) => message.push_str(&format!(" The background service could not be set up again: {error}")),
+        }
+    }
+    let _ = crate::backend::update_config_checked(|c| c.service_removed_with_app = false);
     if !bin_on_path() { message.push_str(&format!(" To use the tiny4lite-control command, add ~/.local/bin to your PATH: {}", path_hint())); }
     Ok(message)
 }
@@ -122,7 +130,8 @@ pub fn uninstall() -> Result<String, String> {
     let mut notes = Vec::new();
     if crate::setup::installed().is_some() && crate::setup::service_program().is_some_and(|p| Path::new(&p) == bin) {
         crate::setup::remove()?;
-        notes.push("The background service was removed too (it ran the installed copy).");
+        let _ = crate::backend::update_config_checked(|c| c.service_removed_with_app = true);
+        notes.push("The background service was removed too (it ran the installed copy); installing again brings it back.");
     }
     let target = installed_target();
     for path in [bin.clone(), desktop_path()].into_iter().chain(icon_paths()) {
@@ -135,11 +144,63 @@ pub fn uninstall() -> Result<String, String> {
     Ok(format!("Removed {} and the app menu entry. {}", bin.display(), notes.join(" ")).trim().to_string())
 }
 
+/// Run when the window opens, so a new version needs no removing and reinstalling:
+/// - a new AppImage opened from ~/Applications (where installed copies live) becomes the installed one: the
+///   command, the menu entry and the service move to it;
+/// - a background service still running an older version (the installed file was replaced by a newer one
+///   of the same name) is restarted on the new one;
+/// - a service whose program is gone is pointed at the installed copy.
+/// Says what it did, or what the user can do, for each case that applied.
+pub fn keep_up_to_date() -> Vec<Result<String, String>> {
+    let mut said = Vec::new();
+    let from = running_from().and_then(|f| f.canonicalize().ok());
+    let apps = applications_dir().canonicalize().ok();
+    let in_apps = from.as_ref().and_then(|f| f.parent().map(Path::to_path_buf)).is_some_and(|dir| Some(&dir) == apps.as_ref());
+    let Some(target) = installed_target() else {
+        // The command links to an AppImage that was deleted (an old version, cleared away): this one takes
+        // its place, if it lives in ~/Applications too.
+        if bin_path().symlink_metadata().is_ok() && in_apps {
+            said.push(install().map(|m| format!("This version is now the installed one. {m}")));
+        }
+        return said;
+    };
+    let mut moved = false;
+    if update_available() {
+        if in_apps {
+            said.push(install().map(|m| format!("This version is now the installed one. {m}")));
+            moved = true;
+        } else if let Some(from) = &from {
+            said.push(Ok(format!("This window runs {}, not the installed {}. To use this one from now on: Device tab \u{2192} App \u{2192} Install this version.", from.display(), target.display())));
+        }
+    }
+    if !moved {
+        if let Some(program) = crate::setup::service_program() {
+            if !Path::new(&program).exists() {
+                if let Some(note) = crate::setup::move_service_to(&bin_path().to_string_lossy()) { said.push(Ok(note)); }
+            } else if let Some(status) = crate::service::running_status() {
+                let same_file = Path::new(&program).canonicalize().ok().is_some_and(|p| Some(&p) == from.as_ref());
+                if same_file && status.version != crate::cli::build_label() {
+                    said.push(crate::setup::restart().map(|_| "The background service was restarted on this version.".to_string()));
+                }
+            }
+        }
+    }
+    said
+}
+
 /// `tiny4lite-control app install|remove|status`.
 pub fn command(word: Option<&str>) -> i32 {
     let report = |r: Result<String, String>| match r { Ok(m) => { println!("{m}"); crate::cli::OK } Err(e) => { eprintln!("{e}"); crate::cli::FAILED } };
     match word {
-        Some("install") | Some("update") => report(install()),
+        Some("install") => report(install()),
+        // What the window does when it opens: adopt a new copy in ~/Applications, restart an outdated service.
+        Some("update") => {
+            let results = keep_up_to_date();
+            if results.is_empty() { println!("Nothing to do: the installed copy and the background service are this version, or this copy is not installed."); }
+            let mut code = crate::cli::OK;
+            for result in results { match result { Ok(m) => println!("{m}"), Err(e) => { eprintln!("{e}"); code = crate::cli::FAILED; } } }
+            code
+        }
         Some("remove") | Some("uninstall") => report(uninstall()),
         Some("status") | None => {
             println!("Running from:  {}", running_from().map(|p| p.display().to_string()).unwrap_or_else(|| "unknown".into()));
@@ -148,7 +209,7 @@ pub fn command(word: Option<&str>) -> i32 {
             if installed() && !bin_on_path() { println!("~/.local/bin is not on your PATH: {}", path_hint()); }
             crate::cli::OK
         }
-        Some(other) => { eprintln!("app takes install, remove or status, not `{other}`."); crate::cli::USAGE }
+        Some(other) => { eprintln!("app takes install, update, remove or status, not `{other}`."); crate::cli::USAGE }
     }
 }
 

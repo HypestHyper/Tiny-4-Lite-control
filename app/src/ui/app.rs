@@ -68,6 +68,18 @@ impl Ctx {
         if !backend::ui_test_mode() && !crate::setup::program_found("v4l2-ctl") {
             ctx.store.error("v4l2-ctl is not installed, so the camera cannot be controlled. Install it from the Device tab, under Background service.");
         }
+        // A new version: make it the installed one and put the background service on it, without the user
+        // removing and installing anything (away from the window, since restarting the service takes a moment).
+        if !backend::ui_test_mode() {
+            let (sender, receiver) = async_channel::bounded::<Vec<Result<String, String>>>(1);
+            std::thread::spawn(move || { let _ = sender.send_blocking(crate::install::keep_up_to_date()); });
+            let store = ctx.store.clone();
+            glib::spawn_future_local(async move {
+                if let Ok(results) = receiver.recv().await {
+                    for result in results { match result { Ok(m) => store.toast(&m), Err(e) => store.error(&e) } }
+                }
+            });
+        }
         if connection == Connection::Connected {
             // Restore the remembered capture mode; this never moves the gimbal.
             ctx.store.call(None, |device| backend::apply_saved_video_mode(device), |_| {});

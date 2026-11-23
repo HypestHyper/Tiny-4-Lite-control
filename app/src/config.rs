@@ -134,6 +134,9 @@ pub struct AppConfig {
     pub pan_limit_high: f64,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
+    /// Removing the app took the background service with it: installing again brings it back.
+    #[serde(default)]
+    pub service_removed_with_app: bool,
 }
 
 /// The Studio camera (a second, virtual camera for filters), run by the background service.
@@ -280,6 +283,7 @@ impl Default for AppConfig {
             tilt_limit_low: -30.0,
             tilt_limit_high: 70.0,
             service_setup_dismissed: false,
+            service_removed_with_app: false,
             quick_presets: None,
             pan_limit: true,
             pan_limit_low: -140.0,
