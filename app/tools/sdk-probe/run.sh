@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the OBSBOT SDK probe while recording the camera's USB traffic, and write one report.
 #
-#   bash run.sh [--with-moves] [path/to/libdev_v2.1.0_8]
+#   bash run.sh [--toggles] [--moves] [path/to/libdev_v2.1.0_8]
 #
 # It builds the probe against your local copy of the SDK, stops this app's background service for the
 # duration (it would add its own traffic), records USB with tshark (asks for your password once), runs the
@@ -9,11 +9,11 @@
 # What the probe does to the camera: see probe.cpp. It never resets, deletes presets, or updates firmware.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-moves=""
+flags=()
 sdk="$HOME/obsbot-sdk/libdev_v2.1.0_8"
 for arg in "$@"; do
     case "$arg" in
-        --with-moves) moves="--with-moves" ;;
+        --toggles|--moves|--with-moves) flags+=("$arg") ;;
         *) sdk="$arg" ;;
     esac
 done
@@ -53,8 +53,8 @@ sudo modprobe usbmon
 sudo tshark -i "usbmon$bus" -q -w - >"$out/capture.pcapng" 2>"$out/tshark.log" &
 sleep 3
 
-echo "== Running the probe (about a minute)"
-"$out/build/sdk-probe" $moves | tee "$out/probe.log" || true
+echo "== Running the probe (a few minutes; leave the camera alone)"
+"$out/build/sdk-probe" "${flags[@]}" | tee "$out/probe.log" || true
 sleep 2
 sudo pkill -INT -f "tshark -i usbmon$bus" || true
 sleep 2

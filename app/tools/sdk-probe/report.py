@@ -92,6 +92,9 @@ for line in lines:
     if m and current:
         current[2], current[3] = float(m.group(2)), int(m.group(3))
         continue
+    if line.startswith("PROBE END"):
+        current = None
+        continue
     if current is not None and line.startswith("  "):
         current[4].append(line)
     elif current is None:
@@ -114,6 +117,9 @@ def section(title, start, end, extra=()):
         print("  %4dx %s" % (n, key))
 
 
+final = []
+if "PROBE END" in log:
+    final = [l for l in log.split("PROBE END", 1)[1].splitlines()[1:] if l.strip()]
 for line in header:
     print(line)
 print("Device address used: %s; control packets: %d" % (address, len(rows)))
@@ -122,3 +128,7 @@ if connected and steps:
 for i, (name, begin, end, ret, detail) in enumerate(steps):
     stop = steps[i + 1][1] - 0.05 if i + 1 < len(steps) else (end or begin) + 2.0
     section("STEP %s  ret=%s  (%.3f s)" % (name, ret, (end or begin) - begin), begin - 0.02, stop, detail)
+if final:
+    print("=" * 100)
+    for line in final:
+        print(line)
