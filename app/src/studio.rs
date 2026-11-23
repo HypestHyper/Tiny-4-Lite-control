@@ -71,7 +71,10 @@ fn base_args() -> Vec<String> {
 pub const OUTPUT_FORMAT: &str = "yuyv422";
 
 /// Real camera in, the picture out to the Studio camera (no filters yet: as it is).
-pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>) -> Vec<String> {
+/// `out_size` is the size the Studio camera already has while an app holds it open, if that differs from the
+/// camera's (the camera's mode was changed meanwhile): the picture is scaled to it, since the Studio camera
+/// cannot change size under an app (4K written into a 1080p Studio camera comes out as tiles of picture).
+pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>, out_size: Option<(u32, u32)>) -> Vec<String> {
     let mut args = base_args();
     if let Some((route, _)) = lut { args.extend(crate::lut::hw_args(route)); }
     // Low delay (only options every ffmpeg takes for an input: newer ones refuse -thread_queue_size here):
@@ -86,7 +89,8 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Opt
         "-framerate".into(), format!("{:.3}", format.fps), "-i".into(), camera.into(),
     ]);
     // A camera set to 60 fps is brought down first, which halves all the work after it.
-    let limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
+    let mut limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
+    if let Some((w, h)) = out_size.filter(|size| *size != (format.width, format.height)) { limit.push_str(&format!("scale={w}:{h}:flags=bilinear,")); }
     let filters = match lut {
         Some((route, path)) => crate::lut::filter(route, path, OUTPUT_FORMAT),
         None => format!("format={OUTPUT_FORMAT}"),
@@ -238,9 +242,10 @@ impl Studio {
 
     fn our_pids(&self) -> Vec<u32> { self.running.as_ref().map(|r| vec![r.child.id()]).unwrap_or_default() }
 
-    /// The camera's format, read once per camera (it is only read while nothing streams).
-    fn format_for(&mut self, camera: &str) -> Option<Format> {
-        if let Some((node, format)) = &self.format { if node == camera { return Some(format.clone()); } }
+    /// The camera's format. Read again whenever the Studio camera is not streaming from it (the mode may have
+    /// been changed, 1080p to 4K, say); while it streams, the one it started with.
+    fn format_for(&mut self, camera: &str, fresh: bool) -> Option<Format> {
+        if let Some((node, format)) = &self.format { if node == camera && !fresh { return Some(format.clone()); } }
         let mode = crate::video::current_mode(camera)?;
         let format = Format::from_mode(&mode)?;
         self.format = Some((camera.to_string(), format.clone()));
@@ -259,7 +264,9 @@ impl Studio {
                 let ours = self.our_pids();
                 crate::backend::usage::openers(node).iter().any(|pid| !ours.contains(pid))
             });
-            let format = self.format.as_ref().map(|(_, f)| f.clone());
+            // The size the app holding it has, so the dark picture fits it.
+            let held = loopback.as_deref().and_then(crate::video::current_mode).filter(|m| m.width > 0 && m.height > 0);
+            let format = self.format.as_ref().map(|(_, f)| f.clone()).map(|f| match held { Some(m) => Format { width: m.width, height: m.height, ..f }, None => f });
             match (still_open, loopback.as_deref(), format) {
                 (true, Some(node), Some(format)) if ffmpeg_found() => {
                     let args = placeholder_args(node, &format);
@@ -330,8 +337,11 @@ impl Studio {
         };
         let target = match (want, camera) {
             (Want::Nothing, _) | (_, None) => None,
-            (want, Some(camera)) => self.format_for(camera).map(|format| {
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path()))) }
+            (want, Some(camera)) => self.format_for(camera, !pipeline_running).map(|format| {
+                // An app holding the Studio camera fixes its size: keep to it (scaling if the camera's mode
+                // changed since), until the app lets go.
+                let held = if watched { crate::video::current_mode(&loopback).map(|m| (m.width, m.height)).filter(|(w, h)| *w > 0 && *h > 0) } else { None };
+                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path())), held) }
                     else { placeholder_args(&loopback, &format) };
                 (want, args)
             }),
@@ -538,7 +548,7 @@ mod tests {
 
     #[test]
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
-        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None).join(" ");
+        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None, None).join(" ");
         assert!(pass.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{pass}");
         // Low delay: no buffering or probing, one decoding thread, frames passed on as they come.
         assert!(pass.contains("-fflags nobuffer -flags low_delay") && pass.contains("-threads 1 -f v4l2"), "{pass}");
@@ -546,8 +556,14 @@ mod tests {
         assert!(pass.contains("-vf format=yuyv422 -progress") && pass.ends_with("-f v4l2 /dev/video42"), "{pass}");
         // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
         let sixty = Format { fps: 60.0, ..fmt() };
-        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0), None).join(" ").contains("-vf fps=30,format=yuyv422"));
-        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0), None).join(" ").contains("fps=30,"));
+        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0), None, None).join(" ").contains("-vf fps=30,format=yuyv422"));
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0), None, None).join(" ").contains("fps=30,"));
+        // 4K from the camera into a Studio camera an app holds at 1080p: scaled to fit, not tiled.
+        let uhd = Format { width: 3840, height: 2160, fps: 30.0, input: "mjpeg".into() };
+        let held = pipeline_args("/dev/video0", "/dev/video42", &uhd, Some(30.0), None, Some((1920, 1080))).join(" ");
+        assert!(held.contains("-video_size 3840x2160") && held.contains("-vf scale=1920:1080:flags=bilinear,format=yuyv422"), "{held}");
+        // The same size needs no scaling.
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &uhd, None, None, Some((3840, 2160))).join(" ").contains("scale="));
         let wait = placeholder_args("/dev/video42", &fmt()).join(" ");
         assert!(wait.contains("color=c=0x101418:s=1920x1080:r=5") && wait.ends_with("-f v4l2 /dev/video42"), "{wait}");
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");
