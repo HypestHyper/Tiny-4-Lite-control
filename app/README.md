@@ -378,3 +378,23 @@ Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manua
 * The model's left/right and up/down against the real camera (it follows the signs the camera reports).
 * The Hyprland rules (the class names were read back from a headless sway, not from Hyprland itself).
 * Light/dark switching from a live desktop portal (the portal code path is untested here).
+
+## Credits and sources
+
+**OBSBOT protocol and controls.** The app was written for this project, guided by the research in [`../Assistant/`](../Assistant/INDEX.md), which draws on these open-source projects:
+
+* [Domatix/obsbot-control](https://github.com/Domatix/obsbot-control), especially [`docs/PROTOCOL.md`](https://github.com/Domatix/obsbot-control/blob/main/docs/PROTOCOL.md): the main reference for the Tiny 2 Lite's extension-unit protocol;
+* [lxman/obsbot-mcp](https://github.com/lxman/obsbot-mcp): the broadest command reference (command encoding in `src/codec/commands.ts`);
+* [OpenFoxes/Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux): a direct extension-unit implementation in Rust, with a GUI and command line.
+
+Every protocol detail the app uses was checked against a real camera or is marked as unverified (see [`../Assistant/AGENTS.md`](../Assistant/AGENTS.md)). The research also lists further projects consulted: [cgevans/tiny2](https://github.com/cgevans/tiny2), [aaronsb/obsbot-camera-control](https://github.com/aaronsb/obsbot-camera-control), [ananthb/libobsbot](https://github.com/ananthb/libobsbot), [samliddicott/meet4k](https://github.com/samliddicott/meet4k) and [taxfromdk/obsbot_tiny_reversing](https://github.com/taxfromdk/obsbot_tiny_reversing).
+
+**Focus peaking.** The edges come from the Canny edge detector in [imageproc](https://github.com/image-rs/imageproc) (MIT or Apache-2.0), after J. Canny, "A Computational Approach to Edge Detection", *IEEE Transactions on Pattern Analysis and Machine Intelligence* 8(6), 1986. The approach, a light blur against noise, then edge detection and a threshold, follows the common recipe described in Paul Bourke's [Focus Peaking: An Algorithm](https://paulbourke.net/miscellaneous/focuspeaking/), and the trade-offs described for [darktable's focus peaking](https://docs.darktable.org/usermanual/development/en/module-reference/utility-modules/shared/focus-peaking/) and [Magic Lantern's focus assist](https://magiclantern.fandom.com/wiki/Focus_Assist?oldid=8854). No code was copied from darktable or Magic Lantern.
+
+**Other parts.**
+
+* Icons: [Material Symbols](https://github.com/google/material-design-icons) (Apache-2.0), a subset bundled in `assets/fonts/`.
+* Interface font: [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex) (licence in `assets/fonts/LICENSE-GoogleSansFlex.txt`).
+* Gesture pictures: traced from the project's own reference drawing (`assets/gesture-reference.png`) with [potrace](https://potrace.sourceforge.net/), through the [potracer](https://pypi.org/project/potracer/) Python port.
+* Studio camera: [FFmpeg](https://ffmpeg.org/), [libplacebo](https://code.videolan.org/videolan/libplacebo) for LUTs on the graphics chip, and [v4l2loopback](https://github.com/umlaeute/v4l2loopback) for the virtual camera.
+* Camera access: [v4l-utils](https://git.linuxtv.org/v4l-utils.git) (`v4l2-ctl`); interface: [gtk4-rs](https://gtk-rs.org/).
