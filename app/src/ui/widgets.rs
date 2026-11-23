@@ -297,6 +297,10 @@ struct Row {
     /// Resting after a change, for a setting the camera is slow to switch (HDR).
     cooling: Cell<bool>,
     dragging: Cell<bool>,
+    /// The slider was pressed and its release has not been seen yet (unlike `dragging`, not cleared by a
+    /// timeout): a release lost outside the window leaves this set, and the next pointer move without a
+    /// button ends the slider's drag.
+    pressed: Cell<bool>,
     current: Cell<Option<Value>>,
     shown_options: RefCell<Vec<(i64, String)>>,
     shown_range: Cell<(f64, f64, f64)>,
@@ -360,7 +364,7 @@ impl SettingRow {
 
         let row = Rc::new(Row {
             setting, store: store.clone(), root, control, control_box, summary, reason, reason_text, info_slot, unknown,
-            density, suppress: Cell::new(false), last_edit: Cell::new(None), cooling: Cell::new(false), dragging: Cell::new(false),
+            density, suppress: Cell::new(false), last_edit: Cell::new(None), cooling: Cell::new(false), dragging: Cell::new(false), pressed: Cell::new(false),
             current: Cell::new(None), shown_options: RefCell::default(), shown_range: Cell::new((f64::NAN, 0.0, 0.0)),
             shown_info: RefCell::default(),
         });
@@ -476,11 +480,35 @@ impl SettingRow {
                 let drag = gtk::GestureDrag::new();
                 drag.set_propagation_phase(gtk::PropagationPhase::Capture);
                 let weak = Rc::downgrade(&self.0);
-                drag.connect_drag_begin(move |_, _, _| { if let Some(row) = weak.upgrade() { row.dragging.set(true); } });
+                drag.connect_drag_begin(move |_, _, _| { if let Some(row) = weak.upgrade() { row.dragging.set(true); row.pressed.set(true); } });
                 let weak = Rc::downgrade(&self.0);
                 drag.connect_drag_end(move |_, _, _| {
-                    if let Some(row) = weak.upgrade() { row.dragging.set(false); row.last_edit.set(Some(Instant::now())); }
+                    if let Some(row) = weak.upgrade() { row.dragging.set(false); row.pressed.set(false); row.last_edit.set(Some(Instant::now())); }
                 });
+                // The release can be lost altogether (the pointer let go outside the window: on Hyprland with focus
+                // on hover, for one). The slider then keeps following the pointer when it comes back. So the
+                // pointer is watched: moving over the slider with no button held while it still counts as pressed
+                // means the release was lost, and the drag is ended on the spot (going insensitive for a moment
+                // resets the slider's own pointer handling).
+                let motion = gtk::EventControllerMotion::new();
+                motion.set_propagation_phase(gtk::PropagationPhase::Capture);
+                let weak = Rc::downgrade(&self.0);
+                let check = move |controller: &gtk::EventControllerMotion| {
+                    let Some(row) = weak.upgrade() else { return };
+                    if !row.pressed.get() { return; }
+                    let buttons = gtk::gdk::ModifierType::BUTTON1_MASK | gtk::gdk::ModifierType::BUTTON2_MASK | gtk::gdk::ModifierType::BUTTON3_MASK;
+                    if controller.current_event_state().intersects(buttons) { return; }
+                    row.pressed.set(false);
+                    row.dragging.set(false);
+                    row.last_edit.set(Some(Instant::now()));
+                    if let Some(scale) = controller.widget() {
+                        if scale.is_sensitive() { scale.set_sensitive(false); scale.set_sensitive(true); }
+                    }
+                };
+                let on_enter = check.clone();
+                motion.connect_enter(move |controller, _, _| on_enter(controller));
+                motion.connect_motion(move |controller, _, _| check(controller));
+                scale.add_controller(motion);
                 // A drag can also be cancelled rather than ended: the pointer let go outside the window, or the
                 // window lost focus mid-drag (some window managers never send the release back). Without this
                 // the row would keep ignoring the camera's value for good.
@@ -489,6 +517,14 @@ impl SettingRow {
                     if let Some(row) = weak.upgrade() { row.dragging.set(false); row.last_edit.set(Some(Instant::now())); }
                 });
                 scale.add_controller(drag);
+                // A press with no drag (a click on the bar) ends without a drag-end: the click release says so.
+                let click = gtk::GestureClick::new();
+                click.set_propagation_phase(gtk::PropagationPhase::Capture);
+                let weak = Rc::downgrade(&self.0);
+                click.connect_released(move |_, _, _, _| { if let Some(row) = weak.upgrade() { row.pressed.set(false); } });
+                let weak = Rc::downgrade(&self.0);
+                click.connect_pressed(move |_, _, _, _| { if let Some(row) = weak.upgrade() { row.pressed.set(true); } });
+                scale.add_controller(click);
                 // When the window stops being the active one in the middle of a drag, end the drag outright: the
                 // slider itself can otherwise stay half in a drag and pick up the pointer at an offset when it
                 // comes back. Making it insensitive for a moment resets its own pointer handling.
@@ -502,7 +538,7 @@ impl SettingRow {
                         window.connect_is_active_notify(move |window| {
                             if window.is_active() { return; }
                             let (Some(row), Some(scale)) = (weak.upgrade(), scale.upgrade()) else { return };
-                            if row.dragging.replace(false) {
+                            if row.dragging.replace(false) | row.pressed.replace(false) {
                                 row.last_edit.set(Some(Instant::now()));
                                 if scale.is_sensitive() { scale.set_sensitive(false); scale.set_sensitive(true); }
                             }
