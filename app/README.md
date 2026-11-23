@@ -30,7 +30,7 @@ Downloaded AppImages are usually just started from the file manager. **Install**
 * a new file there (another name) becomes the installed one by itself: the link, the menu entry and the background service move to it, and the old file can be deleted;
 * the same name, replacing the old file: the link already points at it, and a background service still running the old version is restarted on the new one;
 * the installed file deleted and an older or newer one opened from `~/Applications`: that one takes its place;
-* a copy opened from anywhere else (Downloads, say) is not adopted by itself: the window says so, and **Install this version** on the App card copies it to `~/Applications` and moves everything to it.
+* a copy opened from anywhere else (Downloads, say) is not adopted by itself: the window says so, and **Install this version** at the top of the Device tab copies it to `~/Applications` and moves everything to it.
 
 `tiny4lite-control app update` does the same from a terminal. There is only ever one background service: it is a single systemd unit (or one autostart entry), and a second copy refuses to start while one runs. **Remove** takes the link, the menu entry and the icons away and leaves the AppImage file where it is; if the service ran the installed copy it is removed too, and installing again brings it back. Setting up the background service from an AppImage that is not installed installs it first. If `~/.local/bin` is not on your PATH, the card and `app status` say how to add it (for fish: `fish_add_path ~/.local/bin`). Nothing needs root.
 
