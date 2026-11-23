@@ -920,6 +920,9 @@ pub fn studio_card(store: &Store) -> gtk::Box {
     body.append(&plain_switch_row("Limit to 30 fps",
         "A camera set to 60 fps gives the Studio camera 30: half the work, and plenty for calls.",
         config.limit_fps, |on| update_config(|c| c.studio.limit_fps = on)));
+    body.append(&plain_switch_row("Smooth 30 fps to 60",
+        "For 30 fps modes, 4K30 included: an in-between frame is blended from each pair, on the graphics chip. Smoother movement, a slight ghost on fast motion, and one frame (33 ms) more delay.",
+        config.smooth_60, |on| update_config(|c| c.studio.smooth_60 = on)));
     body.append(&lut_controls(store, &config));
 
     // What it needs, with a way to set it up.

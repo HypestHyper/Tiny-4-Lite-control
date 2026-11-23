@@ -74,9 +74,11 @@ pub const OUTPUT_FORMAT: &str = "yuyv422";
 /// `out_size` is the size the Studio camera already has while an app holds it open, if that differs from the
 /// camera's (the camera's mode was changed meanwhile): the picture is scaled to it, since the Studio camera
 /// cannot change size under an app (4K written into a 1080p Studio camera comes out as tiles of picture).
-pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>, out_size: Option<(u32, u32)>) -> Vec<String> {
+/// `smooth` doubles a 30 fps picture to 60 by mixing neighbouring frames.
+pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Option<f64>, lut: Option<(crate::lut::Route, &Path)>, out_size: Option<(u32, u32)>, smooth: Option<&Smooth>) -> Vec<String> {
+    use crate::lut::Route;
     let mut args = base_args();
-    if let Some((route, _)) = lut { args.extend(crate::lut::hw_args(route)); }
+    if lut.is_some_and(|(r, _)| r == Route::Gpu) || smooth.is_some_and(|s| s.route == Route::Gpu) { args.extend(crate::lut::hw_args(Route::Gpu)); }
     // Low delay (only options every ffmpeg takes for an input: newer ones refuse -thread_queue_size here):
     // no input buffering or probing (the format is known), the camera's frames unpacked on one
     // core (unpacking spread over cores holds a frame back per core), and frames passed on as they come
@@ -91,15 +93,84 @@ pub fn pipeline_args(camera: &str, loopback: &str, format: &Format, max_fps: Opt
     // A camera set to 60 fps is brought down first, which halves all the work after it.
     let mut limit = match max_fps { Some(cap) if format.fps > cap + 0.5 => format!("fps={cap:.0},"), _ => String::new() };
     if let Some((w, h)) = out_size.filter(|size| *size != (format.width, format.height)) { limit.push_str(&format!("scale={w}:{h}:flags=bilinear,")); }
-    let filters = match lut {
-        Some((route, path)) => crate::lut::filter(route, path, OUTPUT_FORMAT),
-        None => format!("format={OUTPUT_FORMAT}"),
-    };
-    args.extend(["-vf".into(), format!("{limit}{filters}")]);
+    args.extend(["-vf".into(), format!("{limit}{}", filters(lut, smooth, format.fps))]);
     // Progress every second (frames done so far), to measure the frame rate the Studio camera really gets.
     args.extend(["-progress".into(), progress_path().to_string_lossy().to_string(), "-stats_period".into(), "1".into()]);
     args.extend(["-fps_mode".into(), "passthrough".into(), "-f".into(), "v4l2".into(), loopback.into()]);
     args
+}
+
+/// Making a 30 fps picture 60: on the graphics chip, libplacebo's frame mixing with the named mixer (in the
+/// same pass as the LUT); on the processor, ffmpeg's framerate filter, which blends the same way but is heavy.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Smooth { pub route: crate::lut::Route, pub mixer: String }
+
+/// The filters after the frame-rate limit and any scaling: the LUT, the frame mixing, and the Studio camera's
+/// format. What runs on the graphics chip is one libplacebo pass.
+fn filters(lut: Option<(crate::lut::Route, &Path)>, smooth: Option<&Smooth>, fps: f64) -> String {
+    use crate::lut::Route;
+    let mut parts = Vec::new();
+    let mut placebo = Vec::new();
+    match lut {
+        Some((Route::Cpu, path)) => parts.push(format!("lut3d=file={}:interp=tetrahedral", path.to_string_lossy())),
+        Some((Route::Gpu, path)) => placebo.push(format!("lut={}:lut_type=normalized", path.to_string_lossy())),
+        None => {}
+    }
+    let doubled = format!("{:.0}", (fps * 2.0).round());
+    match smooth {
+        Some(Smooth { route: Route::Gpu, mixer }) => placebo.push(format!("fps={doubled}:frame_mixer={mixer}")),
+        Some(Smooth { route: Route::Cpu, .. }) => {}
+        None => {}
+    }
+    if !placebo.is_empty() { parts.push(format!("libplacebo={}:format=yuv422p", placebo.join(":"))); }
+    if let Some(Smooth { route: Route::Cpu, .. }) = smooth { parts.push(format!("framerate=fps={doubled}")); }
+    parts.push(format!("format={OUTPUT_FORMAT}"));
+    parts.join(",")
+}
+
+/// Mixers to try for the frame mixing, best first: a linear blend between the two neighbouring frames. Not
+/// every libplacebo knows every name, so the first that works here is used.
+const MIXERS: [&str; 3] = ["linear", "triangle", "mitchell_clamp"];
+
+/// Find a frame mixer that doubles a made-up 30 fps picture to 60 on the graphics chip here.
+pub fn probe_smoothing() -> Result<String, String> {
+    let mut said = String::new();
+    for mixer in MIXERS {
+        let mut args = base_args();
+        args.extend(crate::lut::hw_args(crate::lut::Route::Gpu));
+        args.extend(["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=s=320x180:r=30,format=yuvj422p".into(), "-t".into(), "1".into(),
+            "-vf".into(), format!("libplacebo=fps=60:frame_mixer={mixer}:format=yuv422p,format={OUTPUT_FORMAT}"),
+            "-f".into(), "rawvideo".into(), "-".into()]);
+        match run_for_output(&args, Duration::from_secs(15)) {
+            Ok(data) if data.len() / (320 * 180 * 2) >= 50 => return Ok(mixer.to_string()),
+            Ok(data) => said = format!("it gave {} frames instead of 60", data.len() / (320 * 180 * 2)),
+            Err(error) => said = error,
+        }
+    }
+    Err(said)
+}
+
+/// Run ffmpeg and give back what it wrote, or what it said when it failed or took too long.
+fn run_for_output(args: &[String], limit: Duration) -> Result<Vec<u8>, String> {
+    let mut child = Command::new("ffmpeg").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+        .map_err(|e| format!("ffmpeg could not start: {e}"))?;
+    let mut out = child.stdout.take().ok_or("no output")?;
+    let mut err = child.stderr.take().ok_or("no output")?;
+    let reader = std::thread::spawn(move || { use std::io::Read; let mut data = Vec::new(); let _ = out.read_to_end(&mut data); data });
+    let errors = std::thread::spawn(move || { use std::io::Read; let mut text = String::new(); let _ = err.read_to_string(&mut text); text });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() > limit => { let _ = child.kill(); let _ = child.wait(); return Err("it took too long".into()); }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let data = reader.join().unwrap_or_default();
+    let said = errors.join().unwrap_or_default();
+    if !status.success() { return Err(said.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ffmpeg failed").trim().to_string()); }
+    Ok(data)
 }
 
 /// The stand-in while no app is watching: a dark frame at the camera's size, five times a second, in the
@@ -169,6 +240,8 @@ struct Running {
     started: Instant,
     /// Where the LUT runs, if one is applied.
     lut: Option<crate::lut::Route>,
+    /// Where the frame mixing runs, if the picture is doubled to 60 fps.
+    smooth: Option<crate::lut::Route>,
 }
 
 #[derive(Default)]
@@ -186,6 +259,8 @@ pub struct Studio {
     /// Whether the graphics chip can apply LUTs here (tested once, the first time one is needed), and if
     /// not, what it said.
     lut_gpu: Option<Result<(), String>>,
+    /// Whether frame mixing works on the graphics chip here, and with which mixer (tested once).
+    smooth_gpu: Option<Result<String, String>>,
 }
 
 fn log_path() -> PathBuf { crate::service::runtime_dir().join("studio.log") }
@@ -274,7 +349,7 @@ impl Studio {
                     if self.running.as_ref().map(|r| &r.key) != Some(&key) {
                         self.stop();
                         if let Ok(child) = Command::new("ffmpeg").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-                            self.running = Some(Running { child, want: Want::Placeholder, key, started: Instant::now(), lut: None });
+                            self.running = Some(Running { child, want: Want::Placeholder, key, started: Instant::now(), lut: None, smooth: None });
                         }
                     }
                     return Report { state: "off".into(), detail: "Off: an app still has the Studio camera open, so it shows a dark picture until the app lets go.".into(), device: loopback, ..Report::default() };
@@ -295,12 +370,14 @@ impl Studio {
         // Has what runs ended by itself?
         if let Some(running) = self.running.as_mut() {
             if let Ok(Some(status)) = running.child.try_wait() {
-                let (lived, lut) = (running.started.elapsed(), running.lut);
+                let (lived, lut, smooth) = (running.started.elapsed(), running.lut, running.smooth);
                 self.running = None;
                 let said = last_lines(&log_path(), 3);
-                if lut == Some(crate::lut::Route::Gpu) && crate::lut::blames_gpu(&said) {
+                let on_gpu = lut == Some(crate::lut::Route::Gpu) || smooth == Some(crate::lut::Route::Gpu);
+                if on_gpu && crate::lut::blames_gpu(&said) {
                     // The graphics chip did not manage it on the real picture: the processor from now on.
-                    self.lut_gpu = Some(Err(format!("it stopped on the real picture: {said}")));
+                    if lut == Some(crate::lut::Route::Gpu) { self.lut_gpu = Some(Err(format!("it stopped on the real picture: {said}"))); }
+                    if smooth == Some(crate::lut::Route::Gpu) { self.smooth_gpu = Some(Err(format!("it stopped on the real picture: {said}"))); }
                 } else if lived < Duration::from_secs(5) || !status.success() {
                     self.last_error = Some(if said.is_empty() { format!("ffmpeg stopped ({status}).") } else { said });
                     self.retry_after = Some(Instant::now() + RETRY);
@@ -335,13 +412,25 @@ impl Studio {
             },
             _ => None,
         };
+        // A 30 fps mode doubled to 60 by frame mixing, on the graphics chip if it can (tested once).
+        let camera_format = match (want, camera) { (Want::Nothing, _) | (_, None) => None, (_, Some(c)) => self.format_for(c, !pipeline_running) };
+        let smooth = match (&camera_format, want) {
+            (Some(format), Want::Pipeline) if config.smooth_60 && format.fps <= 31.0 => {
+                if self.smooth_gpu.is_none() { self.smooth_gpu = Some(probe_smoothing()); }
+                Some(match &self.smooth_gpu {
+                    Some(Ok(mixer)) => Smooth { route: crate::lut::Route::Gpu, mixer: mixer.clone() },
+                    _ => Smooth { route: crate::lut::Route::Cpu, mixer: String::new() },
+                })
+            }
+            _ => None,
+        };
         let target = match (want, camera) {
             (Want::Nothing, _) | (_, None) => None,
-            (want, Some(camera)) => self.format_for(camera, !pipeline_running).map(|format| {
+            (want, Some(camera)) => camera_format.clone().map(|format| {
                 // An app holding the Studio camera fixes its size: keep to it (scaling if the camera's mode
                 // changed since), until the app lets go.
                 let held = if watched { crate::video::current_mode(&loopback).map(|m| (m.width, m.height)).filter(|(w, h)| *w > 0 && *h > 0) } else { None };
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path())), held) }
+                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path())), held, smooth.as_ref()) }
                     else { placeholder_args(&loopback, &format) };
                 (want, args)
             }),
@@ -357,7 +446,8 @@ impl Studio {
                         Ok(child) => {
                             crate::service::note(&format!("Studio camera: {}.", if want == Want::Pipeline { "an app opened it; running" } else { "waiting for an app to open it" }));
                             let lut_route = if want == Want::Pipeline { lut.as_ref().map(|(r, _)| *r) } else { None };
-                            self.running = Some(Running { child, want, key, started: Instant::now(), lut: lut_route });
+                            let smooth_route = if want == Want::Pipeline { smooth.as_ref().map(|s| s.route) } else { None };
+                            self.running = Some(Running { child, want, key, started: Instant::now(), lut: lut_route, smooth: smooth_route });
                             if want == Want::Pipeline { self.last_error = None; }
                         }
                         Err(error) => {
@@ -391,7 +481,10 @@ impl Studio {
                             if seconds > 1.5 { report.fps = Some((last - first) as f64 / seconds); }
                         }
                     }
-                    report.target_fps = self.format.as_ref().map(|(_, f)| if config.limit_fps { f.fps.min(30.0) } else { f.fps });
+                    report.target_fps = self.format.as_ref().map(|(_, f)| {
+                        let fps = if config.limit_fps { f.fps.min(30.0) } else { f.fps };
+                        if running.smooth.is_some() { (f.fps * 2.0).round() } else { fps }
+                    });
                 }
                 if let Some(ticks) = cpu_ticks(pid) {
                     if let Some((at, before)) = self.cpu_sample {
@@ -415,6 +508,14 @@ impl Studio {
                         report.detail = format!("{} {why}", report.detail).trim().to_string();
                     }
                     if let Some(problem) = &lut_problem { report.detail = format!("{} The LUT is not applied: {problem}", report.detail); }
+                    if let Some(route) = running.smooth {
+                        report.detail = format!("{} Smoothing to 60 fps on the {} (frame mixing).", report.detail, route.name());
+                        if route == crate::lut::Route::Cpu {
+                            if let Some(Err(said)) = &self.smooth_gpu { report.detail = format!("{} The graphics chip could not: {said}", report.detail); }
+                        }
+                    } else if config.smooth_60 && self.format.as_ref().is_some_and(|(_, f)| f.fps > 31.0) {
+                        report.detail = format!("{} Smoothing to 60 fps is for 30 fps modes; the camera already gives 60.", report.detail);
+                    }
                 } else {
                     report.state = "waiting".into();
                     report.detail = "Ready: choose \u{201c}Tiny 2 Lite Studio\u{201d} in an app. The camera is not used until then.".into();
@@ -548,7 +649,7 @@ mod tests {
 
     #[test]
     fn the_commands_read_the_camera_and_write_the_virtual_one() {
-        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None, None).join(" ");
+        let pass = pipeline_args("/dev/video0", "/dev/video42", &fmt(), None, None, None, None).join(" ");
         assert!(pass.contains("-input_format mjpeg -video_size 1920x1080 -framerate 30.000 -i /dev/video0"), "{pass}");
         // Low delay: no buffering or probing, one decoding thread, frames passed on as they come.
         assert!(pass.contains("-fflags nobuffer -flags low_delay") && pass.contains("-threads 1 -f v4l2"), "{pass}");
@@ -556,14 +657,28 @@ mod tests {
         assert!(pass.contains("-vf format=yuyv422 -progress") && pass.ends_with("-f v4l2 /dev/video42"), "{pass}");
         // A 60 fps camera is brought down to 30 first; a 30 fps one is left alone.
         let sixty = Format { fps: 60.0, ..fmt() };
-        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0), None, None).join(" ").contains("-vf fps=30,format=yuyv422"));
-        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0), None, None).join(" ").contains("fps=30,"));
+        assert!(pipeline_args("/dev/video0", "/dev/video42", &sixty, Some(30.0), None, None, None).join(" ").contains("-vf fps=30,format=yuyv422"));
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &fmt(), Some(30.0), None, None, None).join(" ").contains("fps=30,"));
         // 4K from the camera into a Studio camera an app holds at 1080p: scaled to fit, not tiled.
         let uhd = Format { width: 3840, height: 2160, fps: 30.0, input: "mjpeg".into() };
-        let held = pipeline_args("/dev/video0", "/dev/video42", &uhd, Some(30.0), None, Some((1920, 1080))).join(" ");
+        let held = pipeline_args("/dev/video0", "/dev/video42", &uhd, Some(30.0), None, Some((1920, 1080)), None).join(" ");
         assert!(held.contains("-video_size 3840x2160") && held.contains("-vf scale=1920:1080:flags=bilinear,format=yuyv422"), "{held}");
+        // 30 fps doubled to 60 by frame mixing: on the graphics chip in the same pass as the LUT, or on its own.
+        use crate::lut::Route;
+        let gpu = Smooth { route: Route::Gpu, mixer: "linear".into() };
+        let cpu = Smooth { route: Route::Cpu, mixer: String::new() };
+        let lut = Path::new("/run/l.cube");
+        assert_eq!(filters(Some((Route::Gpu, lut)), Some(&gpu), 30.0), "libplacebo=lut=/run/l.cube:lut_type=normalized:fps=60:frame_mixer=linear:format=yuv422p,format=yuyv422");
+        assert_eq!(filters(None, Some(&gpu), 30.0), "libplacebo=fps=60:frame_mixer=linear:format=yuv422p,format=yuyv422");
+        assert_eq!(filters(Some((Route::Cpu, lut)), Some(&gpu), 30.0), "lut3d=file=/run/l.cube:interp=tetrahedral,libplacebo=fps=60:frame_mixer=linear:format=yuv422p,format=yuyv422");
+        assert_eq!(filters(Some((Route::Cpu, lut)), Some(&cpu), 30.0), "lut3d=file=/run/l.cube:interp=tetrahedral,framerate=fps=60,format=yuyv422");
+        assert_eq!(filters(Some((Route::Gpu, lut)), None, 30.0), "libplacebo=lut=/run/l.cube:lut_type=normalized:format=yuv422p,format=yuyv422");
+        assert_eq!(filters(None, None, 30.0), "format=yuyv422");
+        let smoothed = pipeline_args("/dev/video0", "/dev/video42", &uhd, None, None, None, Some(&gpu)).join(" ");
+        assert!(smoothed.contains("-init_hw_device vulkan=vk") && smoothed.contains("fps=60:frame_mixer=linear"), "{smoothed}");
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &uhd, None, None, None, Some(&cpu)).join(" ").contains("vulkan"));
         // The same size needs no scaling.
-        assert!(!pipeline_args("/dev/video0", "/dev/video42", &uhd, None, None, Some((3840, 2160))).join(" ").contains("scale="));
+        assert!(!pipeline_args("/dev/video0", "/dev/video42", &uhd, None, None, Some((3840, 2160)), None).join(" ").contains("scale="));
         let wait = placeholder_args("/dev/video42", &fmt()).join(" ");
         assert!(wait.contains("color=c=0x101418:s=1920x1080:r=5") && wait.ends_with("-f v4l2 /dev/video42"), "{wait}");
         assert!(!wait.contains("/dev/video0"), "the placeholder never touches the camera");

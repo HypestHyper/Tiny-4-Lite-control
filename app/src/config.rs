@@ -160,6 +160,8 @@ pub struct StudioConfig {
     pub lut_favourites: Vec<String>,
     /// The strength last set for each LUT, brought back when it is picked again.
     pub lut_strengths: BTreeMap<String, u8>,
+    /// A 30 fps camera mode (4K30, say) made 60 fps by mixing neighbouring frames.
+    pub smooth_60: bool,
 }
 
 impl StudioConfig {
@@ -178,7 +180,7 @@ impl StudioConfig {
 }
 
 impl Default for StudioConfig {
-    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new(), lut_strengths: BTreeMap::new() } }
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new(), lut_strengths: BTreeMap::new(), smooth_60: false } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.
