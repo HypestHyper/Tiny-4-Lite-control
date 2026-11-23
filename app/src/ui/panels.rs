@@ -836,7 +836,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
     choose.append(&remove);
     choose.append(&add);
     section.append(&choose);
-    // Changed elsewhere (the Look list on the preview, a preset): show the same here.
+    // Changed elsewhere (the LUTs button, a preset): show the same here.
     {
         let seen = Rc::new(RefCell::new((config.lut.clone(), config.lut_on, config.lut_favourites.clone(), config.lut_strength)));
         let (weak, switch, reveal, strength, fill, show_star) = (picker.downgrade(), switch.clone(), reveal.clone(), strength.clone(), fill.clone(), show_star.clone());
