@@ -136,6 +136,56 @@ pub fn app_logo(size: i32) -> gtk::Picture {
     picture
 }
 
+/// The value of a slider in a pill, with a small up and down arrow on its right that move the slider by one
+/// step (one stop on a slider over stops). Holding an arrow repeats, slowly at first, then faster.
+fn value_stepper(value: &gtk::Label, scale: &gtk::Scale, label: &str) -> gtk::Box {
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    pill.add_css_class("value-pill");
+    pill.set_valign(gtk::Align::Center);
+    pill.append(value);
+    let arrows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    arrows.set_valign(gtk::Align::Center);
+    for (glyph, direction, words) in [("expand_less", 1.0, "up"), ("expand_more", -1.0, "down")] {
+        let arrow = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        arrow.add_css_class("pill-arrow");
+        arrow.append(&icon(glyph));
+        arrow.set_tooltip_text(Some(&format!("{label} one step {words} (hold to keep going)")));
+        arrow.set_accessible_role(gtk::AccessibleRole::Button);
+        label_accessible(&arrow, &format!("{label} one step {words}"));
+        let scale = scale.clone();
+        let nudge = move || {
+            let adjustment = scale.adjustment();
+            let step = adjustment.step_increment().max(f64::EPSILON);
+            let target = (scale.value() + direction * step).clamp(adjustment.lower(), adjustment.upper());
+            if (target - scale.value()).abs() > f64::EPSILON / 2.0 { scale.set_value(target); }
+        };
+        let repeat: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+        let press = gtk::GestureClick::new();
+        {
+            let (repeat, nudge) = (repeat.clone(), nudge.clone());
+            press.connect_pressed(move |_, _, _, _| {
+                nudge();
+                if let Some(id) = repeat.borrow_mut().take() { id.remove(); }
+                // After a pause, keep stepping while held.
+                let (slot, nudge) = (repeat.clone(), nudge.clone());
+                *repeat.borrow_mut() = Some(glib::timeout_add_local_once(Duration::from_millis(400), move || {
+                    let nudge = nudge.clone();
+                    let id = glib::timeout_add_local(Duration::from_millis(70), move || { nudge(); glib::ControlFlow::Continue });
+                    *slot.borrow_mut() = Some(id);
+                }));
+            });
+        }
+        let stop = { let repeat = repeat.clone(); move || { if let Some(id) = repeat.borrow_mut().take() { id.remove(); } } };
+        { let stop = stop.clone(); press.connect_released(move |_, _, _, _| stop()); }
+        { let stop = stop.clone(); press.connect_cancel(move |_, _| stop()); }
+        { let stop = stop.clone(); press.connect_stopped(move |_| stop()); }
+        arrow.add_controller(press);
+        arrows.append(&arrow);
+    }
+    pill.append(&arrows);
+    pill
+}
+
 /// Let a card fold down to its heading: an arrow at the right of the heading hides or shows the rest. The
 /// choice is remembered by the card's title. Returns the box the card's content goes in.
 pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {
@@ -277,7 +327,8 @@ enum Control {
     Switch(gtk::Switch),
     Segments(Segmented),
     Menu { drop: gtk::DropDown, values: Rc<RefCell<Vec<i64>>> },
-    Slider { scale: gtk::Scale, value: gtk::Label, reset: gtk::Button },
+    /// `stepper` is the pill with the value and its fine-step arrows, shown beside the title.
+    Slider { scale: gtk::Scale, value: gtk::Label, reset: gtk::Button, stepper: gtk::Box },
 }
 
 struct Row {
@@ -356,7 +407,7 @@ impl SettingRow {
             root.append(&head);
         } else {
             head.append(&info_slot);
-            if let Control::Slider { value, .. } = &control { head.insert_child_after(value, Some(&titles)); }
+            if let Control::Slider { stepper, .. } = &control { head.insert_child_after(stepper, Some(&titles)); }
             root.append(&head);
             root.append(&control_box);
         }
@@ -425,12 +476,13 @@ impl SettingRow {
                 let value = line("", &["setting-value", "tnum"]);
                 value.set_xalign(1.0);
                 value.set_valign(gtk::Align::Center);
+                let stepper = value_stepper(&value, &scale, setting.label);
                 let reset = icon_button("restart_alt", "Reset to default", true);
                 reset.add_css_class("flat-icon");
                 reset.add_css_class("reset");
                 // Always there, so the slider never changes width; dimmed while there is nothing to reset.
                 reset.set_sensitive(false);
-                (Control::Slider { scale, value, reset }, false)
+                (Control::Slider { scale, value, reset, stepper }, false)
             }
         }
     }
@@ -463,7 +515,7 @@ impl SettingRow {
                     SettingRow(row).choose(value);
                 });
             }
-            Control::Slider { scale, value, reset } => {
+            Control::Slider { scale, value, reset, .. } => {
                 let weak = Rc::downgrade(&self.0);
                 let value_label = value.clone();
                 scale.connect_value_changed(move |scale| {
@@ -678,7 +730,7 @@ impl SettingRow {
                 let position = value.and_then(|v| values.borrow().iter().position(|x| *x == v.as_i64()));
                 drop.set_selected(position.map(|p| p as u32).unwrap_or(gtk::INVALID_LIST_POSITION));
             }
-            Control::Slider { scale, value: label, reset } => {
+            Control::Slider { scale, value: label, reset, .. } => {
                 if let Some(v) = value {
                     let snapshot = row.store.snapshot();
                     let position = row.setting.slider(&snapshot).map(|spec| spec.position_of(v.as_f64())).unwrap_or(v.as_f64());
@@ -708,6 +760,7 @@ impl SettingRow {
         let blockers = setting.blockers(snapshot);
         let blocked = !blockers.is_empty();
         row.control_box.set_sensitive(!blocked && !row.cooling.get());
+        if let Control::Slider { stepper, .. } = &row.control { stepper.set_sensitive(!blocked && !row.cooling.get()); }
         if blocked { row.root.add_css_class("blocked"); } else { row.root.remove_css_class("blocked"); }
         row.reason.set_visible(blocked);
         if let Some(first) = blockers.first() { row.reason_text.set_text(first); }

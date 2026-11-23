@@ -410,6 +410,12 @@ window.t4.csd { border-radius: §18§; }
 .setting-label { font-size: ¶14¶; font-weight: 600; }
 .setting-summary { font-size: ¶13¶; color: @t_on_surface_variant; }
 .setting-value { font-size: ¶13¶; font-weight: 600; color: @t_primary; font-feature-settings: "tnum"; }
+.t4 .value-pill { background: alpha(@t_primary, 0.12); border-radius: 999px; padding: §1§ §3§ §1§ §10§; min-height: §28§; }
+.t4 .value-pill .pill-arrow { min-width: §20§; min-height: §14§; border-radius: §5§; color: @t_primary; }
+.t4 .value-pill .pill-arrow .icon { font-size: §16§; margin: -§2§ 0; }
+.t4 .value-pill .pill-arrow:hover { background: alpha(@t_primary, 0.16); }
+.t4 .value-pill:disabled { background: alpha(@t_on_surface, 0.06); }
+.t4 .value-pill:disabled .setting-value, .t4 .value-pill:disabled .pill-arrow { color: alpha(@t_on_surface, 0.38); }
 .setting-row.blocked .setting-label { color: @t_on_surface_variant; }
 .reason { color: @t_tertiary; font-size: ¶12.5¶; }
 .reason .icon { color: @t_tertiary; font-size: §16§; min-width: §16§; }
