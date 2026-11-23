@@ -60,12 +60,8 @@ sudo pkill -INT -f "tshark -i usbmon$bus" || true
 sleep 2
 
 echo "== Writing the report"
-tshark -r "$out/capture.pcapng" -Y "usb.device_address == $addr && usb.transfer_type == 0x02" -T fields \
-    -E header=y -E separator=/t \
-    -e frame.time_epoch -e usb.urb_type -e usb.urb_status -e usb.endpoint_address -e usb.bmRequestType \
-    -e usb.setup.bRequest -e usb.setup.wValue -e usb.setup.wIndex -e usb.data_len -e usb.control.Response -e usb.capdata \
-    >"$out/packets.tsv" 2>>"$out/tshark.log"
-python3 "$here/report.py" "$out/probe.log" "$out/packets.tsv" >"$out/report.txt"
+sudo chown "$(id -u):$(id -g)" "$out/capture.pcapng" 2>/dev/null || true
+python3 "$here/report.py" "$out/probe.log" "$out/capture.pcapng" "$addr" >"$out/report.txt"
 echo
 echo "Done. Report: $out/report.txt  ($(wc -l <"$out/report.txt") lines)"
 echo "Raw capture: $out/capture.pcapng"
