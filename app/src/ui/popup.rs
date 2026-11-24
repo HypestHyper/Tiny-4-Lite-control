@@ -42,6 +42,12 @@ impl PreviewWindow {
         controls.append(&ctx.hub.peaking_button());
         controls.append(&pause);
         controls.append(&dock);
+        // Close, like the window's own close: its size is kept and the preview goes back to the main window.
+        let close = widgets::icon_button("close", "Close the preview window", true);
+        close.add_css_class("on-stage");
+        let weak_window = window.downgrade();
+        close.connect_clicked(move |_| { if let Some(window) = weak_window.upgrade() { window.close(); } });
+        controls.append(&close);
         view.add_control(&controls);
 
         window.set_child(Some(view.widget()));

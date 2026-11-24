@@ -87,6 +87,9 @@
 
 ### Added
 
+- A close button (×) on the popped-out preview; it keeps the window's size and returns the preview to the main
+  window, like closing it any other way.
+
 - The Microphone switch shows whether the camera's microphone is really on, from the computer's sound cards (the
   camera's card goes away while its microphone is off), and a level meter under it while it is on. The meter only
   runs while it is on screen; the sound is measured on the computer and not kept.
