@@ -230,6 +230,31 @@ pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {
 }
 
 /// An "i" button with a popover. Used instead of long help text in rows.
+/// A row's summary, kept short: a summary of up to 80 characters is shown as it is; a longer one shows
+/// only its first sentence (if that is short) and goes whole into an info button.
+pub fn short_summary(summary: &str) -> (String, bool) {
+    const SHORT: usize = 80;
+    if summary.chars().count() <= SHORT { return (summary.to_string(), false); }
+    let first = summary.split_inclusive(". ").next().unwrap_or("").trim_end();
+    (if first.chars().count() <= SHORT && first.len() < summary.len() { first.to_string() } else { String::new() }, true)
+}
+
+/// The title and summary of a row, with the long part of the summary behind an info button placed at the
+/// end of `row` by the caller (returned so it can go after the row's control).
+pub fn titles_with_info(title: &str, summary: &str) -> (gtk::Box, Option<gtk::Button>) {
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&text(title, &["setting-label"]));
+    let (short, long) = short_summary(summary);
+    if !short.is_empty() {
+        let line = text(&short, &["setting-summary"]);
+        line.set_wrap(true);
+        line.set_xalign(0.0);
+        titles.append(&line);
+    }
+    (titles, long.then(|| info_button(title, &[summary.to_string()])))
+}
+
 pub fn info_button(title: &str, paragraphs: &[String]) -> gtk::Button {
     let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
     body.add_css_class("info-pop");
@@ -958,5 +983,19 @@ mod tests {
     #[test]
     fn every_listed_icon_resolves() {
         for name in super::super::icons::NAMES { assert!(super::super::icons::glyph(name).is_some()); }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::short_summary;
+
+    #[test]
+    fn long_summaries_keep_only_a_short_first_sentence() {
+        assert_eq!(short_summary("Short and sweet."), ("Short and sweet.".to_string(), false));
+        let long = "The camera follows you only within the limits. A limit that is off lets tracking use the full range on that axis, and more words follow here.";
+        assert_eq!(short_summary(long), ("The camera follows you only within the limits.".to_string(), true));
+        let one = "One very long sentence without any full stop in the middle that keeps going and going past eighty characters";
+        assert_eq!(short_summary(one), (String::new(), true));
     }
 }

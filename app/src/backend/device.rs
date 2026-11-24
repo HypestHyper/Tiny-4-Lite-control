@@ -441,6 +441,8 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                     0x6804 => 1.0f32.to_le_bytes().to_vec(),
                     // The tracking area's return position: pan 15°, tilt 10° up, zoom 1.2×.
                     0x4ec4 => zone_home_payload(15.0, 10.0, 1.2).to_vec(),
+                    0x80c2 => 50i16.to_le_bytes().to_vec(),
+                    0xa182 => 600u32.to_le_bytes().to_vec(),
                     0x3884 => {
                         let mut v = 3u32.to_le_bytes().to_vec();
                         for f in [0.0f32, 0.0, 0.0, 1.0, 0.0] { v.extend_from_slice(&f.to_le_bytes()); }
@@ -646,6 +648,13 @@ const ZONE_PITCH_MAX_GET: u16 = 0x4dc4;
 const ZONE_ENABLED_SET: u16 = 0x5084;
 const ZONE_AUTO_SELECT_SET: u16 = 0x4e04;
 const ZONE_AUTO_SELECT_GET: u16 = 0x4e44;
+// The hand-tracking area (aiSetHandZone{Yaw,Pitch}{Min,Max}R, undeclared in the SDK's headers): the same
+// f32 degrees as the person-tracking area, set with 0x2044 / 0x20c4 / 0x2144 / 0x21c4 (capture of 2026-11-24).
+// The camera does not answer reads of it, so it is sent, never shown as read back.
+const HAND_YAW_MIN_SET: u16 = 0x2044;
+const HAND_YAW_MAX_SET: u16 = 0x20c4;
+const HAND_PITCH_MIN_SET: u16 = 0x2144;
+const HAND_PITCH_MAX_SET: u16 = 0x21c4;
 pub(crate) const ZONE_YAW_LIMIT: f64 = 120.0;
 pub(crate) const ZONE_PITCH_LIMIT: f64 = 90.0;
 
@@ -698,11 +707,26 @@ pub(crate) fn get_tracking_area(device: &str) -> Result<((f64, f64), (f64, f64))
 /// Send what the settings say: the area's limits (the gimbal limits, or the camera's full range for an axis
 /// whose limit is off) and switch it on, or switch it off.
 pub(crate) fn apply_tracking_area(device: &str, config: &crate::config::AppConfig) -> Result<(), String> {
-    if !config.tracking_area { return set_tracking_area_enabled(device, false); }
-    let pan = if config.pan_limit { (config.pan_limit_low, config.pan_limit_high) } else { (-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT) };
-    let tilt = if config.tilt_limit { (config.tilt_limit_low, config.tilt_limit_high) } else { (-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT) };
+    let full = ((-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT), (-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT));
+    if !config.tracking_area {
+        // Hand tracking has no on/off for its area, so off is the whole range.
+        set_hand_area_limits(device, full.0, full.1)?;
+        return set_tracking_area_enabled(device, false);
+    }
+    let pan = if config.pan_limit { (config.pan_limit_low, config.pan_limit_high) } else { full.0 };
+    let tilt = if config.tilt_limit { (config.tilt_limit_low, config.tilt_limit_high) } else { full.1 };
     set_tracking_area_limits(device, pan, tilt)?;
+    set_hand_area_limits(device, pan, tilt)?;
     set_tracking_area_enabled(device, true)
+}
+
+/// The hand-tracking area, from our pan and tilt limits (converted like the person-tracking area).
+pub(crate) fn set_hand_area_limits(device: &str, pan: (f64, f64), tilt: (f64, f64)) -> Result<(), String> {
+    let zone = tracking_area_to_camera(pan, tilt);
+    for (command, value) in [(HAND_YAW_MIN_SET, zone[0]), (HAND_YAW_MAX_SET, zone[1]), (HAND_PITCH_MIN_SET, zone[2]), (HAND_PITCH_MAX_SET, zone[3])] {
+        send_camera_preset_command(device, command, &value.to_le_bytes())?;
+    }
+    Ok(())
 }
 
 // The return position ("after exceeding the tracking range, the gimbal returns to the set position" in OBSBOT
@@ -1085,6 +1109,11 @@ pub(crate) fn xu_send_frame(device: &str, function_group: [u8; 6], command: [u8;
 }
 
 pub(crate) fn obsbot_frame_with_payload(sequence: u16, command: u16, payload: &[u8]) -> Result<[u8; 60], String> {
+    obsbot_frame_to(0x04, sequence, command, payload)
+}
+
+/// A framed command to one of the camera's modules: 0x02 camera and audio, 0x04 AI and gimbal, 0x12 system.
+pub(crate) fn obsbot_frame_to(module: u8, sequence: u16, command: u16, payload: &[u8]) -> Result<[u8; 60], String> {
     if payload.len() > 44 {
         return Err(format!("OBSBOT command payload is too large: {} bytes", payload.len()));
     }
@@ -1093,7 +1122,7 @@ pub(crate) fn obsbot_frame_with_payload(sequence: u16, command: u16, payload: &[
     frame[1] = 0x25;
     frame[2..4].copy_from_slice(&sequence.to_le_bytes());
     frame[4..6].copy_from_slice(&12u16.to_le_bytes());
-    frame[8..12].copy_from_slice(&[0x0a, 0x04, command as u8, (command >> 8) as u8]);
+    frame[8..12].copy_from_slice(&[0x0a, module, command as u8, (command >> 8) as u8]);
     let header_crc = crc16_usb(&frame[..12]);
     frame[6..8].copy_from_slice(&header_crc.to_le_bytes());
     let len = payload.len() as u16;
@@ -1182,6 +1211,83 @@ pub(crate) fn preset_slot_index(slot: u8) -> Result<u32, String> {
     Ok(u32::from(slot))
 }
 
+pub(crate) fn send_obsbot_command(device: &str, module: u8, command: u16, payload: &[u8]) -> Result<(), String> {
+    let sequence = next_xu_sequence(xu_sequence_counter());
+    let mut frame = obsbot_frame_to(module, sequence, command, payload)?;
+    xu_query(device, 0x02, UVC_SET_CUR, &mut frame)?;
+    Ok(())
+}
+
+// ── Found with the SDK's undeclared functions (capture of 2026-11-24, round 3) ──
+
+const MIC_VOLUME_GET: u16 = 0x80c2;
+const MIC_VOLUME_SET: u16 = 0x8102;
+const CAMERA_SLEEP_GET: u16 = 0xa182;
+const CAMERA_SLEEP_SET: u16 = 0xa1c2;
+const LED_ENABLED_SET: u16 = 0x75cd;
+const FOCUS_POINT_SET: u16 = 0x3582;
+const SELECT_TARGET_SET: u16 = 0x0404;
+
+/// Microphone volume (cameraGetAudioVolumeR / cameraSetAudioVolumeR): i16, module 0x02. Read 50 on the Lite.
+pub(crate) fn get_mic_volume(device: &str) -> Result<i16, String> {
+    let reply = query_obsbot(device, 0x02, MIC_VOLUME_GET)?;
+    let bytes: [u8; 2] = reply.get(..2).ok_or("The camera sent a short volume.")?.try_into().unwrap();
+    Ok(i16::from_le_bytes(bytes))
+}
+
+pub(crate) fn set_mic_volume(device: &str, volume: i16) -> Result<(), String> {
+    send_obsbot_command(device, 0x02, MIC_VOLUME_SET, &volume.clamp(0, 100).to_le_bytes())
+}
+
+/// The camera's own sleep timer (cameraGetAutoSleepTimeR / cameraSetAutoSleepTimeR): u32 seconds, 0 is off.
+pub(crate) fn get_camera_sleep_time(device: &str) -> Result<u32, String> {
+    let reply = query_obsbot(device, 0x02, CAMERA_SLEEP_GET)?;
+    let bytes: [u8; 4] = reply.get(..4).ok_or("The camera sent a short sleep time.")?.try_into().unwrap();
+    Ok(u32::from_le_bytes(bytes))
+}
+
+pub(crate) fn set_camera_sleep_time(device: &str, seconds: u32) -> Result<(), String> {
+    send_obsbot_command(device, 0x02, CAMERA_SLEEP_SET, &seconds.min(65535).to_le_bytes())
+}
+
+/// The status light's own switch (sysMgSetLedEnabledR), module 0x12. The camera does not answer a read.
+pub(crate) fn set_led_enabled(device: &str, on: bool) -> Result<(), String> {
+    send_obsbot_command(device, 0x12, LED_ENABLED_SET, &[u8::from(on)])
+}
+
+/// Focus on a point of the picture (cameraSetUserFocusPos): x and y from 0 to 1 across the picture, then
+/// 8 zero bytes and 100, as the SDK sends them.
+pub(crate) fn focus_point_payload(x: f32, y: f32) -> [u8; 20] {
+    let mut payload = [0u8; 20];
+    payload[0..4].copy_from_slice(&x.clamp(0.0, 1.0).to_le_bytes());
+    payload[4..8].copy_from_slice(&y.clamp(0.0, 1.0).to_le_bytes());
+    payload[16..20].copy_from_slice(&100u32.to_le_bytes());
+    payload
+}
+
+pub(crate) fn set_focus_point(device: &str, x: f32, y: f32) -> Result<(), String> {
+    send_obsbot_command(device, 0x02, FOCUS_POINT_SET, &focus_point_payload(x, y))
+}
+
+/// Track the person at a point of the picture (aiSetSelectTargetByPos): x, y from 0 to 1, then a 0 byte.
+pub(crate) fn select_target_payload(x: f32, y: f32) -> [u8; 9] {
+    let mut payload = [0u8; 9];
+    payload[0..4].copy_from_slice(&x.clamp(0.0, 1.0).to_le_bytes());
+    payload[4..8].copy_from_slice(&y.clamp(0.0, 1.0).to_le_bytes());
+    payload
+}
+
+pub(crate) fn select_target_at(device: &str, x: f32, y: f32) -> Result<(), String> {
+    send_obsbot_command(device, 0x04, SELECT_TARGET_SET, &select_target_payload(x, y))
+}
+
+/// Follow the person at a point of the picture. With tracking off, Normal tracking is turned on first, since
+/// picking a target only means something while the camera tracks.
+pub(crate) fn track_at(device: &str, x: f32, y: f32) -> Result<(), String> {
+    if xu_status(device).is_ok_and(|status| status[0x18] == 0) { set_ai_mode(device, (0x02, 0x00))?; }
+    select_target_at(device, x, y)
+}
+
 pub(crate) fn send_camera_preset_command(device: &str, command: u16, payload: &[u8]) -> Result<(), String> {
     let sequence = next_xu_sequence(xu_sequence_counter());
     let mut frame = obsbot_frame_with_payload(sequence, command, payload)?;
@@ -1259,6 +1365,9 @@ pub(crate) fn set_led_brightness(device: &str, level: u8) -> Result<(), String> 
     let mut data = [0u8; 60];
     data[..payload.len()].copy_from_slice(&payload);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
+    // A level also turns on the light's own switch, which the SDK probe of 2026-11-24 may have left off
+    // (it cannot be read). Off is the brightness 0 command alone, as before.
+    if level > 0 { set_led_enabled(device, true)?; }
     update_config(|config| config.led_brightness = Some(level));
     Ok(())
 }
@@ -2158,6 +2267,26 @@ mod settle_tests {
         }
     }
 
+    /// Round 3 of the SDK captures (undeclared functions): every frame reproduced byte for byte.
+    #[test]
+    fn round_three_frames_are_reproduced_exactly() {
+        let cases: Vec<(u8, u16, u16, Vec<u8>, &str)> = vec![
+            (0x02, 0x08, MIC_VOLUME_SET, 49i16.to_le_bytes().to_vec(), "aa 25 08 00 0c 00 58 8f 0a 02 02 81 02 00 eb 96 31 00"),
+            (0x02, 0x05, CAMERA_SLEEP_SET, 600u32.to_le_bytes().to_vec(), "aa 25 05 00 0c 00 98 ad 0a 02 c2 a1 04 00 0c a7 58 02 00 00"),
+            (0x12, 0x1c, LED_ENABLED_SET, vec![1], "aa 25 1c 00 0c 00 4d 7d 0a 12 cd 75 01 00 27 ff 01"),
+            (0x02, 0x36, FOCUS_POINT_SET, focus_point_payload(0.5, 0.5).to_vec(),
+                "aa 25 36 00 0c 00 58 32 0a 02 82 35 14 00 51 7b 00 00 00 3f 00 00 00 3f 00 00 00 00 00 00 00 00 64 00 00 00"),
+            (0x04, 0x38, SELECT_TARGET_SET, select_target_payload(0.5, 0.5).to_vec(),
+                "aa 25 38 00 0c 00 7a 72 0a 04 04 04 09 00 f5 22 00 00 00 3f 00 00 00 3f 00"),
+        ];
+        for (module, sequence, command, payload, captured) in cases {
+            let expected: Vec<u8> = captured.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+            let frame = obsbot_frame_to(module, sequence, command, &payload).unwrap();
+            assert_eq!(&frame[..expected.len()], &expected[..], "command 0x{command:04x}");
+            assert!(frame[expected.len()..].iter().all(|b| *b == 0));
+        }
+    }
+
     /// The SDK's bytes (2026-11-24 capture): auto gain is the tagged `17 01 xx` command, and vertical tracking
     /// is command 0x0cc4 with 0 / 1 / 2.
     #[test]
@@ -2195,6 +2324,9 @@ mod settle_tests {
         let (pan, tilt, zoom) = zone_home_from_reply(&boot).unwrap();
         assert!((pan - 27.64).abs() < 0.01 && (tilt - 22.45).abs() < 0.01 && zoom == 1.0);
         assert_eq!(zone_home_from_reply(&zone_home_payload(-12.5, 20.0, 1.5)).unwrap(), (-12.5, 20.0, 1.5));
+        // The hand-tracking area's yaw min, as the SDK sent it (sequence 0x22, -30°).
+        let hand = obsbot_frame_with_payload(0x22, HAND_YAW_MIN_SET, &(-30.0f32).to_le_bytes()).unwrap();
+        assert_eq!(&hand[..20], &[0xaa, 0x25, 0x22, 0x00, 0x0c, 0x00, 0x6a, 0x1c, 0x0a, 0x04, 0x44, 0x20, 0x04, 0x00, 0x3b, 0x97, 0x00, 0x00, 0xf0, 0xc1]);
         let on = obsbot_frame_with_payload(0x1c, ZONE_ENABLED_SET, &[1]).unwrap();
         assert_eq!(&on[..17], &[0xaa, 0x25, 0x1c, 0x00, 0x0c, 0x00, 0x5a, 0xf2, 0x0a, 0x04, 0x84, 0x50, 0x01, 0x00, 0x27, 0xff, 0x01]);
     }

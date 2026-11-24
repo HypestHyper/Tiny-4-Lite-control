@@ -247,7 +247,7 @@ pub fn stylesheet(palette: &Palette, geometric: f64, reduce_motion: bool, compos
     for (id, _, hex) in ACCENTS { css.push_str(&format!(".t4 button.swatch-{id} {{ background: {hex}; }}\n")); }
     if reduce_motion { css.push_str("\n* { transition: none; animation: none; }\n"); }
     // Without a compositor a shadow is drawn as a black frame, so drop them.
-    if !composited { css.push_str("\n.t4 popover > contents, .toast, .dialog-card { box-shadow: none; }\n"); }
+    if !composited { css.push_str("\n.t4 popover > contents, .t4 tooltip.background, .toast, .dialog-card { box-shadow: none; }\n"); }
     css
 }
 
@@ -257,8 +257,8 @@ const TEMPLATE: &str = r#"
 
 window.t4, window.t4 > contents { background: @t_surface_dim; color: @t_on_surface; }
 window.t4.csd { border-radius: §18§; }
-.t4 tooltip.background { background: @t_inverse_surface; color: @t_inverse_on_surface; border-radius: §8§; padding: §6§ §10§; }
-.t4 tooltip.background label { color: @t_inverse_on_surface; font-size: ¶12.5¶; }
+.t4 tooltip.background { background: @t_surface_high; color: @t_on_surface; border-radius: §8§; padding: §6§ §10§; border: 1px solid alpha(@t_on_surface, 0.12); box-shadow: 0 4px 12px alpha(#000000, 0.35); }
+.t4 tooltip.background label { color: @t_on_surface; font-size: ¶12.5¶; }
 
 /* Type */
 .app-title { font-size: ¶24¶; font-weight: 700; }

@@ -3,6 +3,7 @@
 /// Code point for a Material Symbols icon name.
 pub fn glyph(name: &str) -> Option<char> {
     let code = match name {
+        "ads_click" => 0xe762,
         "bedtime" => 0xf159,
         "blur_on" => 0xe3a5,
         "bookmarks" => 0xe98b,
@@ -61,6 +62,7 @@ pub fn glyph(name: &str) -> Option<char> {
 
 #[allow(dead_code)]
 pub const NAMES: &[&str] = &[
+    "ads_click",
     "bedtime",
     "blur_on",
     "bookmarks",

@@ -22,13 +22,10 @@ fn card(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     head.add_css_class("group-head");
     head.append(&widgets::icon(glyph));
     head.append(&widgets::text(title, &["group-title"]));
+    // What the card is for sits behind an info button, to keep the card itself short.
+    if !subtitle.is_empty() { head.append(&widgets::info_button(title, &[subtitle.to_string()])); }
     card.append(&head);
     let content = widgets::collapsible(&card, &head, title);
-    if !subtitle.is_empty() {
-        let sub = widgets::text(subtitle, &["setting-summary"]);
-        sub.set_margin_top(2);
-        content.append(&sub);
-    }
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.set_margin_top(12);
     content.append(&body);
@@ -41,12 +38,8 @@ fn section(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     head.append(&widgets::icon(glyph));
     head.append(&widgets::text(title, &["setting-label"]));
+    if !subtitle.is_empty() { head.append(&widgets::info_button(title, &[subtitle.to_string()])); }
     part.append(&head);
-    if !subtitle.is_empty() {
-        let sub = widgets::text(subtitle, &["setting-summary"]);
-        sub.set_margin_top(2);
-        part.append(&sub);
-    }
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.set_margin_top(10);
     part.append(&body);
@@ -551,19 +544,7 @@ pub fn sleep_timer_card() -> gtk::Box {
         "Puts the camera to sleep when it is not needed, so it does not stay on. All of these need the background service.");
     body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it at the top of this tab."));
     let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        titles.set_hexpand(true);
-        titles.append(&widgets::text(title, &["setting-label"]));
-        titles.append(&widgets::text(summary, &["setting-summary"]));
-        let switch = gtk::Switch::new();
-        switch.set_valign(gtk::Align::Center);
-        switch.set_active(active);
-        widgets::label_accessible(&switch, title);
-        switch.connect_active_notify(move |sw| on_change(sw.is_active()));
-        row.append(&titles);
-        row.append(&switch);
-        row
+        plain_switch_row(title, summary, active, move |on| on_change(on))
     };
     let config = current_config();
 
@@ -1203,15 +1184,18 @@ fn service_section(store: &Store) -> gtk::Box {
     // How it starts on this system, and every other way, for systems and window managers that Install
     // does not cover.
     let systemd = setup::systemd_user_available();
-    let route = widgets::text(if systemd {
+    let route_text = if systemd {
         "This system has a systemd user manager, so Install sets it up as a systemd user service: it starts with your session and systemd restarts it if it fails."
     } else {
         "This system has no systemd user manager (for example runit, OpenRC, s6 or dinit), so Install adds a desktop autostart entry and starts the service now. Desktop environments (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt) read that entry when you log in. A window manager on its own usually does not: add the line for yours below."
-    }, &["small", "dim"]);
-    route.set_wrap(true);
-    route.set_xalign(0.0);
-    body.append(&route);
-    body.append(&other_ways_to_start(store, systemd));
+    };
+    // How Install starts it on this system: behind an info button beside "Other ways to start it".
+    let ways = other_ways_to_start(store, systemd);
+    let heading = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    heading.append(&gtk::Label::new(Some("Other ways to start it")));
+    heading.append(&widgets::info_button("How Install starts it here", &[route_text.to_string()]));
+    ways.set_label_widget(Some(&heading));
+    body.append(&ways);
     card
 }
 
@@ -1393,13 +1377,7 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
 /// A switch row with a title and a line under it.
 fn plain_switch_row(title: &str, summary: &str, active: bool, changed: impl Fn(bool) + 'static) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    titles.set_hexpand(true);
-    titles.append(&widgets::text(title, &["setting-label"]));
-    let line = widgets::text(summary, &["setting-summary"]);
-    line.set_wrap(true);
-    line.set_xalign(0.0);
-    titles.append(&line);
+    let (titles, info) = widgets::titles_with_info(title, summary);
     let switch = gtk::Switch::new();
     switch.set_valign(gtk::Align::Center);
     switch.set_active(active);
@@ -1407,6 +1385,7 @@ fn plain_switch_row(title: &str, summary: &str, active: bool, changed: impl Fn(b
     switch.connect_active_notify(move |sw| changed(sw.is_active()));
     row.append(&titles);
     row.append(&switch);
+    if let Some(info) = info { row.append(&info); }
     row
 }
 
@@ -1522,7 +1501,7 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
         });
     }
     section.append(&plain_switch_row("Keep AI tracking inside these limits",
-        "The camera follows you only within the pan and tilt limits above (OBSBOT's limited-zone tracking). A limit that is off lets tracking use the camera's full range on that axis.",
+        "Person and hand tracking stay within the limits above. This is OBSBOT's limited-zone tracking, and the hand-tracking area set to the same limits. A limit that is off lets tracking use the camera's full range on that axis. The hand-tracking area cannot be read back from the camera, so only the person-tracking area shows below.",
         config.tracking_area, |on| update_config(|c| c.tracking_area = on)));
     // Auto-select: read from the camera when the card opens.
     let auto = gtk::Switch::new();
@@ -1548,12 +1527,11 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
         });
     }
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    titles.set_hexpand(true);
-    titles.append(&widgets::text("Auto-track new targets", &["setting-label"]));
-    titles.append(&widgets::text("After the person being followed leaves the area, the camera always picks them up again when they come back. On: it also starts following someone new who walks in. Off: it waits for the original person.", &["setting-summary"]));
+    let (titles, info) = widgets::titles_with_info("Auto-track new targets",
+        "Follow someone new who walks into the area. After the person being followed leaves the area, the camera always picks them up again when they come back. On: it also starts following someone new who walks in. Off: it waits for the original person.");
     row.append(&titles);
     row.append(&auto);
+    if let Some(info) = info { row.append(&info); }
     section.append(&row);
     section.append(&readout);
     section.append(&zone_home_row(store));

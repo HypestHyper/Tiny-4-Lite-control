@@ -221,6 +221,9 @@ pub struct Snapshot {
     pub exposure_comp: Option<u8>,
     /// Autofocus priority from CAM_GET_FACE_FOCUS; `None` if the camera did not answer.
     pub focus_priority: Option<FaceFocusPriority>,
+    /// Microphone volume and the camera's own sleep time, from the SDK's undeclared reads.
+    pub mic_volume: Option<i16>,
+    pub camera_sleep: Option<u32>,
     pub config: AppConfig,
     pub error: Option<String>,
 }
@@ -251,6 +254,8 @@ impl Snapshot {
         snapshot.status = retry(|| xu_status(device));
         snapshot.exposure_comp = retry(|| get_exposure_compensation(device));
         snapshot.focus_priority = retry(|| get_face_focus(device));
+        snapshot.mic_volume = retry(|| get_mic_volume(device));
+        snapshot.camera_sleep = retry(|| get_camera_sleep_time(device));
         snapshot
     }
 
@@ -531,9 +536,11 @@ fn number(value: Option<u8>) -> Option<Value> { value.map(|v| Value::Int(i64::fr
 /// The seven AI tracking modes offered, as (saved name, mode byte, sub-mode byte). Each was set and read
 /// back exactly from status offsets 0x18 and 0x1C (reference/15). Do not add modes without
 /// new hardware evidence.
-const TRACKING_MODES: [(&str, u8, u8); 7] = [
+// Index = the value in settings and presets. Hand (7) is 03/00, which the camera reported back when OBSBOT's
+// SDK set it on a Tiny 2 Lite (capture of 2026-11-24).
+const TRACKING_MODES: [(&str, u8, u8); 8] = [
     ("off", 0x00, 0x00), ("normal", 0x02, 0x00), ("upper", 0x02, 0x01), ("close", 0x02, 0x02),
-    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("group", 0x01, 0x00),
+    ("headless", 0x02, 0x03), ("lower", 0x02, 0x04), ("group", 0x01, 0x00), ("hand", 0x03, 0x00),
 ];
 const GESTURE_TARGET: [u8; 6] = [0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00];
 const GESTURE_ZOOM: [u8; 6] = [0x0a, 0x04, 0x44, 0x31, 0x01, 0x00];
@@ -677,6 +684,7 @@ fn build() -> Vec<Setting> {
                 opt(4, "Headless", "Frame the body below the head"),
                 opt(5, "Lower body", "Frame from the waist down"),
                 opt(6, "Group", "Keep several people in frame"),
+                opt(7, "Hand", "Follow your hand"),
             ]),
             |s| match (s.byte(0x18), s.byte(0x1c)) {
                 // The camera answered: an unrecognised pair is Unknown, never a guess.
@@ -738,6 +746,11 @@ fn build() -> Vec<Setting> {
             |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
             .last_sent()
             .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment. The camera can't report this setting, so the switch shows what you last chose here."),
+        Setting::custom("obsbot:mic_volume", Microphone, "Volume",
+            "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
+            |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),
+            |d, v| sent(set_mic_volume(d, v.as_i64().clamp(0, 100) as i16)))
+            .info("The microphone's own volume in the camera, read from the camera. OBSBOT's SDK calls it the audio volume; the Tiny 2 Lite starts at 50."),
         Setting::custom("obsbot:mic_during_sleep", Microphone, "Listen while asleep",
             "Keep the microphone running when the camera is asleep.", Kind::Toggle,
             |s| from_camera(s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
@@ -795,6 +808,13 @@ fn build() -> Vec<Setting> {
             |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
             .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position."),
+        Setting::custom("obsbot:camera_sleep", Power, "Camera's own sleep timer",
+            "The camera sleeps by itself after this long.",
+            Kind::Choice(vec![opt(0, "Off", ""), opt(300, "5 min", ""), opt(600, "10 min", ""), opt(900, "15 min", ""), opt(1800, "30 min", ""), opt(3600, "1 h", "")]),
+            |s| from_camera(s.camera_sleep.map(|v| Value::Int(i64::from(v)))),
+            |d, v| sent(set_camera_sleep_time(d, v.as_i64().clamp(0, 65535) as u32)))
+            .not_quick()
+            .info("A timer inside the camera, read from it (OBSBOT's SDK: auto sleep time). It works without this app or its background service. The Sleep timer card is this app's own timer, which can also follow your computer's sleep and shutdown; use either or both."),
     ]
 }
 
@@ -1166,11 +1186,11 @@ mod tests {
     }
 
     #[test]
-    fn there_are_exactly_seven_tracking_modes_and_unknown_tuples_stay_unknown() {
+    fn there_are_exactly_eight_tracking_modes_and_unknown_tuples_stay_unknown() {
         let setting = find("obsbot:ai_tracking_mode").unwrap();
         let labels: Vec<&str> = setting.options(&Snapshot::default()).iter().map(|o| o.label).collect();
-        assert_eq!(labels, ["No tracking", "Normal", "Upper body", "Close-up", "Headless", "Lower body", "Group"]);
-        for (index, (mode, sub)) in [(0u8, 0u8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (1, 0)].into_iter().enumerate() {
+        assert_eq!(labels, ["No tracking", "Normal", "Upper body", "Close-up", "Headless", "Lower body", "Group", "Hand"]);
+        for (index, (mode, sub)) in [(0u8, 0u8), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (1, 0), (3, 0)].into_iter().enumerate() {
             let mut status = [0u8; 60];
             status[0x18] = mode;
             status[0x1c] = sub;

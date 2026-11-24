@@ -12,6 +12,7 @@ fn ai_mode_id(status: &[u8; 60]) -> Option<i64> {
         (0x02, 0x03) => Some(4),
         (0x02, 0x04) => Some(5),
         (0x01, 0x00) => Some(6),
+        (0x03, 0x00) => Some(7),
         _ => None,
     }
 }
@@ -25,6 +26,7 @@ fn ai_mode_payload(id: i64) -> Option<(u8, u8)> {
         4 => Some((0x02, 0x03)),
         5 => Some((0x02, 0x04)),
         6 => Some((0x01, 0x00)),
+        7 => Some((0x03, 0x00)),
         _ => None,
     }
 }
@@ -104,6 +106,22 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if let Some(enabled) = match status[0x01] { 0 => Some(0), 1 => Some(1), _ => None } {
             settings.insert("obsbot:gesture:target_selection".into(), enabled);
         }
+        // Microphone and HDR, as the status block reports them (the same bytes the settings read).
+        if status[0x08] <= 3 { settings.insert("obsbot:noise_reduction".into(), i64::from(status[0x08])); }
+        if status[25] <= 1 { settings.insert("obsbot:auto_gain".into(), i64::from(status[25])); }
+        if status[16] <= 1 { settings.insert("obsbot:mic_during_sleep".into(), i64::from(status[16])); }
+        if let Some(on) = hdr_state_from_status(&status) { settings.insert("obsbot:hdr".into(), i64::from(on)); }
+    }
+    if let Ok(volume) = get_mic_volume(device) { settings.insert("obsbot:mic_volume".into(), i64::from(volume)); }
+    if let Ok(seconds) = get_camera_sleep_time(device) { settings.insert("obsbot:camera_sleep".into(), i64::from(seconds)); }
+    // The tracking area: on or off (this app's setting; its limits are the gimbal limits, which stay the
+    // same for every preset), whether new people are picked up, and where the camera returns to.
+    settings.insert("app:tracking_area".into(), i64::from(current_config().tracking_area));
+    if let Ok(on) = get_tracking_area_auto_select(device) { settings.insert("obsbot:zone_auto_select".into(), i64::from(on)); }
+    if let Ok((pan, tilt, zoom)) = get_zone_home(device) {
+        settings.insert("obsbot:return_pan_centi".into(), (pan * 100.0).round() as i64);
+        settings.insert("obsbot:return_tilt_centi".into(), (tilt * 100.0).round() as i64);
+        settings.insert("obsbot:return_zoom_milli".into(), (zoom * 1000.0).round() as i64);
     }
 
     // Autofocus priority comes from the camera only. If it does not answer, leave it out.
@@ -112,6 +130,10 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     }
 
     let saved = current_config();
+    // Settings the camera cannot report: what this app last sent.
+    if let Some(disabled) = saved.audio_microphone_disabled { settings.insert("obsbot:mic_enabled".into(), i64::from(!disabled)); }
+    if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
+    if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
     // Which way manual white balance is done; applied last, so the camera ends on that one.
     settings.insert("app:white_balance_by".into(), i64::from(saved.white_balance_by_gains));
     if let Some(ratio) = saved.gesture_zoom_ratio {
@@ -175,7 +197,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 .ok_or_else(|| "LED brightness must be between 0 and 3.".to_string())
                 .and_then(|level| set_led_brightness(device, level))
         } else if key == "obsbot:ai_tracking_mode" {
-            ai_mode_payload(*value).ok_or_else(|| if *value == 7 { "Hand tracking is no longer offered, so this setting was skipped.".to_string() } else { "Unknown AI tracking mode in preset.".to_string() })
+            ai_mode_payload(*value).ok_or_else(|| "Unknown AI tracking mode in preset.".to_string())
                 .and_then(|mode| set_ai_mode(device, mode))
         } else if key == "obsbot:vertical_tracking" {
             match *value {
@@ -205,6 +227,42 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             // Only matters with auto white balance off; the camera ignores both while it is on.
             let auto_wb = preset.settings.get("v4l2:white_balance_automatic").copied().unwrap_or(1);
             if auto_wb == 0 { set_white_balance_by_gains(device, *value == 1) } else { crate::backend::update_config(|c| c.white_balance_by_gains = *value == 1); Ok(()) }
+        } else if key == "obsbot:noise_reduction" {
+            u8::try_from(*value).ok().filter(|v| *v <= 3).ok_or_else(|| "Unknown noise reduction.".to_string())
+                .and_then(|level| set_noise_reduction(device, level))
+        } else if key == "obsbot:auto_gain" {
+            set_auto_gain(device, *value == 1)
+        } else if key == "obsbot:mic_during_sleep" {
+            set_microphone_during_sleep(device, *value == 1)
+        } else if key == "obsbot:mic_enabled" {
+            set_microphone_disabled(device, *value == 0)
+        } else if key == "obsbot:radio_distance" {
+            u8::try_from(*value).ok().filter(|v| *v <= 2).ok_or_else(|| "Unknown pickup distance.".to_string())
+                .and_then(|distance| set_radio_distance(device, distance))
+        } else if key == "obsbot:pop_filter" {
+            set_pop_filter(device, *value == 1)
+        } else if key == "obsbot:mic_volume" {
+            set_mic_volume(device, (*value).clamp(0, 100) as i16)
+        } else if key == "obsbot:hdr" {
+            // Only when it changes: switching HDR takes the camera about three seconds.
+            match xu_status(device).ok().and_then(|status| hdr_state_from_status(&status)) {
+                Some(now) if now == (*value == 1) => Ok(()),
+                _ => set_hdr_enabled(device, *value == 1),
+            }
+        } else if key == "obsbot:camera_sleep" {
+            set_camera_sleep_time(device, (*value).clamp(0, 65535) as u32)
+        } else if key == "app:tracking_area" {
+            update_config_checked(|c| c.tracking_area = *value == 1).and_then(|()| apply_tracking_area(device, &current_config()))
+        } else if key == "obsbot:zone_auto_select" {
+            set_tracking_area_auto_select(device, *value == 1)
+        } else if key == "obsbot:return_pan_centi" {
+            // The return position is one command: sent once, with its tilt and zoom.
+            match (preset.settings.get("obsbot:return_tilt_centi"), preset.settings.get("obsbot:return_zoom_milli")) {
+                (Some(tilt), Some(zoom)) => set_zone_home(device, *value as f64 / 100.0, *tilt as f64 / 100.0, *zoom as f64 / 1000.0),
+                _ => Err("The return position in this preset is incomplete.".into()),
+            }
+        } else if key == "obsbot:return_tilt_centi" || key == "obsbot:return_zoom_milli" {
+            continue;
         } else if key == "obsbot:gesture_zoom_ratio_milli" {
             set_gesture_zoom_ratio(device, *value as f32 / 1000.0)
         } else if let Some(name) = key.strip_prefix("obsbot:gesture:") {
@@ -307,11 +365,11 @@ mod tests {
 
     #[test]
     fn ai_mode_preset_ids_round_trip() {
-        for id in 0..=6 {
+        for id in 0..=7 {
             assert_eq!(ai_mode_id_from_payload(ai_mode_payload(id).unwrap()), Some(id));
         }
-        // Hand tracking is no longer offered; a preset that has it skips that one setting.
-        assert!(ai_mode_payload(7).is_none());
+        // Hand tracking (7) is offered again: 03/00, as the camera reported it to OBSBOT's SDK.
+        assert_eq!(ai_mode_payload(7), Some((0x03, 0x00)));
         assert_eq!(ai_mode_payload(6), Some((0x01, 0x00)));
     }
 
@@ -320,7 +378,7 @@ mod tests {
             (0x00, 0x00) => Some(0), (0x02, 0x00) => Some(1),
             (0x02, 0x01) => Some(2), (0x02, 0x02) => Some(3),
             (0x02, 0x03) => Some(4), (0x02, 0x04) => Some(5),
-            (0x01, 0x00) => Some(6), _ => None,
+            (0x01, 0x00) => Some(6), (0x03, 0x00) => Some(7), _ => None,
         }
     }
 

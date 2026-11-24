@@ -38,6 +38,7 @@ impl PreviewWindow {
         controls.append(&ctx.hub.source_picker());
         // Popped out, the picture has the LUTs button itself (in the main window it is beside search).
         controls.append(&super::look::bubble(&ctx.store, super::look::Place::Stage));
+        controls.append(&ctx.hub.click_button());
         controls.append(&ctx.hub.peaking_button());
         controls.append(&pause);
         controls.append(&dock);

@@ -127,6 +127,7 @@ impl FullWindow {
         let weak_ctx = Rc::downgrade(ctx);
         pop.connect_clicked(move |_| { if let Some(ctx) = weak_ctx.upgrade() { ctx.set_popped_out(true); } });
         controls_row.append(&ctx.hub.source_picker());
+        controls_row.append(&ctx.hub.click_button());
         controls_row.append(&ctx.hub.peaking_button());
         controls_row.append(&pause);
         controls_row.append(&pop);

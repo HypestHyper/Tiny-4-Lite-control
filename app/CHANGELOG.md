@@ -16,6 +16,10 @@
 
 ### Changed
 
+- Less text on the cards: card descriptions and long explanations are behind info buttons; rows keep one short line.
+- Tooltips follow the colour theme (the notices at the bottom stay light, to stand out).
+- Choosing an LED brightness also turns on the light's own switch.
+
 - Commands checked against OBSBOT's own SDK on a Tiny 2 Lite; where they differed, the SDK's are used now
   (old versions kept in `docs/sdk-alignment-backup.md`):
   - audio auto gain sends the SDK's own command;
@@ -37,6 +41,13 @@
 - Gesture pictures traced from the reference drawings.
 
 ### Added
+
+- **Hand** tracking mode again, with its own tracking area kept to the gimbal limits.
+- Click on the preview to focus there or to follow that person (a button on the preview picks which). Works on
+  the Studio camera's picture too.
+- Microphone **Volume** and the **Camera's own sleep timer**, both read from the camera.
+- Presets also save the microphone settings, HDR, the camera's sleep timer and the tracking area (on or off,
+  Auto-track new targets, return position).
 
 - **Keep AI tracking inside these limits** (Gimbal limits card): the camera's own limited-zone tracking,
   using the same pan and tilt limits as the stick, re-sent whenever they change and when the camera

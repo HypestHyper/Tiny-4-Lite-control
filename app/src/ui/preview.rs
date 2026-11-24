@@ -45,6 +45,9 @@ struct ViewInner {
     locked: Cell<bool>,
     chip: gtk::Label,
     root: gtk::Overlay,
+    /// Where the last click on the picture landed, and what it did, drawn for a moment as a ring.
+    marker: gtk::DrawingArea,
+    mark: Cell<Option<(f64, f64, u8)>>,
 }
 
 struct HubInner {
@@ -214,6 +217,45 @@ impl PreviewHub {
             None => false,
         }));
         picker
+    }
+
+    /// The round button that picks what a click on the picture does: nothing, focus there, or follow
+    /// the person there. Lit while clicks do something.
+    pub fn click_button(&self) -> gtk::Button {
+        let button = widgets::icon_button("ads_click", "What a click on the picture does", true);
+        button.add_css_class("on-stage");
+        show_click_mode(&button);
+        CLICK_BUTTONS.with(|buttons| buttons.borrow_mut().push(button.downgrade()));
+        let popover = gtk::Popover::new();
+        popover.set_parent(&button);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        list.set_margin_top(6); list.set_margin_bottom(6); list.set_margin_start(6); list.set_margin_end(6);
+        list.append(&widgets::text("A click on the picture", &["setting-label"]));
+        let mut first: Option<gtk::CheckButton> = None;
+        let mut choices = Vec::new();
+        for (mode, label) in [(CLICK_OFF, "Does nothing"), (CLICK_FOCUS, "Focuses there"), (CLICK_TRACK, "Follows that person")] {
+            let choice = gtk::CheckButton::with_label(label);
+            if let Some(first) = &first { choice.set_group(Some(first)); } else { first = Some(choice.clone()); }
+            let pop = popover.downgrade();
+            choice.connect_toggled(move |c| {
+                if c.is_active() { set_click_mode(mode); if let Some(pop) = pop.upgrade() { pop.popdown(); } }
+            });
+            list.append(&choice);
+            choices.push((mode, choice));
+        }
+        list.append(&widgets::info_button("Clicking on the picture", &[
+            "Focuses there: the camera focuses on that spot (OBSBOT's tap to focus). Autofocus must be on.".into(),
+            "Follows that person: the camera tracks whoever is there. If tracking is off, Normal tracking is turned on first.".into(),
+            "It works on the Studio camera's picture as well, so you can click while your apps use the Studio camera.".into(),
+        ]));
+        popover.set_child(Some(&list));
+        let owned = popover.clone();
+        button.connect_destroy(move |_| owned.unparent());
+        button.connect_clicked(move |_| {
+            for (mode, choice) in &choices { if *mode == click_mode() { choice.set_active(true); } }
+            popover.popup();
+        });
+        button
     }
 
     /// The round button that turns focus peaking on and off, lit while it is on, with its strictness
@@ -555,9 +597,59 @@ impl PreviewView {
         root.add_overlay(&sensor);
         root.add_overlay(&placeholder);
         root.add_overlay(&chip);
+        let marker = gtk::DrawingArea::new();
+        marker.set_can_target(false);
+        root.add_overlay(&marker);
         root.set_size_request(240, 135);
 
-        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), play, glyph, chip, root: root.clone(), ratio: Cell::new(16.0 / 9.0), locked: Cell::new(false) });
+        let inner = Rc::new(ViewInner { picture, placeholder, placeholder_text, retry: retry.clone(), play, glyph, chip, root: root.clone(), ratio: Cell::new(16.0 / 9.0), locked: Cell::new(false), marker: marker.clone(), mark: Cell::new(None) });
+        {
+            let weak = Rc::downgrade(&inner);
+            marker.set_draw_func(move |_, cr, _, _| {
+                let Some(view) = weak.upgrade() else { return };
+                let Some((x, y, mode)) = view.mark.get() else { return };
+                // A square for focus, a circle for a person; white with a dark edge, to show on any picture.
+                for (width, shade) in [(4.0, 0.0), (2.0, 1.0)] {
+                    cr.set_source_rgba(shade, shade, shade, 0.9);
+                    cr.set_line_width(width);
+                    if mode == CLICK_FOCUS { cr.rectangle(x - 22.0, y - 22.0, 44.0, 44.0); } else { cr.arc(x, y, 26.0, 0.0, std::f64::consts::TAU); }
+                    let _ = cr.stroke();
+                }
+            });
+        }
+        {
+            // A click on the picture focuses there or follows that person, as the click button says.
+            let click = gtk::GestureClick::new();
+            click.set_button(1);
+            let (weak, store) = (Rc::downgrade(&inner), hub.0.store.clone());
+            click.connect_released(move |_, _, px, py| {
+                let mode = click_mode();
+                let Some(view) = weak.upgrade() else { return };
+                if mode == CLICK_OFF || view.placeholder.is_visible() { return; }
+                let Some((x, y)) = picture_point(view.root.width() as f64, view.root.height() as f64, view.ratio.get() as f64, px, py) else { return };
+                view.mark.set(Some((px, py, mode)));
+                view.marker.queue_draw();
+                let later = Rc::downgrade(&view);
+                glib::timeout_add_local_once(Duration::from_millis(900), move || {
+                    if let Some(view) = later.upgrade() { view.mark.set(None); view.marker.queue_draw(); }
+                });
+                let done = store.clone();
+                store.call(None, move |device| if mode == CLICK_FOCUS {
+                    crate::backend::device::set_focus_point(device, x, y)
+                } else {
+                    crate::backend::device::track_at(device, x, y)
+                }, move |result| {
+                    if let Err(error) = result { done.error(&format!("The camera did not take the click: {error}")); }
+                });
+            });
+            root.add_controller(click);
+            let motion = gtk::EventControllerMotion::new();
+            let weak = root.downgrade();
+            motion.connect_enter(move |_, _, _| {
+                if let Some(root) = weak.upgrade() { root.set_cursor_from_name(if click_mode() == CLICK_OFF { None } else { Some("crosshair") }); }
+            });
+            root.add_controller(motion);
+        }
         if let Some(mode) = hub.0.mode.borrow().as_ref() { inner.ratio.set(mode.width as f32 / mode.height.max(1) as f32); }
         {
             let weak = Rc::downgrade(&inner);
@@ -680,6 +772,47 @@ fn read_frames<R: Read>(mut reader: R, sender: async_channel::Sender<Frame>, mod
 fn preview_log_path() -> std::path::PathBuf { crate::service::runtime_dir().join("preview.log") }
 
 /// Focus peaking: paint the sharpest edges in the picture green, so what is in focus stands out.
+// ── Clicking on the picture ──────────────────────────────────────────────
+
+pub const CLICK_OFF: u8 = 0;
+pub const CLICK_FOCUS: u8 = 1;
+pub const CLICK_TRACK: u8 = 2;
+static CLICK_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(CLICK_OFF);
+thread_local! {
+    static CLICK_BUTTONS: RefCell<Vec<glib::WeakRef<gtk::Button>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn click_mode() -> u8 { CLICK_MODE.load(Ordering::Relaxed) }
+
+fn set_click_mode(mode: u8) {
+    CLICK_MODE.store(mode, Ordering::Relaxed);
+    CLICK_BUTTONS.with(|buttons| buttons.borrow_mut().retain(|weak| match weak.upgrade() {
+        Some(button) => { show_click_mode(&button); true }
+        None => false,
+    }));
+}
+
+fn show_click_mode(button: &gtk::Button) {
+    let (glyph, tip) = match click_mode() {
+        CLICK_FOCUS => ("center_focus_strong", "Click on the picture: focus there"),
+        CLICK_TRACK => ("person_search", "Click on the picture: follow that person"),
+        _ => ("ads_click", "What a click on the picture does"),
+    };
+    button.set_child(Some(&widgets::icon(glyph)));
+    button.set_tooltip_text(Some(tip));
+    if click_mode() == CLICK_OFF { button.remove_css_class("lit"); } else { button.add_css_class("lit"); }
+}
+
+/// Where (px, py) on a view of w × h falls on the picture it shows (fitted inside, keeping its shape
+/// `ratio`), from 0 to 1 across and down; `None` on the bars beside or above it.
+pub fn picture_point(w: f64, h: f64, ratio: f64, px: f64, py: f64) -> Option<(f32, f32)> {
+    if w <= 0.0 || h <= 0.0 || ratio <= 0.0 { return None; }
+    let (shown_w, shown_h) = if w / h > ratio { (h * ratio, h) } else { (w, w / ratio) };
+    let x = (px - (w - shown_w) / 2.0) / shown_w;
+    let y = (py - (h - shown_h) / 2.0) / shown_h;
+    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then_some((x as f32, y as f32))
+}
+
 static FOCUS_PEAKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn focus_peaking_on() -> bool { FOCUS_PEAKING.load(Ordering::Relaxed) }
@@ -912,6 +1045,17 @@ mod peaking_tests {
         let frame = decode_yuyv(&raw, &mode).expect("a frame");
         assert_eq!((frame.width, frame.height), (640, 1));
         assert!(frame.rgb.iter().all(|v| (120..=136).contains(v)), "{:?}", &frame.rgb[..6]);
+    }
+
+    #[test]
+    fn a_click_maps_onto_the_picture_and_not_the_bars_beside_it() {
+        // A 16:9 picture in a 400 × 300 view: 400 × 225, with 37.5 px bars above and below.
+        assert_eq!(picture_point(400.0, 300.0, 16.0 / 9.0, 200.0, 150.0), Some((0.5, 0.5)));
+        assert_eq!(picture_point(400.0, 300.0, 16.0 / 9.0, 0.0, 37.5), Some((0.0, 0.0)));
+        assert_eq!(picture_point(400.0, 300.0, 16.0 / 9.0, 200.0, 20.0), None);
+        // In a wide view the bars are at the sides: 160 × 90 picture in 320 × 90, from x 80.
+        assert_eq!(picture_point(320.0, 90.0, 16.0 / 9.0, 120.0, 45.0), Some((0.25, 0.5)));
+        assert_eq!(picture_point(320.0, 90.0, 16.0 / 9.0, 40.0, 45.0), None);
     }
 
     #[test]
