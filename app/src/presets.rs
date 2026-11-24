@@ -119,7 +119,12 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     if let Ok(seconds) = get_camera_sleep_time(device) { settings.insert("obsbot:camera_sleep".into(), i64::from(seconds)); }
     // The tracking area: on or off (this app's setting; its limits are the gimbal limits, which stay the
     // same for every preset), whether new people are picked up, and where the camera returns to.
-    settings.insert("app:tracking_area".into(), i64::from(current_config().tracking_area));
+    let zone = current_config();
+    settings.insert("app:tracking_area".into(), i64::from(zone.tracking_area));
+    for (key, degrees) in [("app:zone_pan_low", zone.zone_pan_low), ("app:zone_pan_high", zone.zone_pan_high),
+                           ("app:zone_tilt_low", zone.zone_tilt_low), ("app:zone_tilt_high", zone.zone_tilt_high)] {
+        settings.insert(key.into(), (degrees * 100.0).round() as i64);
+    }
     if let Ok(on) = get_tracking_area_auto_select(device) { settings.insert("obsbot:zone_auto_select".into(), i64::from(on)); }
     if let Ok((pan, tilt, zoom)) = get_zone_home(device) {
         settings.insert("obsbot:return_pan_centi".into(), (pan * 100.0).round() as i64);
@@ -253,7 +258,15 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         } else if key == "obsbot:camera_sleep" {
             set_camera_sleep_time(device, (*value).clamp(0, 65535) as u32)
         } else if key == "app:tracking_area" {
-            update_config_checked(|c| c.tracking_area = *value == 1).and_then(|()| apply_tracking_area(device, &current_config()))
+            // With the preset's own area, if it has one (sent once, here).
+            let end = |key: &str| preset.settings.get(key).map(|v| *v as f64 / 100.0);
+            update_config_checked(|c| {
+                c.tracking_area = *value == 1;
+                if let (Some(a), Some(b)) = (end("app:zone_pan_low"), end("app:zone_pan_high")) { c.zone_pan_low = a; c.zone_pan_high = b; }
+                if let (Some(a), Some(b)) = (end("app:zone_tilt_low"), end("app:zone_tilt_high")) { c.zone_tilt_low = a; c.zone_tilt_high = b; }
+            }).and_then(|()| apply_tracking_area(device, &current_config()))
+        } else if key.starts_with("app:zone_") {
+            continue;
         } else if key == "obsbot:zone_auto_select" {
             set_tracking_area_auto_select(device, *value == 1)
         } else if key == "obsbot:return_pan_centi" {

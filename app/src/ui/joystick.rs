@@ -59,6 +59,8 @@ struct State {
     pan_value: gtk::Label,
     tilt_value: gtk::Label,
     zoom_value: gtk::Label,
+    /// When the live zoom was last compared with what the window shows.
+    zoom_checked: Cell<Option<Instant>>,
     hint: gtk::Label,
     /// Stick position, -1..1 on both axes, +y is up.
     stick: Cell<(f64, f64)>,
@@ -371,7 +373,7 @@ impl Joystick {
         FOLLOW_MIRROR.store(current_config().joystick_follows_mirror, Ordering::Relaxed);
         let sensitivity = (current_config().joystick_sensitivity_percent.clamp(10, 200) as f64) / 100.0;
         let state = Rc::new(State {
-            store: store.clone(), pad: pad.clone(), pan_value, tilt_value, zoom_value, hint,
+            store: store.clone(), pad: pad.clone(), pan_value, tilt_value, zoom_value, zoom_checked: Cell::new(None), hint,
             stick: Cell::new((0.0, 0.0)), velocity: Cell::new((0.0, 0.0)), engaged: Cell::new(false),
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
@@ -1152,6 +1154,17 @@ impl Joystick {
                 }
             };
             state.store.set_gimbal(position);
+            // About every two seconds, the camera's live zoom too: a zoom gesture or tracking changes it without
+            // the app knowing, so a difference from what the window shows reads everything again.
+            if position.is_some() && state.zoom_checked.get().is_none_or(|at| at.elapsed() >= Duration::from_secs(2)) {
+                state.zoom_checked.set(Some(Instant::now()));
+                let store = state.store.clone();
+                state.store.call(Some("live-zoom"), |device| crate::backend::get_live_zoom_factor(device), move |result| {
+                    let Ok(factor) = result else { return };
+                    let shown = store.snapshot().control("zoom_absolute").map(|c| backend::zoom::factor(c.value as f64));
+                    if shown.is_none_or(|shown| (shown - f64::from(factor)).abs() > 0.03) { store.refresh_soon(); }
+                });
+            }
             // Quick while it moves (or while the stick is held); relaxed when it is still.
             let boosted = state.boost_until.get().is_some_and(|until| Instant::now() < until);
             let wait = if boosted { 100 } else if moving || state.engaged.get() { 150 } else { 700 };

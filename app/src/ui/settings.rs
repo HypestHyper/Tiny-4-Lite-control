@@ -115,8 +115,11 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
     (card, settings.len() * 2 + 2)
 }
 
+/// Settings shown on another card instead of their group's (the camera's own sleep timer is on Sleep timer).
+const SHOWN_ELSEWHERE: &[&str] = &["obsbot:camera_sleep"];
+
 fn settings_in(group: Group) -> Vec<&'static Setting> {
-    registry::all().iter().filter(|s| s.group == group).collect()
+    registry::all().iter().filter(|s| s.group == group && !SHOWN_ELSEWHERE.contains(&s.id)).collect()
 }
 
 /// Scrollable page for one tab, with cards for each of its groups.

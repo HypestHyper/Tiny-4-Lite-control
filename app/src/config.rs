@@ -136,9 +136,15 @@ pub struct AppConfig {
     pub pan_limit: bool,
     pub pan_limit_low: f64,
     pub pan_limit_high: f64,
-    /// Keep AI tracking inside the same pan and tilt limits, on the camera (OBSBOT's limited-zone tracking).
+    /// Keep AI tracking inside the tracking area, on the camera (OBSBOT's limited-zone tracking).
     #[serde(default)]
     pub tracking_area: bool,
+    /// The tracking area, in degrees (pan right and tilt up positive): OBSBOT's default ±100° pan and ±30°
+    /// tilt unless changed. Separate from the gimbal limits.
+    pub zone_pan_low: f64,
+    pub zone_pan_high: f64,
+    pub zone_tilt_low: f64,
+    pub zone_tilt_high: f64,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
     /// Cards folded down to their heading, by title.
@@ -301,6 +307,10 @@ impl Default for AppConfig {
             pan_limit_low: -140.0,
             pan_limit_high: 140.0,
             tracking_area: false,
+            zone_pan_low: -100.0,
+            zone_pan_high: 100.0,
+            zone_tilt_low: -30.0,
+            zone_tilt_high: 30.0,
         }
     }
 }

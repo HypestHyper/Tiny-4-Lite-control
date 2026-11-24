@@ -281,6 +281,8 @@ pub(crate) fn set_white_balance_by_gains(device: &str, gains: bool) -> Result<()
 }
 
 pub(crate) fn set_control(device: &str, name: &str, value: i64) -> Result<(), String> {
+    // Every zoom sent (the slider, the buttons, presets): the live reading waits until the camera gets there.
+    if name == "zoom_absolute" { super::zoom::note_sent(); }
     run_v4l2(device, &format!("--set-ctrl={name}={value}"))?;
     // Position and speed are transient movement commands, never preferences.
     if !matches!(name, "pan_absolute" | "tilt_absolute" | "pan_speed" | "tilt_speed") {
@@ -438,7 +440,8 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                         reply[10..12].copy_from_slice(&((pan * 100.0).round() as i16).to_le_bytes());
                         reply
                     }
-                    0x6804 => 1.0f32.to_le_bytes().to_vec(),
+                    // The live zoom, matching the pretend zoom control (15, which is 1.47×).
+                    0x6804 => 1.47f32.to_le_bytes().to_vec(),
                     // The tracking area's return position: pan 15°, tilt 10° up, zoom 1.2×.
                     0x4ec4 => zone_home_payload(15.0, 10.0, 1.2).to_vec(),
                     0x80c2 => 50i16.to_le_bytes().to_vec(),
@@ -713,8 +716,7 @@ pub(crate) fn apply_tracking_area(device: &str, config: &crate::config::AppConfi
         set_hand_area_limits(device, full.0, full.1)?;
         return set_tracking_area_enabled(device, false);
     }
-    let pan = if config.pan_limit { (config.pan_limit_low, config.pan_limit_high) } else { full.0 };
-    let tilt = if config.tilt_limit { (config.tilt_limit_low, config.tilt_limit_high) } else { full.1 };
+    let (pan, tilt) = ((config.zone_pan_low, config.zone_pan_high), (config.zone_tilt_low, config.zone_tilt_high));
     set_tracking_area_limits(device, pan, tilt)?;
     set_hand_area_limits(device, pan, tilt)?;
     set_tracking_area_enabled(device, true)
@@ -764,11 +766,28 @@ pub(crate) fn get_zone_home(device: &str) -> Result<(f64, f64, f64), String> {
     zone_home_from_reply(&query_obsbot(device, 0x04, ZONE_HOME_GET)?)
 }
 
+/// Set the return position and read it back: (what was sent, what the camera holds now), so a camera that
+/// ignores it can be told apart from one that took it.
+pub(crate) fn set_zone_home_checked(device: &str, pan: f64, tilt: f64, zoom: f64) -> Result<((f64, f64, f64), (f64, f64, f64)), String> {
+    set_zone_home(device, pan, tilt, zoom)?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    Ok(((pan, tilt, zoom), get_zone_home(device)?))
+}
+
 /// The return position set to where the camera points now, at its current zoom.
-pub(crate) fn set_zone_home_here(device: &str) -> Result<(), String> {
+pub(crate) fn set_zone_home_here(device: &str) -> Result<((f64, f64, f64), (f64, f64, f64)), String> {
     let (pan, tilt) = get_gimbal_position(device)?;
     let zoom = get_live_zoom_factor(device)?;
-    set_zone_home(device, pan, tilt, f64::from(zoom))
+    set_zone_home_checked(device, pan, tilt, f64::from(zoom))
+}
+
+/// Turn the camera to the return position (with the app's own controls), so you can see where it is.
+pub(crate) fn go_to_zone_home(device: &str) -> Result<(), String> {
+    use super::angles::{clamp_pan, clamp_tilt, degrees_to_raw};
+    let (pan, tilt, zoom) = get_zone_home(device)?;
+    set_control(device, "pan_absolute", degrees_to_raw(clamp_pan(pan)))?;
+    set_control(device, "tilt_absolute", degrees_to_raw(clamp_tilt(tilt)))?;
+    set_control(device, "zoom_absolute", super::zoom::position(zoom).round() as i64)
 }
 
 pub(crate) fn get_live_zoom_factor(device: &str) -> Result<f32, String> {

@@ -539,9 +539,19 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
 
 /// The sleep timer: when the camera is put to sleep so it does not stay on. The background service does it
 /// and reads these settings as soon as they change.
-pub fn sleep_timer_card() -> gtk::Box {
+pub fn sleep_timer_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Sleep timer", "bedtime",
-        "Puts the camera to sleep when it is not needed, so it does not stay on. All of these need the background service.");
+        "Puts the camera to sleep when it is not needed, so it does not stay on. The camera's own timer works by itself; the ones under This app's timer need the background service, and can also follow your computer's sleep and shutdown.");
+    // The camera's own timer first: it needs nothing else running.
+    if let Some(setting) = crate::backend::registry::find("obsbot:camera_sleep") {
+        let row = widgets::SettingRow::new(store, setting, widgets::Density::Full);
+        body.append(row.widget());
+        card.connect_destroy(move |_| { let _ = &row; });
+    }
+    let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    divider.add_css_class("divider");
+    body.append(&divider);
+    body.append(&widgets::text("This app's timer", &["setting-label"]));
     body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it at the top of this tab."));
     let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
         plain_switch_row(title, summary, active, move |on| on_change(on))
@@ -1368,7 +1378,7 @@ pub fn appearance_card(style: &Rc<Style>) -> gtk::Box {
     body.append(&mirror);
 
     body.append(&plain_switch_row("Start the preview when the app opens",
-        "Off, the preview waits for its play button, so opening the app does not turn the camera on.",
+        "Off, the preview waits for its play button.",
         current_config().preview_on_start,
         |on| update_config(|c| c.preview_on_start = on)));
     card
@@ -1402,6 +1412,9 @@ struct AxisLimits {
     write_range: fn(&mut config::AppConfig, f64, f64),
     /// Pan or tilt out of a live position (pan, tilt).
     live: fn((f64, f64)) -> f64,
+    /// Has its own on/off switch (the gimbal limits); without one, a plain heading (the tracking area).
+    switch: bool,
+    reset_label: &'static str,
 }
 
 const AXES: [AxisLimits; 2] = [
@@ -1413,6 +1426,7 @@ const AXES: [AxisLimits; 2] = [
         write_on: |c, on| c.pan_limit = on,
         write_range: |c, low, high| { c.pan_limit_low = low; c.pan_limit_high = high; },
         live: |(pan, _)| pan,
+        switch: true, reset_label: "OBSBOT range",
     },
     AxisLimits {
         name: "Tilt", low_name: "Down", high_name: "Up",
@@ -1422,6 +1436,29 @@ const AXES: [AxisLimits; 2] = [
         write_on: |c, on| c.tilt_limit = on,
         write_range: |c, low, high| { c.tilt_limit_low = low; c.tilt_limit_high = high; },
         live: |(_, tilt)| tilt,
+        switch: true, reset_label: "OBSBOT range",
+    },
+];
+
+/// The tracking area's own ends: OBSBOT's default ±100° pan and ±30° tilt, within the camera's ±120° / ±90°.
+const ZONE_AXES: [AxisLimits; 2] = [
+    AxisLimits {
+        name: "Pan", low_name: "Left", high_name: "Right", summary: "",
+        published: (-100.0, 100.0), mechanical: 120.0,
+        read: |c| (true, c.zone_pan_low, c.zone_pan_high),
+        write_on: |_, _| {},
+        write_range: |c, low, high| { c.zone_pan_low = low; c.zone_pan_high = high; },
+        live: |(pan, _)| pan,
+        switch: false, reset_label: "OBSBOT default",
+    },
+    AxisLimits {
+        name: "Tilt", low_name: "Down", high_name: "Up", summary: "",
+        published: (-30.0, 30.0), mechanical: 90.0,
+        read: |c| (true, c.zone_tilt_low, c.zone_tilt_high),
+        write_on: |_, _| {},
+        write_range: |c, low, high| { c.zone_tilt_low = low; c.zone_tilt_high = high; },
+        live: |(_, tilt)| tilt,
+        switch: false, reset_label: "OBSBOT default",
     },
 ];
 
@@ -1429,7 +1466,7 @@ const AXES: [AxisLimits; 2] = [
 /// its two ends typed in or taken from where the camera points now.
 pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Gimbal limits", "open_with",
-        "How far the stick, the 1° steps and presets may turn the camera, in degrees, and, if you choose, AI tracking too. The stick slows near an end and stops just short of it.");
+        "How far the stick, the 1° steps and presets may turn the camera, in degrees. The stick slows near an end and stops just short of it. AI tracking has its own area: see Tracking area.");
     // Where the camera points now, for the buttons that take it.
     let position: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
     {
@@ -1444,16 +1481,26 @@ pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
         }
         body.append(&axis_limits(store, axis, &position));
     }
-    let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    divider.add_css_class("divider");
-    body.append(&divider);
-    body.append(&tracking_area_section(store));
+    card
+}
+
+/// Where AI tracking may go: OBSBOT's limited-zone tracking, with its own pan and tilt ends (a table like the
+/// gimbal limits), on the camera.
+pub fn tracking_area_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("Tracking area", "person_search",
+        "Keeps AI tracking, of a person or a hand, inside an area you set here, separate from the gimbal limits. When the person leaves it, the camera goes back to the return position. OBSBOT's default area is 100° each way and 30° up and down.");
+    let position: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
+    {
+        let position = Rc::downgrade(&position);
+        store.subscribe_gimbal(move |live| match position.upgrade() { Some(cell) => { cell.set(live); true } None => false });
+    }
+    body.append(&tracking_area_section(store, &position));
     card
 }
 
 /// The limits above, applied to AI tracking too: OBSBOT's limited-zone tracking, on the camera. Sent again
 /// whenever the limits change (the fields, the "use current position" buttons, a preset, the command line).
-fn tracking_area_section(store: &Store) -> gtk::Box {
+fn tracking_area_section(store: &Store, position: &Rc<Cell<Option<(f64, f64)>>>) -> gtk::Box {
     use crate::backend::device as dev;
     let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
     let config = current_config();
@@ -1477,7 +1524,7 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
         })
     };
     // Send the area when what it depends on changes (checked every second, so every way of changing it counts).
-    let key = |c: &crate::config::AppConfig| (c.tracking_area, c.pan_limit, c.pan_limit_low, c.pan_limit_high, c.tilt_limit, c.tilt_limit_low, c.tilt_limit_high);
+    let key = |c: &crate::config::AppConfig| (c.tracking_area, c.zone_pan_low, c.zone_pan_high, c.zone_tilt_low, c.zone_tilt_high);
     let last = Rc::new(RefCell::new(key(&config)));
     {
         let (store, readout, read_back, last) = (store.clone(), readout.downgrade(), read_back.clone(), last.clone());
@@ -1500,9 +1547,25 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
             glib::ControlFlow::Continue
         });
     }
-    section.append(&plain_switch_row("Keep AI tracking inside these limits",
-        "Person and hand tracking stay within the limits above. This is OBSBOT's limited-zone tracking, and the hand-tracking area set to the same limits. A limit that is off lets tracking use the camera's full range on that axis. The hand-tracking area cannot be read back from the camera, so only the person-tracking area shows below.",
-        config.tracking_area, |on| update_config(|c| c.tracking_area = on)));
+    // The switch, then the table of ends (greyed while the switch is off).
+    let table = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    for (index, axis) in ZONE_AXES.iter().enumerate() {
+        if index > 0 {
+            let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            divider.add_css_class("divider");
+            table.append(&divider);
+        }
+        table.append(&axis_limits(store, axis, position));
+    }
+    table.set_sensitive(config.tracking_area);
+    let table_weak = table.downgrade();
+    section.append(&plain_switch_row("Keep AI tracking inside this area",
+        "Person and hand tracking stay within the ends below. This is OBSBOT's limited-zone tracking, with the hand-tracking area set to the same ends. The hand-tracking area cannot be read back from the camera, so only the person-tracking area shows below.",
+        config.tracking_area, move |on| {
+            update_config(|c| c.tracking_area = on);
+            if let Some(table) = table_weak.upgrade() { table.set_sensitive(on); }
+        }));
+    section.append(&table);
     // Auto-select: read from the camera when the card opens.
     let auto = gtk::Switch::new();
     auto.set_valign(gtk::Align::Center);
@@ -1555,11 +1618,16 @@ fn zone_home_row(store: &Store) -> gtk::Box {
     here.add_css_class("small");
     let reset = widgets::icon_text_button("restart_alt", "Centre");
     reset.add_css_class("small");
-    widgets::label_accessible(&reset, "Reset the return position to the centre");
+    widgets::label_accessible(&reset, "Set the return position to the centre");
+    let go = gtk::Button::with_label("Go there");
+    go.add_css_class("small");
+    go.set_tooltip_text(Some("Turn the camera to the return position"));
     actions.append(&here);
     actions.append(&reset);
+    actions.append(&go);
     actions.append(&widgets::info_button("Return position", &[
-        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; Centre puts it back to straight ahead at 1×, OBSBOT's default.".into(),
+        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; Centre sets it to straight ahead at 1×, OBSBOT's default. Neither moves the camera: Go there does.".into(),
+        "After each change the camera is asked what it holds; if that is not what was sent, the app says so.".into(),
     ]));
     row.append(&actions);
 
@@ -1576,18 +1644,35 @@ fn zone_home_row(store: &Store) -> gtk::Box {
             });
         })
     };
-    let set = |button: &gtk::Button, job: fn(&str) -> Result<(), String>| {
+    type Job = fn(&str) -> Result<((f64, f64, f64), (f64, f64, f64)), String>;
+    let set = |button: &gtk::Button, job: Job| {
         let (store, read) = (store.clone(), read.clone());
         button.connect_clicked(move |_| {
             let (store_done, read) = (store.clone(), read.clone());
             store.call(None, job, move |r| {
-                if let Err(e) = r { store_done.error(&format!("Could not set the return position: {e}")); }
+                let say = |(pan, tilt, zoom): (f64, f64, f64)| format!("pan {} · tilt {} · zoom {zoom:.2}×", angles::format(pan), angles::format(tilt));
+                match r {
+                    Ok((sent, held)) if (sent.0 - held.0).abs() <= 1.0 && (sent.1 - held.1).abs() <= 1.0 && (sent.2 - held.2).abs() <= 0.05 =>
+                        store_done.toast(&format!("Return position: {}", say(held))),
+                    Ok((sent, held)) => store_done.error(&format!("The camera did not take the return position: sent {}, it holds {}.", say(sent), say(held))),
+                    Err(e) => store_done.error(&format!("Could not set the return position: {e}")),
+                }
                 read();
             });
         });
     };
     set(&here, dev::set_zone_home_here);
-    set(&reset, |d| dev::set_zone_home(d, 0.0, 0.0, 1.0));
+    set(&reset, |d| dev::set_zone_home_checked(d, 0.0, 0.0, 1.0));
+    {
+        let store = store.clone();
+        go.connect_clicked(move |_| {
+            let done = store.clone();
+            store.call(None, dev::go_to_zone_home, move |r| {
+                if let Err(e) = r { done.error(&format!("Could not turn to the return position: {e}")); }
+                done.refresh_soon();
+            });
+        });
+    }
     let loaded = Rc::new(Cell::new(false));
     row.connect_map(move |_| { if !loaded.replace(true) { read(); } });
     row
@@ -1634,10 +1719,10 @@ fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Opti
     };
     let (low_box, low, take_low) = field(axis.low_name, low_now, -axis.mechanical, 0.0);
     let (high_box, high, take_high) = field(axis.high_name, high_now, 0.0, axis.mechanical);
-    let reset = gtk::Button::with_label("OBSBOT range");
+    let reset = gtk::Button::with_label(axis.reset_label);
     reset.add_css_class("small");
     reset.set_halign(gtk::Align::Start);
-    reset.set_tooltip_text(Some("Put both ends back to OBSBOT's published range"));
+    reset.set_tooltip_text(Some("Put both ends back to OBSBOT's values"));
     ends.insert(&low_box, -1);
     ends.insert(&high_box, -1);
     fields.append(&ends);
@@ -1680,11 +1765,15 @@ fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Opti
     }
 
     fields.set_sensitive(on);
-    let fields_weak = fields.downgrade();
-    section.append(&plain_switch_row(&format!("Limit {}", axis.name.to_lowercase()), axis.summary, on, move |on| {
-        update_config(|c| (axis.write_on)(c, on));
-        if let Some(fields) = fields_weak.upgrade() { fields.set_sensitive(on); }
-    }));
+    if axis.switch {
+        let fields_weak = fields.downgrade();
+        section.append(&plain_switch_row(&format!("Limit {}", axis.name.to_lowercase()), axis.summary, on, move |on| {
+            update_config(|c| (axis.write_on)(c, on));
+            if let Some(fields) = fields_weak.upgrade() { fields.set_sensitive(on); }
+        }));
+    } else {
+        section.append(&widgets::text(axis.name, &["setting-label"]));
+    }
     section.append(&fields);
     section.append(&note);
     section

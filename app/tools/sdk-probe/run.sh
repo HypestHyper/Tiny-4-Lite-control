@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the OBSBOT SDK probe while recording the camera's USB traffic, and write one report.
 #
-#   bash run.sh [--hidden] [--toggles] [--moves] [path/to/libdev_v2.1.0_8]
+#   bash run.sh [--hidden | --round4 [--sleep-images]] [--toggles] [--moves] [path/to/libdev_v2.1.0_8]
 #
 # It builds the probe against your local copy of the SDK, stops this app's background service for the
 # duration (it would add its own traffic), records USB with tshark (asks for your password once), runs the
@@ -13,7 +13,7 @@ flags=()
 sdk="$HOME/obsbot-sdk/libdev_v2.1.0_8"
 for arg in "$@"; do
     case "$arg" in
-        --toggles|--moves|--with-moves|--hidden) flags+=("$arg") ;;
+        --toggles|--moves|--with-moves|--hidden|--round4|--sleep-images) flags+=("$arg") ;;
         *) sdk="$arg" ;;
     esac
 done

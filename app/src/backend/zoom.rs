@@ -30,6 +30,16 @@ pub fn position(factor: f64) -> f64 {
     CURVE[CURVE.len() - 1].0
 }
 
+static LAST_SENT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// The app just sent a zoom: the camera takes a moment to get there.
+pub fn note_sent() { if let Ok(mut at) = LAST_SENT.lock() { *at = Some(std::time::Instant::now()); } }
+
+/// Whether the camera may still be moving to a zoom the app sent (in the last 3 seconds).
+pub fn settling() -> bool {
+    LAST_SENT.lock().ok().and_then(|at| *at).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(3))
+}
+
 /// A factor for people: up to two decimals, none that are not needed, and the × sign.
 pub fn label(factor: f64) -> String {
     let text = format!("{factor:.2}");

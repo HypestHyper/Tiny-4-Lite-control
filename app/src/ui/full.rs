@@ -193,7 +193,8 @@ impl FullWindow {
                         built.masonry.add(&panels::studio_card(&store), 5);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::gimbal_limits_card(&store), 3);
-                        built.masonry.add(&panels::sleep_timer_card(), 5);
+                        built.masonry.add(&panels::tracking_area_card(&store), 3);
+                        built.masonry.add(&panels::sleep_timer_card(&store), 5);
                         built.masonry.add(&panels::appearance_card(&ctx.style), 8);
                         built.masonry.add(&panels::developer_card(&store), 4);
                     }

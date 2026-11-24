@@ -16,6 +16,16 @@
 
 ### Changed
 
+- **Tracking area** is its own card with its own pan and tilt ends (OBSBOT's default: 100° each way, 30° up and
+  down), separate from the gimbal limits; presets save the ends too.
+- **Tracking speed: Standard / Sport** again (OBSBOT's SDK calls them Standard and Motion; its third mode,
+  Headroom, behaves like Standard and is not offered).
+- Manual white balance is the colour temperature only: red and blue balance are gone (they turned the picture
+  green), and presets no longer save or write them.
+- The zoom slider and the model follow the camera's live zoom, so a zoom gesture shows up.
+- The camera's own sleep timer is on the Sleep timer card, above this app's timer.
+- Return position: each change is read back and checked; **Go there** turns the camera to it.
+
 - Less text on the cards: card descriptions and long explanations are behind info buttons; rows keep one short line.
 - Tooltips follow the colour theme (the notices at the bottom stay light, to stand out).
 - Choosing an LED brightness also turns on the light's own switch.

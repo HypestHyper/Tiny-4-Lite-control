@@ -17,6 +17,12 @@
 //               gesture switches (on, then off), the focus point at the centre. With --moves also: zoom by the
 //               hidden zoom command, and select the target at the picture's centre. Functions whose parameters
 //               are undocumented structures, or whose argument order is unknown (Euler angles), are not called.
+//   --round4    instead of all the above: the zone return position written with a new value, read back and
+//               restored; the hand side (right, left) and each gesture switch changed one at a time with the AI
+//               status read after each, then restored from the first reading. With --moves also: the camera
+//               sent to the return position. With --sleep-images also (and only then): the thumbnails of the
+//               camera's three sleep pictures downloaded to ~/obsbot-sleep-images (read only; it may take the
+//               camera a moment).
 // Never: factory reset; adding, deleting, renaming or updating presets or zone presets; setting or resetting the
 // start-up position or the zone start position; background images; the boot AI mode; privacy mode; firmware.
 
@@ -26,6 +32,8 @@
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <link.h>
+#include <atomic>
+#include <cstdlib>
 #include <map>
 
 #include <chrono>
@@ -234,6 +242,94 @@ static void run_hidden(Device *d, bool toggles, bool moves) {
     }
 }
 
+// ════════════ Round 4: return position, hand side, gesture read-back, sleep pictures ════════════
+static void ai_status(Device *d, const std::string &name) {
+    step(name, [&] { Device::AiStatus s{}; int r = d->aiGetAiStatusR(&s); hexdump("AiStatus", &s, sizeof s);
+        std::printf("  target %d zoom %d dynamic %d mirror %d factor %.2f yaw_reverse %d hand %d zone %d vtrack %d\n",
+                    s.gesture_target, s.gesture_zoom, s.gesture_dynamic_zoom, s.gesture_mirror, s.gesture_zoom_factor,
+                    s.yaw_reverse, static_cast<int>(s.hand_track_type), s.ai_zone_track, static_cast<int>(s.v_track_landscape));
+        return r; }, 800);
+}
+
+static void run_round4(Device *d, bool moves, bool images) {
+    load_hidden_symbols();
+
+    // Return position: a different value, read back, then the one read first.
+    Device::PresetPosInfo home{};
+    if (step("r4_get_return_position", [&] { int r = d->aiGetLimitedZoneTrackInitPosR(&home, 0); std::printf("  return id %d roll %.2f pitch %.2f yaw %.2f zoom %.2f\n", home.id, home.roll, home.pitch, home.yaw, home.zoom); return r; }) == 0) {
+        Device::PresetPosInfo other = home;
+        other.yaw = 20.0f; other.pitch = -10.0f; other.zoom = 1.5f;
+        step("r4_set_return_position_yaw20_pitch-10_zoom1.5", [&] { return d->aiSetLimitedZoneTrackInitPosR(&other); });
+        step("r4_get_return_position_after", [&] { Device::PresetPosInfo p{}; int r = d->aiGetLimitedZoneTrackInitPosR(&p, 0); std::printf("  return now pitch %.2f yaw %.2f zoom %.2f\n", p.pitch, p.yaw, p.zoom); return r; });
+        if (moves) {
+            float att[3] = {0, 0, 0};
+            d->gimbalGetAttitudeInfoR(att);
+            step("r4_move_to_return_position", [&] { return d->aiTrgLimitedZoneTrackInitPosR(); }, 1500);
+            pause(3500);
+            step("r4_attitude_at_return_position", [&] { float a[3] = {0, 0, 0}; int r = d->gimbalGetAttitudeInfoR(a); std::printf("  attitude pitch %.2f yaw %.2f\n", a[1], a[2]); return r; });
+            step("r4_move_back", [&] { return d->aiSetGimbalMotorAngleR(att[1], att[2]); });
+            pause(3000);
+            step("r4_zoom_back", [&] { return d->cameraSetZoomAbsoluteR(1.0f); });
+            finally("Zoom: 1x (the return position test zoomed in)");
+        }
+        step("r4_set_return_position_back", [&] { return d->aiSetLimitedZoneTrackInitPosR(&home); });
+        step("r4_get_return_position_restored", [&] { Device::PresetPosInfo p{}; int r = d->aiGetLimitedZoneTrackInitPosR(&p, 0); std::printf("  return now pitch %.2f yaw %.2f zoom %.2f\n", p.pitch, p.yaw, p.zoom); return r; });
+    }
+
+    // The AI status before anything changes, to restore from.
+    Device::AiStatus first{};
+    d->aiGetAiStatusR(&first);
+    ai_status(d, "r4_ai_status_start");
+
+    // Hand side: AiHandTrackRight = 0, AiHandTrackLeft = 1 (SDK header).
+    const char *hand = "Device::aiSetHandTrackModeR(Device::AiHandTrackType)";
+    step("r4_hand_left", [&] { return hidden(d, hand, 1); });
+    ai_status(d, "r4_ai_status_hand_left");
+    step("r4_hand_right", [&] { return hidden(d, hand, 0); });
+    ai_status(d, "r4_ai_status_hand_right");
+    step("r4_hand_back", [&] { return hidden(d, hand, static_cast<int>(first.hand_track_type)); });
+    step("r4_hand_state", [&] {
+        Device::AiHandTrackStateInfo s{};
+        int r = hidden(d, "Device::aiGetHandTrackStateR(Device::AiHandTrackStateInfo*, int, std::function<void (void*, void const*)>, void*, Device::GetMethod)",
+                       &s, 0, Device::RxDataCallback(), static_cast<void *>(nullptr), static_cast<int>(Device::Block));
+        std::printf("  hand area yaw %.2f..%.2f pitch %.2f..%.2f view %d hand %d\n", s.yaw_min, s.yaw_max, s.pitch_min, s.pitch_max, s.view_id, static_cast<int>(s.hand_type));
+        return r; });
+
+    // Each gesture switch flipped and the status read, so its byte in the reply can be found; then restored.
+    const bool was[4] = {first.gesture_target, first.gesture_zoom, first.gesture_dynamic_zoom, first.gesture_mirror};
+    const int ids[4] = {0, 1, 2, 3};
+    const char *names[4] = {"target", "zoom", "dynamic_zoom", "mirror"};
+    for (int i = 0; i < 4; ++i) {
+        step(std::string("r4_gesture_") + names[i] + "_flip", [&] { return d->aiSetGestureCtrlIndividualR(ids[i], !was[i]); });
+        ai_status(d, std::string("r4_ai_status_") + names[i] + "_flipped");
+        step(std::string("r4_gesture_") + names[i] + "_back", [&] { return d->aiSetGestureCtrlIndividualR(ids[i], was[i]); });
+    }
+    const char *factor = "Device::aiSetGestureZoomFactorR(float)";
+    float other_factor = first.gesture_zoom_factor > 1.9f && first.gesture_zoom_factor < 2.1f ? 3.0f : 2.0f;
+    step("r4_gesture_zoom_factor_other", [&] { return hidden(d, factor, other_factor); });
+    ai_status(d, "r4_ai_status_factor_changed");
+    step("r4_gesture_zoom_factor_back", [&] { return hidden(d, factor, first.gesture_zoom_factor); });
+    ai_status(d, "r4_ai_status_end");
+
+    if (images) {
+        std::string dir = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/obsbot-sleep-images";
+        std::string mkdir = "mkdir -p '" + dir + "'";
+        if (std::system(mkdir.c_str()) != 0) std::printf("  could not create %s\n", dir.c_str());
+        static std::atomic<int> done{0};
+        d->setFileDownloadCallback([](void *, uint32_t type, int32_t result, void *) {
+            std::printf("  download callback: type 0x%x result %d\n", type, result); std::fflush(stdout); done.fetch_add(1);
+        }, nullptr);
+        for (uint32_t i = 0; i < 3; ++i) {
+            d->setLocalResourcePath(dir + "/mini" + std::to_string(i) + ".jpg", dir + "/image" + std::to_string(i) + ".jpg", i);
+        }
+        uint32_t minis = Device::DownloadImageMini0 | Device::DownloadImageMini1 | Device::DownloadImageMini2;
+        step("r4_download_sleep_thumbnails", [&] { return d->startFileDownloadAsync(static_cast<Device::FileType>(minis)); });
+        for (int i = 0; i < 300 && done.load() < 3; ++i) pause(100);
+        step("r4_status_after_download", [&] { Device::CameraStatus s{}; int r = d->cameraGetCameraStatusU(s); hexdump("CameraStatus", &s, sizeof s); return r; });
+        for (uint32_t i = 0; i < 3; ++i) std::printf("  thumbnail %u: %s\n", i, d->localFileMiniPath(i).c_str());
+    }
+}
+
 static void finish() {
     pause(1500);
     std::printf("PROBE END %.6f\n", now());
@@ -246,9 +342,11 @@ static void finish() {
 }
 
 int main(int argc, char **argv) {
-    bool toggles = false, moves = false, hidden_only = false;
+    bool toggles = false, moves = false, hidden_only = false, round4 = false, images = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hidden") == 0) hidden_only = true;
+        if (std::strcmp(argv[i], "--round4") == 0) round4 = true;
+        if (std::strcmp(argv[i], "--sleep-images") == 0) images = true;
         if (std::strcmp(argv[i], "--toggles") == 0) toggles = true;
         if (std::strcmp(argv[i], "--moves") == 0 || std::strcmp(argv[i], "--with-moves") == 0) moves = true;
     }
@@ -272,6 +370,11 @@ int main(int argc, char **argv) {
     std::fflush(stdout);
     pause(3000);  // let the SDK's own start-up traffic finish
 
+    if (round4) {
+        run_round4(dev.get(), moves, images);
+        finish();
+        return 0;
+    }
     if (hidden_only) {
         run_hidden(dev.get(), toggles, moves);
         finish();
