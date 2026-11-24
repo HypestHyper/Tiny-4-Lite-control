@@ -521,7 +521,18 @@ impl SettingRow {
                 switch.connect_active_notify(move |switch| {
                     let Some(row) = weak.upgrade() else { return };
                     if row.suppress.get() { return; }
-                    SettingRow(row).commit(Value::Bool(switch.is_active()));
+                    let wanted = switch.is_active();
+                    if let Some(confirm) = row.setting.confirm {
+                        // Put the switch back until the user agrees.
+                        let this = SettingRow(row.clone());
+                        this.show(row.current.get());
+                        row.store.confirm("warning", confirm.title, confirm.body, confirm.action, move || {
+                            this.show(Some(Value::Bool(wanted)));
+                            this.commit(Value::Bool(wanted));
+                        });
+                        return;
+                    }
+                    SettingRow(row).commit(Value::Bool(wanted));
                 });
             }
             Control::Segments(segments) => {

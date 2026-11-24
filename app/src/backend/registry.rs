@@ -301,13 +301,15 @@ pub struct Setting {
     pub source: Source,
     /// How long the control rests after a change, for settings the camera is slow to switch.
     pub cooldown: Option<std::time::Duration>,
+    /// For a switch: asks the user to confirm before any change is sent.
+    pub confirm: Option<Confirm>,
 }
 
 impl Setting {
     fn new(id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind, source: Source) -> Setting {
         Setting {
             id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true,
-            readback: Readback::Camera, experimental: false, source, cooldown: None,
+            readback: Readback::Camera, experimental: false, source, cooldown: None, confirm: None,
         }
     }
     fn v4l2(name: &'static str, id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind) -> Setting {
@@ -325,6 +327,7 @@ impl Setting {
     fn experimental(mut self) -> Setting { self.experimental = true; self }
     fn not_quick(mut self) -> Setting { self.quick = false; self }
     fn cooldown(mut self, wait: std::time::Duration) -> Setting { self.cooldown = Some(wait); self }
+    fn confirm(mut self, confirm: Confirm) -> Setting { self.confirm = Some(confirm); self }
 
     // Reading
 
@@ -745,6 +748,11 @@ fn build() -> Vec<Setting> {
             |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
             |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
             .last_sent()
+            .confirm(Confirm {
+                title: "Restart the camera's audio?",
+                body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
+                action: "OK",
+            })
             .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment. The camera can't report this setting, so the switch shows what you last chose here."),
         Setting::custom("obsbot:mic_volume", Microphone, "Volume",
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),

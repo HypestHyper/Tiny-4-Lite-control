@@ -243,10 +243,15 @@ impl PreviewHub {
             list.append(&choice);
             choices.push((mode, choice));
         }
+        let note = widgets::text("While another app uses the camera, this works only if that app uses the Studio camera.", &["small", "dim"]);
+        note.set_wrap(true);
+        note.set_max_width_chars(30);
+        note.set_xalign(0.0);
+        list.append(&note);
         list.append(&widgets::info_button("Clicking on the picture", &[
             "Focuses there: the camera focuses on that spot (OBSBOT's tap to focus). Autofocus must be on.".into(),
             "Follows that person: the camera tracks whoever is there. If tracking is off, Normal tracking is turned on first.".into(),
-            "It works on the Studio camera's picture as well, so you can click while your apps use the Studio camera.".into(),
+            "Only one program can read the camera at a time. If another app (a call, OBS) opens the camera itself, this preview has no picture to click on. Choose Tiny 2 Lite Studio in that app instead: this app then holds the camera, and the preview and clicking keep working.".into(),
         ]));
         popover.set_child(Some(&list));
         let owned = popover.clone();

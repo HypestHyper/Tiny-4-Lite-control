@@ -43,8 +43,9 @@
 ### Added
 
 - **Hand** tracking mode again, with its own tracking area kept to the gimbal limits.
-- Click on the preview to focus there or to follow that person (a button on the preview picks which). Works on
-  the Studio camera's picture too.
+- Click on the preview to focus there or to follow that person (a button on the preview picks which). While
+  another app uses the camera, this works only if that app uses the Studio camera; the button's menu says so.
+- Turning the microphone on or off asks first: it restarts the camera's audio.
 - Microphone **Volume** and the **Camera's own sleep timer**, both read from the camera.
 - Presets also save the microphone settings, HDR, the camera's sleep timer and the tracking area (on or off,
   Auto-track new targets, return position).
