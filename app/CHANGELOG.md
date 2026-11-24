@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Keep AI tracking inside this area** now also turns on the camera's zone tracking itself (the SDK's
+  "enable the zone tracking function", 0x08c4), not only the limited-zone switch, and sets the area in the
+  order OBSBOT's SDK documents (LED pattern on, gimbal auto-tracking off, area, both back). Before, the camera
+  kept tracking outside the area and did not go back to the return position.
+
 - The camera model's view cone stays visible at −30° tilt; it used to disappear there.
 - The camera is put to sleep at shutdown again. The background service used to crash with a bus error
   when systemd stopped it, if its AppImage had been replaced while it was running. It now sleeps the camera

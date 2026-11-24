@@ -17,6 +17,11 @@
 //               gesture switches (on, then off), the focus point at the centre. With --moves also: zoom by the
 //               hidden zoom command, and select the target at the picture's centre. Functions whose parameters
 //               are undocumented structures, or whose argument order is unknown (Euler angles), are not called.
+//   --round5    instead of all the above: zone tracking switched on and off (aiSetZoneTrackStateR, the limited
+//               zone switch, the gimbal's auto-tracking and the LED pattern) with the AI status read after each and
+//               the state restored; the start-up position and each saved position written back with the values
+//               read (aiSetGimbalBootPosR, aiUpdGimbalPresetR, aiSetGimbalPresetNameWithIdR). With --toggles also:
+//               the last saved position deleted and added back as it was (aiDelGimbalPresetR, aiAddGimbalPresetR).
 //   --round4    instead of all the above: the zone return position written with a new value, read back and
 //               restored; the hand side (right, left) and each gesture switch changed one at a time with the AI
 //               status read after each, then restored from the first reading. With --moves also: the camera
@@ -330,6 +335,59 @@ static void run_round4(Device *d, bool moves, bool images) {
     }
 }
 
+// ════════════ Round 5: zone tracking switches, start-up position and saved positions written back ════════════
+static void run_round5(Device *d, bool toggles) {
+    Device::AiStatus first{};
+    d->aiGetAiStatusR(&first);
+    ai_status(d, "r5_ai_status_start");
+    std::printf("  zone track at start: %d\n", first.ai_zone_track);
+    step("r5_zone_track_state_on", [&] { return d->aiSetZoneTrackStateR(true); }, 1500);
+    ai_status(d, "r5_ai_status_zone_on");
+    step("r5_limited_zone_enabled_on", [&] { return d->aiSetLimitedZoneTrackEnabledR(true); });
+    ai_status(d, "r5_ai_status_limited_on");
+    step("r5_limited_zone_enabled_off", [&] { return d->aiSetLimitedZoneTrackEnabledR(false); });
+    step("r5_zone_track_state_off", [&] { return d->aiSetZoneTrackStateR(false); }, 1500);
+    ai_status(d, "r5_ai_status_zone_off");
+    step("r5_zone_track_state_back", [&] { return d->aiSetZoneTrackStateR(first.ai_zone_track != 0); });
+    // The order the SDK documents for setting a zone: LED pattern on, gimbal auto-tracking off, then both back.
+    step("r5_led_pattern_on", [&] { return d->cameraSetLedCtrlU(true); });
+    step("r5_zone_gimbal_off", [&] { return d->aiSetZoneTrackGimbalEnabledR(false); });
+    step("r5_zone_gimbal_on", [&] { return d->aiSetZoneTrackGimbalEnabledR(true); });
+    step("r5_led_pattern_off", [&] { return d->cameraSetLedCtrlU(false); });
+
+    // Start-up position: read, and written back as it is.
+    Device::PresetPosInfo boot{};
+    if (step("r5_get_boot_position", [&] { int r = d->aiGetGimbalBootPosR(&boot); std::printf("  boot id %d pitch %.2f yaw %.2f zoom %.2f\n", boot.id, boot.pitch, boot.yaw, boot.zoom); hexdump("PresetPosInfo", &boot, sizeof boot); return r; }) == 0)
+        step("r5_set_boot_position_same", [&] { return d->aiSetGimbalBootPosR(boot, false); });
+
+    // Saved positions: each read, then written back as it is (position, then name).
+    Device::DevDataArray ids{};
+    step("r5_get_preset_list", [&] { int r = d->aiGetGimbalPresetListR(&ids); std::printf("  %d preset(s)\n", ids.len); return r; });
+    std::vector<int32_t> preset_ids;
+    for (int i = 0; i < ids.len && i < 16; ++i) preset_ids.push_back(ids.data_int32[i]);
+    Device::PresetPosInfo last{};
+    for (int32_t id : preset_ids) {
+        Device::PresetPosInfo info{};
+        Device::DevDataArray name{};
+        if (step("r5_get_preset_" + std::to_string(id), [&] { int r = d->aiGetGimbalPresetInfoWithIdR(&info, id); std::printf("  preset %d pitch %.2f yaw %.2f zoom %.2f\n", info.id, info.pitch, info.yaw, info.zoom); return r; }) != 0) continue;
+        d->aiGetGimbalPresetNameWithIdR(&name, id);
+        std::string text(reinterpret_cast<const char *>(name.data_uint8), static_cast<size_t>(std::max(0, std::min(name.len, 64))));
+        info.name_len = static_cast<int32_t>(text.size());
+        std::memset(info.name, 0, sizeof info.name);
+        std::memcpy(info.name, text.data(), text.size());
+        step("r5_update_preset_" + std::to_string(id) + "_same", [&] { return d->aiUpdGimbalPresetR(&info, false); });
+        step("r5_set_preset_name_" + std::to_string(id) + "_same", [&] { return d->aiSetGimbalPresetNameWithIdR(text, id); });
+        last = info;
+    }
+    if (toggles && !preset_ids.empty()) {
+        int32_t id = last.id;
+        step("r5_delete_preset_" + std::to_string(id), [&] { return d->aiDelGimbalPresetR(id); });
+        step("r5_add_preset_" + std::to_string(id) + "_back", [&] { return d->aiAddGimbalPresetR(&last); });
+        step("r5_preset_list_after", [&] { Device::DevDataArray again{}; int r = d->aiGetGimbalPresetListR(&again); std::printf("  %d preset(s) after\n", again.len); return r; });
+        finally("Saved position " + std::to_string(id) + ": deleted and added back with the same place, zoom and name");
+    }
+}
+
 static void finish() {
     pause(1500);
     std::printf("PROBE END %.6f\n", now());
@@ -342,10 +400,11 @@ static void finish() {
 }
 
 int main(int argc, char **argv) {
-    bool toggles = false, moves = false, hidden_only = false, round4 = false, images = false;
+    bool toggles = false, moves = false, hidden_only = false, round4 = false, round5 = false, images = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hidden") == 0) hidden_only = true;
         if (std::strcmp(argv[i], "--round4") == 0) round4 = true;
+        if (std::strcmp(argv[i], "--round5") == 0) round5 = true;
         if (std::strcmp(argv[i], "--sleep-images") == 0) images = true;
         if (std::strcmp(argv[i], "--toggles") == 0) toggles = true;
         if (std::strcmp(argv[i], "--moves") == 0 || std::strcmp(argv[i], "--with-moves") == 0) moves = true;
@@ -370,6 +429,11 @@ int main(int argc, char **argv) {
     std::fflush(stdout);
     pause(3000);  // let the SDK's own start-up traffic finish
 
+    if (round5) {
+        run_round5(dev.get(), toggles);
+        finish();
+        return 0;
+    }
     if (round4) {
         run_round4(dev.get(), moves, images);
         finish();

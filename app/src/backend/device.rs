@@ -649,6 +649,10 @@ const ZONE_YAW_MAX_GET: u16 = 0x4cc4;
 const ZONE_PITCH_MIN_GET: u16 = 0x4d44;
 const ZONE_PITCH_MAX_GET: u16 = 0x4dc4;
 const ZONE_ENABLED_SET: u16 = 0x5084;
+/// Zone tracking itself (aiSetZoneTrackStateR, "enable the zone tracking function"): OBSBOT Center's Zone tracking
+/// switch. The limited-zone switch above alone did not keep tracking inside the area on the user's camera.
+/// Captured from the SDK: write 04 0x08c4, u8.
+const ZONE_TRACK_STATE_SET: u16 = 0x08c4;
 const ZONE_AUTO_SELECT_SET: u16 = 0x4e04;
 const ZONE_AUTO_SELECT_GET: u16 = 0x4e44;
 // The hand-tracking area (aiSetHandZone{Yaw,Pitch}{Min,Max}R, undeclared in the SDK's headers): the same
@@ -684,7 +688,8 @@ pub(crate) fn set_tracking_area_limits(device: &str, pan: (f64, f64), tilt: (f64
 
 /// Turn the tracking area on or off. The camera does not answer a read of this on firmware 6.2.8.1.
 pub(crate) fn set_tracking_area_enabled(device: &str, enabled: bool) -> Result<(), String> {
-    send_camera_preset_command(device, ZONE_ENABLED_SET, &[u8::from(enabled)])
+    send_camera_preset_command(device, ZONE_ENABLED_SET, &[u8::from(enabled)])?;
+    send_camera_preset_command(device, ZONE_TRACK_STATE_SET, &[u8::from(enabled)])
 }
 
 pub(crate) fn set_tracking_area_auto_select(device: &str, enabled: bool) -> Result<(), String> {
@@ -709,17 +714,39 @@ pub(crate) fn get_tracking_area(device: &str) -> Result<((f64, f64), (f64, f64))
 
 /// Send what the settings say: the area's limits (the gimbal limits, or the camera's full range for an axis
 /// whose limit is off) and switch it on, or switch it off.
+/// Done in the order OBSBOT's SDK documents for setting zone tracking: the special LED pattern on
+/// (cameraSetLedCtrlU), the gimbal's auto-tracking off (aiSetZoneTrackGimbalEnabledR), the area set, then
+/// auto-tracking and the LED back, and zone tracking switched on (limited zone and zone tracking state).
 pub(crate) fn apply_tracking_area(device: &str, config: &crate::config::AppConfig) -> Result<(), String> {
     let full = ((-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT), (-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT));
     if !config.tracking_area {
+        set_tracking_area_enabled(device, false)?;
         // Hand tracking has no on/off for its area, so off is the whole range.
-        set_hand_area_limits(device, full.0, full.1)?;
-        return set_tracking_area_enabled(device, false);
+        return set_hand_area_limits(device, full.0, full.1);
     }
     let (pan, tilt) = ((config.zone_pan_low, config.zone_pan_high), (config.zone_tilt_low, config.zone_tilt_high));
-    set_tracking_area_limits(device, pan, tilt)?;
-    set_hand_area_limits(device, pan, tilt)?;
+    set_led_pattern(device, true)?;
+    let set = set_zone_track_gimbal(device, false)
+        .and_then(|()| set_tracking_area_limits(device, pan, tilt))
+        .and_then(|()| set_hand_area_limits(device, pan, tilt));
+    // Whatever happened, tracking and the light go back to normal.
+    let back = set_zone_track_gimbal(device, true).and(set_led_pattern(device, false));
+    set.and(back)?;
     set_tracking_area_enabled(device, true)
+}
+
+/// The LED pattern OBSBOT shows while zone or hand tracking is being set (cameraSetLedCtrlU): status block
+/// `18 01 xx`, as captured from the SDK.
+pub(crate) fn set_led_pattern(device: &str, on: bool) -> Result<(), String> {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x18, 0x01, u8::from(on)]);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)
+}
+
+/// The gimbal's auto-tracking while the zone is set (aiSetZoneTrackGimbalEnabledR): 04 0x0844, u8, as captured.
+const ZONE_TRACK_GIMBAL_SET: u16 = 0x0844;
+pub(crate) fn set_zone_track_gimbal(device: &str, on: bool) -> Result<(), String> {
+    send_camera_preset_command(device, ZONE_TRACK_GIMBAL_SET, &[u8::from(on)])
 }
 
 /// The hand-tracking area, from our pan and tilt limits (converted like the person-tracking area).
@@ -2358,6 +2385,12 @@ mod settle_tests {
         let (pan, tilt, zoom) = zone_home_from_reply(&boot).unwrap();
         assert!((pan - 27.64).abs() < 0.01 && (tilt - 22.45).abs() < 0.01 && zoom == 1.0);
         assert_eq!(zone_home_from_reply(&zone_home_payload(-12.5, 20.0, 1.5)).unwrap(), (-12.5, 20.0, 1.5));
+        // Gimbal auto-tracking off while the zone is set, as the SDK sent it (sequence 0x34).
+        let gimbal = obsbot_frame_with_payload(0x34, ZONE_TRACK_GIMBAL_SET, &[0]).unwrap();
+        assert_eq!(&gimbal[..17], &[0xaa, 0x25, 0x34, 0x00, 0x0c, 0x00, 0x8b, 0x88, 0x0a, 0x04, 0x44, 0x08, 0x01, 0x00, 0xe6, 0x3f, 0x00]);
+        // Zone tracking on, byte for byte as the SDK sent it (sequence 0x51).
+        let zone = obsbot_frame_with_payload(0x51, ZONE_TRACK_STATE_SET, &[1]).unwrap();
+        assert_eq!(&zone[..17], &[0xaa, 0x25, 0x51, 0x00, 0x0c, 0x00, 0xf9, 0xe6, 0x0a, 0x04, 0xc4, 0x08, 0x01, 0x00, 0x27, 0xff, 0x01]);
         // Hand side, as the SDK sent it for Left: 04 2244, payload 01.
         let left = obsbot_frame_with_payload(0x30, HAND_SIDE_SET, &[1]).unwrap();
         assert_eq!(&left[8..17], &[0x0a, 0x04, 0x44, 0x22, 0x01, 0x00, 0x27, 0xff, 0x01]);

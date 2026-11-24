@@ -13,7 +13,7 @@ flags=()
 sdk="$HOME/obsbot-sdk/libdev_v2.1.0_8"
 for arg in "$@"; do
     case "$arg" in
-        --toggles|--moves|--with-moves|--hidden|--round4|--sleep-images) flags+=("$arg") ;;
+        --toggles|--moves|--with-moves|--hidden|--round4|--round5|--sleep-images) flags+=("$arg") ;;
         *) sdk="$arg" ;;
     esac
 done

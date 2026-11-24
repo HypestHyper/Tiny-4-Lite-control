@@ -25,6 +25,8 @@ numbers; anything taking an undocumented structure, or whose argument order is u
 ```bash
 bash run.sh --round4 --moves      # return position written and read back, hand side, gesture bytes in the AI status
 bash run.sh --round4 --sleep-images   # also downloads the three sleep picture thumbnails (run on its own)
+bash run.sh --round5              # zone tracking switches with the AI status after each; start-up and saved positions written back as read
+bash run.sh --round5 --toggles    # also deletes the last saved position and adds it back as it was
 ```
 
 `report.txt` ends with a SUMMARY: each step's commands decoded (write/read, module, command, payload) with
