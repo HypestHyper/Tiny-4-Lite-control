@@ -769,27 +769,11 @@ fn build() -> Vec<Setting> {
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
             "On: the microphones work. Off: they are muted.", Kind::Toggle,
-            // What you last chose wins; the computer's sound cards confirm it (the camera's card is there while its
-            // microphone is on) and say what it is when nothing was chosen here. The card can take a while to come
-            // back after switching on, so a missing card never turns the switch off by itself.
-            |s| {
-                let chosen = s.config.audio_microphone_disabled.map(|disabled| !disabled);
-                match (chosen, s.mic_present) {
-                    (Some(on), Some(present)) if on == present => from_camera(Some(Value::Bool(on))),
-                    (Some(on), _) => from_saved(Some(Value::Bool(on))),
-                    (None, present) => from_camera(present.map(Value::Bool)),
-                }
-            },
-            |d, v| {
-                let on = v.as_bool();
-                set_microphone_disabled(d, !on)?;
-                // Give the sound card a moment to follow, so the switch can show it confirmed.
-                for _ in 0..10 {
-                    if super::audio::camera_card().is_some() == on { return Ok(Some(Value::Bool(on))); }
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-                Ok(None)
-            })
+            // The camera does not report it, and its sound card stays on the computer whichever way it is set,
+            // so the switch shows what you last chose here.
+            |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
+            |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
+            .last_sent()
             .confirm(Confirm {
                 title: "Restart the camera's audio?",
                 body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
@@ -1309,16 +1293,10 @@ mod tests {
         assert_eq!(find("obsbot:radio_distance").unwrap().reading(&read), Some((Value::Int(2), Origin::Camera)));
         assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
         assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
-        // The microphone is read from the computer's sound cards when the camera answers.
-        let present = Snapshot { mic_present: Some(false), ..Snapshot::default() };
-        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&present), Some((Value::Bool(false), Origin::Camera)));
-        // Switched on here but the card is not back yet: it stays on (as chosen), not off.
-        let mut waiting = Snapshot { mic_present: Some(false), ..Snapshot::default() };
-        waiting.config.audio_microphone_disabled = Some(false);
-        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&waiting), Some((Value::Bool(true), Origin::Saved)));
-        waiting.mic_present = Some(true);
-        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&waiting), Some((Value::Bool(true), Origin::Camera)));
-        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom"] {
+        // The sound card does not say whether the microphone is on, so it never decides the switch.
+        let present = Snapshot { mic_present: Some(true), ..Snapshot::default() };
+        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&present), None);
+        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom", "obsbot:mic_enabled"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
     }

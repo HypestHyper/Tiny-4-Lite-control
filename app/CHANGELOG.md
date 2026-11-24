@@ -4,8 +4,9 @@
 
 ### Fixed
 
-- The Microphone switch could not be turned back on: it followed the camera's sound card, which comes back a while
-  after switching on. What you choose now wins, and the card only confirms it; the meter waits for the card.
+- The Microphone switch could not be turned back on: it took the camera's sound card as a sign the microphone was
+  on, but the card stays whichever way it is set, so the switch showed the wrong state. It shows what you chose
+  again; the meter under it shows whether sound comes.
 - The Settings tab showed its update dot all the time and hid it in a narrow window instead of the word.
 
 - **Keep AI tracking inside this area** now also turns on the camera's zone tracking itself (the SDK's
@@ -13,7 +14,7 @@
   order OBSBOT's SDK documents (LED pattern on, gimbal auto-tracking off, area, both back). Before, the camera
   kept tracking outside the area and did not go back to the return position.
 
-- The camera model's view cone stays visible at −30° tilt; it used to disappear there.
+- The camera model's view cone fades out again as the camera goes down to its sleeping pose (it had stopped doing so).
 - The camera is put to sleep at shutdown again. The background service used to crash with a bus error
   when systemd stopped it, if its AppImage had been replaced while it was running. It now sleeps the camera
   as soon as the shutdown is announced (logind `PrepareForShutdown`). Stopping the service is kept as a fallback.
@@ -90,9 +91,8 @@
 - A close button (×) on the popped-out preview; it keeps the window's size and returns the preview to the main
   window, like closing it any other way.
 
-- The Microphone switch shows whether the camera's microphone is really on, from the computer's sound cards (the
-  camera's card goes away while its microphone is off), and a level meter under it while it is on. The meter only
-  runs while it is on screen; the sound is measured on the computer and not kept.
+- A level meter under the Microphone switch. It only runs while it is on screen; the sound is measured on the
+  computer and not kept.
 
 - **Auto zoom** on the AI tracking card (OBSBOT's AI auto zoom; the camera does not report it, so it shows what you
   last chose).

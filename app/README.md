@@ -350,11 +350,10 @@ the full font). A unit test fails if the UI asks for an icon that is not in the 
 
 ## Microphone
 
-The **Microphone** switch reads the computer's sound cards: the camera's (USB vendor 3564) is there while its
-microphone is on and goes away while it is off. After a change the app waits up to five seconds for the card to
-follow. While the microphone is on and the switch is on screen, a level meter under it shows how loud it is: it
-records through PipeWire or PulseAudio (`parec`, so other apps keep the microphone) or ALSA (`arecord`), measures
-the peak 25 times a second, and keeps nothing.
+The camera does not report whether its microphone is on, and its sound card stays on the computer either way, so
+the **Microphone** switch shows what you last chose. A level meter under it (found by OBSBOT's USB vendor id, 3564)
+shows whether sound actually comes: it records through PipeWire or PulseAudio (`parec`, so other apps keep the
+microphone) or ALSA (`arecord`) only while it is on screen, measures the peak 25 times a second, and keeps nothing.
 
 ## Backups and updates
 

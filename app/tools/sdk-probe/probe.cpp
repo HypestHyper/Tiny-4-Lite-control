@@ -22,6 +22,8 @@
 //               the state restored; the start-up position and each saved position written back with the values
 //               read (aiSetGimbalBootPosR, aiUpdGimbalPresetR, aiSetGimbalPresetNameWithIdR). With --toggles also:
 //               the last saved position deleted and added back as it was (aiDelGimbalPresetR, aiAddGimbalPresetR).
+//   --mic       instead of all the above: the microphone switched off and on again with OBSBOT's own function
+//               (cameraSetAudioMicDisabledU), so its bytes can be compared with this app's; it ends switched on.
 //   --round4    instead of all the above: the zone return position written with a new value, read back and
 //               restored; the hand side (right, left) and each gesture switch changed one at a time with the AI
 //               status read after each, then restored from the first reading. With --moves also: the camera
@@ -388,6 +390,18 @@ static void run_round5(Device *d, bool toggles) {
     }
 }
 
+// ════════════ The microphone switch, as the SDK sends it ════════════
+static void run_mic(Device *d) {
+    load_hidden_symbols();
+    const char *mic = "Device::cameraSetAudioMicDisabledU(bool)";
+    step("mic_status_before", [&] { Device::CameraStatus s{}; int r = d->cameraGetCameraStatusU(s); hexdump("CameraStatus", &s, sizeof s); return r; });
+    step("mic_disabled_true", [&] { return hidden(d, mic, true); }, 1500);
+    step("mic_status_disabled", [&] { Device::CameraStatus s{}; int r = d->cameraGetCameraStatusU(s); hexdump("CameraStatus", &s, sizeof s); return r; }, 3000);
+    step("mic_disabled_false", [&] { return hidden(d, mic, false); }, 1500);
+    step("mic_status_enabled", [&] { Device::CameraStatus s{}; int r = d->cameraGetCameraStatusU(s); hexdump("CameraStatus", &s, sizeof s); return r; }, 3000);
+    finally("Microphone: switched on (OBSBOT's own command, disabled = false)");
+}
+
 static void finish() {
     pause(1500);
     std::printf("PROBE END %.6f\n", now());
@@ -400,11 +414,12 @@ static void finish() {
 }
 
 int main(int argc, char **argv) {
-    bool toggles = false, moves = false, hidden_only = false, round4 = false, round5 = false, images = false;
+    bool toggles = false, moves = false, hidden_only = false, round4 = false, round5 = false, images = false, mic_only = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hidden") == 0) hidden_only = true;
         if (std::strcmp(argv[i], "--round4") == 0) round4 = true;
         if (std::strcmp(argv[i], "--round5") == 0) round5 = true;
+        if (std::strcmp(argv[i], "--mic") == 0) mic_only = true;
         if (std::strcmp(argv[i], "--sleep-images") == 0) images = true;
         if (std::strcmp(argv[i], "--toggles") == 0) toggles = true;
         if (std::strcmp(argv[i], "--moves") == 0 || std::strcmp(argv[i], "--with-moves") == 0) moves = true;
@@ -429,6 +444,11 @@ int main(int argc, char **argv) {
     std::fflush(stdout);
     pause(3000);  // let the SDK's own start-up traffic finish
 
+    if (mic_only) {
+        run_mic(dev.get());
+        finish();
+        return 0;
+    }
     if (round5) {
         run_round5(dev.get(), toggles);
         finish();

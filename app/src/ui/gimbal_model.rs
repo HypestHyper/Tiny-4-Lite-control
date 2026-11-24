@@ -433,6 +433,18 @@ const MODEL_HEIGHT: i32 = 185;
 const MIN_WIDTH: i32 = 230;
 /// Pixels per model unit at the full height.
 const FIXED_SCALE: f64 = 185.0 / 3.15;
+/// At this tilt and below the camera is in its sleeping pose, looking at nothing, so the view cone goes.
+pub const SLEEP_TILT: f64 = -32.0;
+/// The cone fades in over this many degrees above the sleeping pose (and out again going down).
+pub const CONE_FADE_DEGREES: f64 = 4.0;
+
+/// How much of the view cone to draw, 0 to 1, at a tilt: none at the sleeping tilt or lower, all of it
+/// a few degrees above, and a smooth fade between.
+pub fn cone_visibility(tilt: f64) -> f64 {
+    let t = ((tilt - SLEEP_TILT) / CONE_FADE_DEGREES).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// The view cone ends this far inside the edge of the drawing.
 const CONE_MARGIN: f64 = 6.0;
 
@@ -657,9 +669,12 @@ impl GimbalModel {
                 &[Kind::Moving], &[Kind::Lens], &[Kind::LensFront], &[Kind::Limit], &[Kind::Aim],
             ];
             for kinds in styles {
-                // The view cone is always drawn, whatever the tilt.
                 // (Line thickness is `line_width`: `width` is the drawing's own width, which the cone needs.)
                 let ((r, g, b), line_width, alpha) = colour(kinds[0]);
+                // The view cone fades out as the camera goes down to its sleeping pose, and back in as it comes up.
+                let cone = if kinds[0] == Kind::Aim { cone_visibility(tilt) } else { 1.0 };
+                if cone <= 0.0 { continue; }
+                let alpha = alpha * cone;
                 // The lens accent fades near edge-on instead of vanishing at once.
                 let alpha = if kinds.contains(&Kind::LensFront) { alpha * lens_visibility(lens_facing(pan, tilt, yaw)) } else { alpha };
                 cr.set_source_rgba(r, g, b, alpha * fade);
@@ -863,6 +878,15 @@ mod shape_tests {
         let half_width = (67.2f64 / 2.0).to_radians().tan();
         let half_diagonal = half_width * 5.0 / 4.0;
         assert!((2.0 * half_diagonal.atan().to_degrees() - 79.4).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_view_cone_fades_out_towards_the_sleeping_pose_and_back() {
+        assert_eq!(cone_visibility(-60.0), 0.0);
+        assert_eq!(cone_visibility(-32.0), 0.0);
+        assert_eq!(cone_visibility(-28.0), 1.0);
+        assert_eq!(cone_visibility(0.0), 1.0);
+        assert!((cone_visibility(-30.0) - 0.5).abs() < 1e-9);
     }
 
     #[test]
