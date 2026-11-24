@@ -21,6 +21,10 @@
 
 ### Changed
 
+- Quick controls: the six shortcut buttons sit in their own card under the gimbal, three to a row in equal
+  columns; the joystick knob is a third of the pad; rows are evenly spaced, with no divider lines (hairlines drew
+  one or two pixels thick under fractional scaling), and every title line has the same height.
+
 - Focus peaking marks only crisp edges: each edge is compared with itself blurred, so a strong but soft edge
   is no longer outlined (it was, with the Canny detector), and the picture is checked at full size while it is on.
 - A folded card opens with a click anywhere on it; it folds with its arrow.

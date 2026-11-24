@@ -478,7 +478,7 @@ const EDIT_HOLD: Duration = Duration::from_millis(900);
 
 impl SettingRow {
     pub fn new(store: &Store, setting: &'static Setting, density: Density) -> SettingRow {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, if density == Density::Slim { 6 } else { 4 });
         root.add_css_class("setting-row");
         if density == Density::Slim { root.add_css_class("slim"); }
         root.set_accessible_role(gtk::AccessibleRole::Group);
@@ -497,6 +497,11 @@ impl SettingRow {
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
         titles.set_hexpand(true);
+        // In the small window every title line is the same height, the title centred in it, whatever sits beside it.
+        if density == Density::Slim {
+            head.add_css_class("slim-head");
+            titles.set_valign(gtk::Align::Center);
+        }
         titles.append(&title);
         if density == Density::Full { titles.append(&summary); }
         head.append(&titles);

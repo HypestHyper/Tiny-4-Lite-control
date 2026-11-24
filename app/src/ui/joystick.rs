@@ -549,6 +549,25 @@ impl Joystick {
 
     /// The shortcut buttons beside the joystick (see QUICK_COUNT): each runs the preset chosen for it. They are squares with an
     /// outline, so they are not mistaken for the pan and tilt steps.
+    /// The six shortcut buttons in an invisible table of three equal columns, for the small window: they
+    /// stay centred and line up whatever their names, and a long name is shortened rather than cut off.
+    pub fn preset_grid(&self) -> gtk::Grid {
+        let grid = gtk::Grid::new();
+        grid.set_column_homogeneous(true);
+        grid.set_row_homogeneous(true);
+        grid.set_column_spacing(8);
+        grid.set_row_spacing(8);
+        for (index, button) in self.quick_preset_buttons().into_iter().enumerate() {
+            button.set_hexpand(true);
+            if let Some(label) = button.child().and_downcast::<gtk::Label>() {
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                label.set_max_width_chars(1);
+            }
+            grid.attach(&button, (index % 3) as i32, (index / 3) as i32, 1, 1);
+        }
+        grid
+    }
+
     fn quick_preset_buttons(&self) -> Vec<gtk::Button> {
         let store = self.0.store.clone();
         let buttons: Vec<gtk::Button> = (1..=QUICK_COUNT).map(|n| {
@@ -1264,7 +1283,9 @@ impl Joystick {
                 cr.line_to(px, py);
                 let _ = cr.stroke();
             }
-            let thumb = if engaged { 30.0 } else { 26.0 };
+            // A third of the pad across, and no bigger than on the full window's pad.
+            let base = (radius / 3.0).min(26.0);
+            let thumb = if engaged { base * 1.15 } else { base };
             cr.set_source_rgba(tr, tg, tb, alpha);
             cr.arc(px, py, thumb, 0.0, tau);
             let _ = cr.fill();

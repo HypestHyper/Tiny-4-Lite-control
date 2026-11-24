@@ -110,8 +110,16 @@ impl SlimWindow {
         joystick_card.add_css_class("tight");
         joystick_card.append(&joystick.widget_for(super::widgets::Density::Slim));
         joystick_card.set_size_request(-1, -1);
+        // The six shortcut buttons, under the gimbal: a card of its own with no title.
+        let presets_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        presets_card.add_css_class("card");
+        presets_card.add_css_class("tight");
+        presets_card.add_css_class("slim-presets");
+        presets_card.append(&joystick.preset_grid());
+        // Shown with the gimbal card.
+        joystick_card.bind_property("visible", &presets_card, "visible").sync_create().build();
 
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         list.add_css_class("card");
         list.add_css_class("tight");
 
@@ -133,6 +141,7 @@ impl SlimWindow {
         content.append(&banner);
         content.append(&preview_wrap);
         content.append(&joystick_card);
+        content.append(&presets_card);
         content.append(&list);
         content.append(&empty);
         let scroll = widgets::scroller();
@@ -249,11 +258,8 @@ fn rebuild(state: &Rc<SlimState>) {
     let chosen = selected();
     let mut count = 0;
     for setting in registry::all().iter().filter(|s| s.quick && chosen.iter().any(|id| id == s.id)) {
-        if count > 0 {
-            let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-            divider.add_css_class("divider");
-            list.append(&divider);
-        }
+        // No lines between rows: even spacing instead (a hairline is drawn one or two pixels thick under
+        // fractional scaling, which looked uneven).
         let row = SettingRow::new(&state.ctx.store, setting, Density::Slim);
         list.append(row.widget());
         keep.borrow_mut().push(row);

@@ -421,7 +421,10 @@ window.t4.csd { border-radius: §18§; }
 
 /* Setting rows */
 .setting-row { padding: §6§ 0; }
-.setting-row.slim { padding: §4§ 0; }
+.setting-row.slim { padding: §8§ 0; }
+.setting-row.slim .slim-head { min-height: §36§; }
+/* The small window's shortcut buttons: equal cells, names shortened rather than cut off. */
+.t4 .slim-presets button.preset { min-width: 0; padding: 0 §6§; }
 .setting-label { font-size: ¶14¶; font-weight: 600; }
 .setting-summary { font-size: ¶13¶; color: @t_on_surface_variant; }
 .setting-value { font-size: ¶13¶; font-weight: 600; color: @t_primary; font-feature-settings: "tnum"; }
