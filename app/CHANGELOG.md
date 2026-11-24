@@ -16,8 +16,16 @@
 - Headless UI check: the pretend camera reports Mirror image in its status, as the real one does, so the
   joystick-follows-the-mirror check works again since mirror is read from the camera.
 
+- The ±1° buttons stepped from the centre after the stick or the tracking had moved the camera: when the live
+  read failed they fell back to the driver's remembered value, which nothing else updates. They now step from
+  the position shown under the camera model, and quick clicks add up from the previous step's target. If the
+  position is not known, they say so instead of guessing.
+
 ### Changed
 
+- Auto zoom is removed from the AI tracking card: it did nothing on the camera. Presets that have it still load.
+- The gimbal-limits button sits in the gap between the camera model and the stick; the microphone button in
+  Camera controls has a microphone-with-gear icon.
 - Gimbal limits: the card notes that at faster movement speeds the camera can overshoot a limit a little.
 - The Settings tab showed its update dot all the time and hid it in a narrow window instead of the word.
 

@@ -75,6 +75,9 @@ struct State {
     polling: Cell<bool>,
     last_position: Cell<Option<(f64, f64)>>,
     last_position_at: Cell<Option<Instant>>,
+    /// The last 1° step's target per axis (pan, tilt) and when it was sent, so quick clicks add up while the
+    /// camera is still on its way.
+    step_target: Cell<[Option<(f64, Instant)>; 2]>,
     /// The speed fractions after the limits and the ramp, as last sent.
     ramped: Cell<(f64, f64)>,
     /// +1 when a positive speed raises the angle, −1 if the camera turned out to be the other way.
@@ -378,7 +381,7 @@ impl Joystick {
             stick: Cell::new((0.0, 0.0)), velocity: Cell::new((0.0, 0.0)), engaged: Cell::new(false),
             sent: Cell::new((0, 0)), sensitivity: Cell::new(sensitivity), keys: RefCell::default(),
             send_timer: RefCell::default(), poll_timer: RefCell::default(), polling: Cell::new(false),
-            last_position: Cell::new(None), last_position_at: Cell::new(None), ramped: Cell::new((0.0, 0.0)),
+            last_position: Cell::new(None), last_position_at: Cell::new(None), step_target: Cell::new([None, None]), ramped: Cell::new((0.0, 0.0)),
             axis_sign: Cell::new((1.0, 1.0)), send_failed: Arc::default(), pointer_down: Cell::new(false), rows: RefCell::default(), boost_until: Cell::new(None), direction_changed_at: Cell::new(Instant::now()), poll_error: RefCell::default(), animating: Cell::new(false),
             save_timer: RefCell::default(),
         });
@@ -411,7 +414,7 @@ impl Joystick {
             head.append(&zoom_caption);
             head.append(&state.zoom_value);
         }
-        if !compact { head.append(&widgets::link_button("mic_external_on", "Microphone settings", "Microphone")); }
+        if !compact { head.append(&widgets::link_button("mic_gear", "Microphone settings", "Microphone")); }
         head.append(&widgets::info_button("Gimbal joystick", &[
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
@@ -466,7 +469,10 @@ impl Joystick {
             both.append(&state.pad);
             column.append(&both);
         } else {
-            column.append(&stage);
+            // The model and the stick area touch, so the gimbal-limits button can sit in the gap between them.
+            let upper = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            upper.append(&stage);
+            column.append(&upper);
             // The pad has one size, whatever the window does, with the quick presets either side of it.
             state.pad.set_content_width(PAD_SIZE);
             state.pad.set_content_height(PAD_SIZE);
@@ -488,15 +494,19 @@ impl Joystick {
             pad_row.append(&side(0));
             pad_row.append(&state.pad);
             pad_row.append(&side(QUICK_COUNT / 2));
-            // The gimbal limits, a click away, in the corner above the stick.
+            // The gimbal limits, a click away, in the corner above the stick: in the gap under the model,
+            // centred on it (the column's spacing is folded into this area so the button can sit in it).
             let pad_area = gtk::Overlay::new();
             pad_row.set_hexpand(true);
             pad_area.set_child(Some(&pad_row));
             let limits = widgets::link_button("settings", "Gimbal limits", "Gimbal limits");
             limits.set_halign(gtk::Align::End);
             limits.set_valign(gtk::Align::Start);
+            limits.set_margin_top(2);
+            // The column's usual gap, inside the overlay so the button can use it.
+            pad_row.set_margin_top(12);
             pad_area.add_overlay(&limits);
-            column.append(&pad_area);
+            upper.append(&pad_area);
         }
 
         column.append(&self.step_row(compact));
@@ -675,6 +685,8 @@ impl Joystick {
 
     /// Small, bounded turns: 1° at a time, for precise moves and careful first tests.
     fn step_row(&self, compact: bool) -> gtk::Box {
+        /// Clicks this close together step on from the previous target, not from where the camera has got to.
+        const STEP_CHAIN: std::time::Duration = std::time::Duration::from_millis(1500);
         // The groups sit side by side while there is room and wrap onto a second line when there is not,
         // so the words are never squeezed into dots.
         let row = gtk::Box::new(gtk::Orientation::Horizontal, if compact { 8 } else { 0 });
@@ -712,10 +724,21 @@ impl Joystick {
                         store.error("This camera does not offer pan and tilt steps.");
                         return;
                     };
+                    // From the position on screen, or from the last step's target while the camera is still
+                    // getting there.
+                    let index = usize::from(control == "tilt_absolute");
+                    let recent = this.0.step_target.get()[index].filter(|(_, at)| at.elapsed() < STEP_CHAIN);
+                    let shown = store.gimbal().map(|(pan, tilt)| if index == 0 { pan } else { tilt });
+                    let from = recent.map(|(target, _)| target).or(shown);
                     let again = this.clone();
-                    store.call_now(move |d| backend::step_gimbal(d, control, degrees, range.0, range.1), move |result| {
+                    store.call_now(move |d| backend::step_gimbal(d, control, degrees, range.0, range.1, from), move |result| {
                         match result {
-                            Ok(target) => again.0.store.toast(&format!("{axis} target {}", backend::angles::format(target))),
+                            Ok(target) => {
+                                let mut targets = again.0.step_target.get();
+                                targets[index] = Some((target, Instant::now()));
+                                again.0.step_target.set(targets);
+                                again.0.store.toast(&format!("{axis} target {}", backend::angles::format(target)));
+                            }
                             Err(error) => again.0.store.error(&format!("Could not turn {}: {error}", axis.to_lowercase())),
                         }
                         again.poll_position_once();
@@ -1027,6 +1050,8 @@ impl Joystick {
             self.0.direction_changed_at.set(Instant::now());
         }
         self.0.sent.set(want);
+        // The stick moved the camera: the next 1° step starts from where it ends up.
+        if want != (0, 0) { self.0.step_target.set([None, None]); }
         let failed = self.0.send_failed.clone();
         camera.submit_keyed(KEY, move |device| {
             let command = format!("--set-ctrl=pan_speed={},tilt_speed={}", want.0, want.1);

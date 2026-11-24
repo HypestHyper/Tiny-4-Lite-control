@@ -536,20 +536,22 @@ pub(crate) const MAX_STEP_DEGREES: i64 = 5;
 
 /// Turn the gimbal by a small, bounded angle using the standard absolute pan/tilt control.
 /// Returns the new target in degrees. The target stays inside the range the driver reports.
-pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, max: i64) -> Result<f64, String> {
+pub(crate) fn step_gimbal(device: &str, control: &str, degrees: i64, min: i64, max: i64, from: Option<f64>) -> Result<f64, String> {
     if !matches!(control, "pan_absolute" | "tilt_absolute") {
         return Err(format!("{control} is not a pan or tilt control."));
     }
     if degrees == 0 || degrees.abs() > MAX_STEP_DEGREES {
         return Err(format!("A step is between 1 and {MAX_STEP_DEGREES} degrees."));
     }
-    // Step from where the camera really is, not from the last value the driver remembers (which the
-    // joystick and the tracking do not update). The two agree in sign, so the live degrees map straight
-    // onto the control.
-    let live = get_gimbal_position(device).ok().map(|(pan, tilt)| if control == "pan_absolute" { pan } else { tilt });
-    let current_degrees = match live {
+    // Step from where the camera really is: the position the caller shows (or the step it just sent), else a
+    // fresh read. Never from the value the driver remembers: the joystick and the tracking do not update it,
+    // so it is usually the centre. The live degrees and the control agree in sign.
+    let current_degrees = match from {
         Some(degrees) => degrees.round(),
-        None => super::angles::raw_to_degrees(get_control(device, control)?),
+        None => get_gimbal_position(device)
+            .map(|(pan, tilt)| if control == "pan_absolute" { pan } else { tilt })
+            .map_err(|_| "Could not read where the camera is pointing. Try again in a moment.".to_string())?
+            .round(),
     };
     // Never past the range the camera is driven over, nor past what the driver itself allows.
     let (low, high) = if control == "pan_absolute" { super::angles::pan_range() } else { super::angles::tilt_range() };
@@ -1382,12 +1384,6 @@ pub(crate) fn set_hand_side(device: &str, left: bool) -> Result<(), String> {
     send_camera_preset_command(device, HAND_SIDE_SET, &[u8::from(left)])
 }
 
-/// AI auto zoom (aiSetAiAutoZoomR): write 04 0x0a44, u8, as captured from the SDK. The camera does not report it.
-pub(crate) fn set_ai_auto_zoom(device: &str, on: bool) -> Result<(), String> {
-    send_camera_preset_command(device, 0x0a44, &[u8::from(on)])?;
-    update_config(|c| c.ai_auto_zoom = Some(on));
-    Ok(())
-}
 
 /// Follow the person at a point of the picture. With tracking off, Normal tracking is turned on first, since
 /// picking a target only means something while the camera tracks.

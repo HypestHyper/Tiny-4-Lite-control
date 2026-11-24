@@ -587,7 +587,7 @@ fn gimbal(options: &Options, device: &str, snapshot: &Snapshot) -> i32 {
                     code = FAILED;
                     continue;
                 };
-                match backend::step_gimbal(device, control, value, range.0, range.1) {
+                match backend::step_gimbal(device, control, value, range.0, range.1, None) {
                     Ok(target) => println!("{axis} target {}", backend::angles::format(target)),
                     Err(error) => { eprintln!("Could not turn {axis}: {error}"); code = FAILED; }
                 }

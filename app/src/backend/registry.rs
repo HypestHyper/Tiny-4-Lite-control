@@ -729,11 +729,6 @@ fn build() -> Vec<Setting> {
                 sent(apply_tracking_area(d, &current_config()))
             })
             .info("Tracking, of a person or a hand, stays inside the area set on the Tracking area card (Device tab). When the person leaves it, the camera goes back to its return position."),
-        Setting::custom("obsbot:ai_auto_zoom", Tracking, "Auto zoom",
-            "Zoom in and out to keep you framed while tracking.", Kind::Toggle,
-            |s| from_saved(flag(s.config.ai_auto_zoom)),
-            |d, v| sent(set_ai_auto_zoom(d, v.as_bool())))
-            .last_sent(),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows you.",
             Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),
@@ -1316,7 +1311,7 @@ mod tests {
         // The sound card does not say whether the microphone is on, so it never decides the switch.
         let present = Snapshot { mic_present: Some(true), ..Snapshot::default() };
         assert_eq!(find("obsbot:mic_disabled").unwrap().reading(&present), None);
-        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom"] {
+        for id in ["obsbot:pop_filter"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
     }

@@ -182,3 +182,16 @@ pub(crate) fn delete_camera_preset(device: &str, slot: u8) -> Result<(), String>
 }
 
 ```
+
+## Removed: AI auto zoom (2026-11-24)
+
+The user found it did nothing on their camera, so the switch was removed. What it sent:
+
+```rust
+/// AI auto zoom (aiSetAiAutoZoomR): write 04 0x0a44, u8, as captured from the SDK. The camera does not report it.
+pub(crate) fn set_ai_auto_zoom(device: &str, on: bool) -> Result<(), String> {
+    send_camera_preset_command(device, 0x0a44, &[u8::from(on)])?;
+    update_config(|c| c.ai_auto_zoom = Some(on));
+    Ok(())
+}
+```

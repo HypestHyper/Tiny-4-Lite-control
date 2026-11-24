@@ -23,7 +23,6 @@ lightbulb
 lock
 memory
 mic
-mic_external_on
 more_horiz
 my_location
 open_in_full
@@ -56,3 +55,4 @@ warning
 waving_hand
 wb_sunny
 zoom_in
+mic_gear
