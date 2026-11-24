@@ -352,8 +352,8 @@ the full font). A unit test fails if the UI asks for an icon that is not in the 
 
 **Disable microphone** works like OBSBOT's own setting: on means the camera's microphone is off. It is read
 from the camera (status byte 34, bit 4 is set while the USB microphone is on). The camera reconnects briefly
-when it changes, so the app asks first. The camera takes the change when it restarts: turning the microphone on, it
-restarts by itself; turning it off, unplug it and plug it back in (the card says so until the camera reports it). A level meter under it (found by OBSBOT's USB vendor id, 3564)
+when it changes, so the app asks first. The camera restarts by itself to make the change; the switch keeps your
+choice until it is back. A level meter under it (found by OBSBOT's USB vendor id, 3564)
 shows whether sound actually comes: it records through PipeWire or PulseAudio (`parec`, so other apps keep the
 microphone) or ALSA (`arecord`) only while it is on screen, measures the peak 25 times a second, and keeps nothing.
 

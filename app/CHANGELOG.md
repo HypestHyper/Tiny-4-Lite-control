@@ -8,9 +8,11 @@
   from the camera: status byte 34, bit 4 is set while the USB microphone is on. The commands were right all
   along (the SDK sends the same `1c 01 00` / `1c 01 01`); the microphone had simply been disabled, and the old
   switch could not tell. Presets saved with the old Microphone switch still apply.
-- Disable microphone no longer flips back after you turn it on. The camera only takes the change when it
-  restarts (turning the microphone on, it restarts by itself; turning it off, it does not), so the switch keeps
-  your choice and the card says to unplug the camera and plug it back in.
+- Disable microphone sent the opposite of what you chose. The app put the switch back while asking for
+  confirmation, GTK delivered that change after the guard was lifted, and it opened a second dialog for the old
+  value that replaced the first, so OK sent "microphone on" (no change, no restart). The switch is now put back
+  once GTK has finished; choices that ask first had the same problem and are fixed the same way. While the
+  camera restarts to make the change, the switch keeps your choice.
 - Headless UI check: the pretend camera reports Mirror image in its status, as the real one does, so the
   joystick-follows-the-mirror check works again since mirror is read from the camera.
 

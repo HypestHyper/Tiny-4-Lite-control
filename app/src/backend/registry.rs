@@ -217,7 +217,7 @@ pub fn from_saved(value: Option<Value>) -> Reading { value.map(|v| (v, Origin::S
 /// microphone is on (capture of 2026-11-24).
 pub fn microphone_disabled_on_camera(snapshot: &Snapshot) -> Option<bool> { snapshot.byte(34).map(|b| b & 0x10 == 0) }
 
-/// A microphone change waits for the camera to restart.
+/// A microphone change waits for the camera to finish restarting.
 pub fn microphone_waits_for_restart(snapshot: &Snapshot) -> bool {
     matches!((microphone_disabled_on_camera(snapshot), super::device::microphone_pending()), (Some(now), Some(wanted)) if now != wanted)
 }
@@ -791,10 +791,10 @@ fn build() -> Vec<Setting> {
             |d, v| sent(set_microphone_disabled(d, v.as_bool())))
             .confirm(Confirm {
                 title: "Restart the camera's audio?",
-                body: "Turning the microphone on restarts the camera by itself. Turning it off takes effect once the camera restarts: unplug it and plug it back in. Apps using the camera can drop out for a moment.",
+                body: "The camera restarts to turn its microphone on or off. Apps using the camera or the microphone drop out for a moment.",
                 action: "OK",
             })
-            .info("Turns the camera's own microphone off. The camera takes the change when it restarts: turning the microphone on, it restarts by itself; turning it off, unplug the camera and plug it back in."),
+            .info("Turns the camera's own microphone off. The camera restarts by itself to make the change, so apps using it drop out for a moment."),
         Setting::custom("obsbot:mic_volume", Microphone, "Volume",
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
             |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),

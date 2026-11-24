@@ -412,6 +412,15 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
             LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.store(data[2], Ordering::Relaxed);
         } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x14 && data[1] == 0x01 {
             ui_test_mirror().store(data[2] == 1, Ordering::Relaxed);
+        } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x1c && data[1] == 0x01 {
+            // The real camera restarts and comes back with the change; the pretend one just takes it.
+            ui_test_microphone().store(data[2] == 1, Ordering::Relaxed);
+            if let Ok(path) = std::env::var("TINY4LITE_UI_TEST_LOG") {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(file, "microphone={}", if data[2] == 1 { "on" } else { "off" });
+                }
+            }
         } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 20
             && data[..2] == [0xaa, 0x25]
             && data[8..12] == [0x0a, 0x02, 0x02, 0x36]
@@ -491,6 +500,7 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                 data[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] = LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.load(Ordering::Relaxed);
                 data[0x10] = 1;
                 data[0x13] = u8::from(ui_test_mirror().load(Ordering::Relaxed));
+                data[34] = 0x02 | if ui_test_microphone().load(Ordering::Relaxed) { 0x10 } else { 0 };
                 data[0x21] = 1;
             } else if selector == 0x0d && !data.is_empty() {
                 data[0] = 0x02;
@@ -1007,8 +1017,8 @@ pub(crate) fn set_microphone_disabled(device: &str, disabled: bool) -> Result<()
     Ok(())
 }
 
-/// What the microphone was last set to while the camera still reports the other state. The camera takes
-/// the change only when it restarts (turning it on, it restarts by itself; turning it off, it does not).
+/// What the microphone was last set to while the camera still reports the other state. The camera restarts
+/// by itself to make the change, and until it is back it can still report the old state.
 /// 0 nothing waiting, 1 on, 2 off.
 static MICROPHONE_PENDING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
@@ -1152,6 +1162,12 @@ pub(crate) static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 pub(crate) static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
 pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(1);
+/// The pretend camera's microphone (status byte 34, bit 4). On unless TINY4LITE_UI_TEST_MIC=0.
+fn ui_test_microphone() -> &'static std::sync::atomic::AtomicBool {
+    static MIC: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
+    MIC.get_or_init(|| std::sync::atomic::AtomicBool::new(std::env::var("TINY4LITE_UI_TEST_MIC").map_or(true, |v| v != "0")))
+}
+
 /// The pretend camera's Mirror image (status byte 19). TINY4LITE_UI_TEST_MIRROR=1 starts it on.
 fn ui_test_mirror() -> &'static std::sync::atomic::AtomicBool {
     static MIRROR: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();

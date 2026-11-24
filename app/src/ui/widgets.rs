@@ -613,9 +613,15 @@ impl SettingRow {
                     if row.suppress.get() { return; }
                     let wanted = switch.is_active();
                     if let Some(confirm) = row.setting.confirm {
-                        // Put the switch back until the user agrees.
+                        // Put the switch back until the user agrees. Not from inside this notification: GTK holds
+                        // the change back until the handler returns, so it would arrive unguarded, open a second
+                        // dialog for the old value and replace this one (the OK then sent the old value).
                         let this = SettingRow(row.clone());
-                        this.show(row.current.get());
+                        {
+                            let this = this.clone();
+                            let previous = row.current.get();
+                            glib::idle_add_local_once(move || this.show(previous));
+                        }
                         row.store.confirm("warning", confirm.title, confirm.body, confirm.action, move || {
                             this.show(Some(Value::Bool(wanted)));
                             this.commit(Value::Bool(wanted));
@@ -744,8 +750,13 @@ impl SettingRow {
         let option = row.setting.options(&snapshot).into_iter().find(|o| o.value == value);
         if let Some(confirm) = option.as_ref().and_then(|o| o.confirm) {
             let this = self.clone();
-            // Put the control back to the real state until the user agrees.
-            this.show(row.current.get());
+            // Put the control back to the real state until the user agrees, once the change notification has
+            // finished (see the switch above: a reset from inside it arrives unguarded).
+            {
+                let this = this.clone();
+                let previous = row.current.get();
+                glib::idle_add_local_once(move || this.show(previous));
+            }
             row.store.confirm("warning", confirm.title, confirm.body, confirm.action, move || {
                 this.show(Some(Value::Int(value)));
                 this.commit(Value::Int(value));
@@ -1015,7 +1026,7 @@ impl SettingRow {
         let row = &self.0;
         if row.density != Density::Full { return; }
         if row.setting.id == "obsbot:mic_disabled" && crate::backend::registry::microphone_waits_for_restart(snapshot) {
-            row.summary.set_text("Unplug the camera and plug it back in to finish.");
+            row.summary.set_text("The camera is restarting to make the change…");
         } else if let (Kind::Choice(_), Some(value)) = (&row.setting.kind, value) {
             let hint = row.setting.options(snapshot).into_iter().find(|o| o.value == value.as_i64()).map(|o| o.hint).unwrap_or("");
             row.summary.set_text(if hint.is_empty() { row.setting.summary } else { hint });
