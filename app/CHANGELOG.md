@@ -16,6 +16,11 @@
 
 ### Changed
 
+- Commands checked against OBSBOT's own SDK on a Tiny 2 Lite; where they differed, the SDK's are used now
+  (old versions kept in `docs/sdk-alignment-backup.md`):
+  - audio auto gain sends the SDK's own command;
+  - "Tracking speed" is now **Vertical tracking**: Standard, Headroom (new) and Motion (was Sport). Presets
+    saved before keep working.
 - Manual white balance is done either by temperature or by red & blue gains, chosen on the White balance
   card. The camera uses whichever was changed last, and touching red or blue alone turned the picture green.
 - Hue is described and drawn as the magenta–green tint it is (measured), not blue–red.

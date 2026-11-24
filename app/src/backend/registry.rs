@@ -691,12 +691,13 @@ fn build() -> Vec<Setting> {
                 set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
             .info("How the camera frames the person it follows. Tracking moves the gimbal by itself. Target selection is a separate hand-gesture setting."),
-        Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
-            "How quickly the camera follows movement.",
-            Kind::Choice(vec![opt(0, "Standard", "Smooth and steady"), opt(1, "Sport", "Faster, for quick movement")]),
-            |s| from_camera(s.byte(0x24).map(|b| Value::Int(i64::from(b != 0))))
-                .or_else(|| if s.status.is_none() { from_saved(s.config.tracking_speed.as_deref().map(|v| Value::Int(i64::from(v == "sport")))) } else { None }),
-            |d, v| sent(set_tracking_speed(d, v.as_i64() == 1))),
+        Setting::custom("obsbot:tracking_speed", Tracking, "Vertical tracking",
+            "How the camera follows you up and down.",
+            Kind::Choice(vec![opt(0, "Standard", "Keeps you framed as usual"), opt(1, "Headroom", "Leaves more space above your head"), opt(2, "Motion", "Follows quick movement more closely")]),
+            |s| from_camera(s.byte(0x24).and_then(vertical_tracking_from_status).map(|m| Value::Int(i64::from(m))))
+                .or_else(|| if s.status.is_none() { from_saved(s.config.tracking_speed.as_deref().and_then(vertical_tracking_from_name).map(|m| Value::Int(i64::from(m)))) } else { None }),
+            |d, v| sent(set_vertical_tracking(d, v.as_i64().clamp(0, 2) as u8)))
+            .info("OBSBOT's SDK calls this vertical tracking (Standard, Headroom, Motion). This app called it tracking speed, with Sport for what the SDK calls Motion."),
 
         // ── Gestures ──
         Setting::custom("obsbot:gesture_target", Gestures, "Target selection",

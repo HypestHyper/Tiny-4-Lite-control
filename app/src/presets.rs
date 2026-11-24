@@ -91,10 +91,9 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if let Some(mode) = ai_mode_id(&status) {
             settings.insert("obsbot:ai_tracking_mode".into(), mode);
         }
-        match status[0x24] {
-            0x00 => { settings.insert("obsbot:tracking_speed".into(), 0); }
-            0x02 | 0x21 => { settings.insert("obsbot:tracking_speed".into(), 1); }
-            _ => {}
+        // Vertical tracking, stored as the camera's own value (0 Standard, 1 Headroom, 2 Motion).
+        if let Some(mode) = vertical_tracking_from_status(status[0x24]) {
+            settings.insert("obsbot:vertical_tracking".into(), i64::from(mode));
         }
         // Auto Exposure priority: status byte 7 (0 = Face, 1 = Global) is authoritative.
         if let Some(face) = auto_exposure_mode_from_status(&status) {
@@ -178,10 +177,16 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         } else if key == "obsbot:ai_tracking_mode" {
             ai_mode_payload(*value).ok_or_else(|| if *value == 7 { "Hand tracking is no longer offered, so this setting was skipped.".to_string() } else { "Unknown AI tracking mode in preset.".to_string() })
                 .and_then(|mode| set_ai_mode(device, mode))
-        } else if key == "obsbot:tracking_speed" {
+        } else if key == "obsbot:vertical_tracking" {
             match *value {
-                0 => set_tracking_speed(device, false),
-                1 => set_tracking_speed(device, true),
+                0..=2 => set_vertical_tracking(device, *value as u8),
+                _ => Err("Unknown vertical tracking in preset.".into()),
+            }
+        } else if key == "obsbot:tracking_speed" {
+            // Presets saved before: 0 Standard, 1 Sport (which is Motion, wire 2).
+            match *value {
+                0 => set_vertical_tracking(device, 0),
+                1 => set_vertical_tracking(device, 2),
                 _ => Err("Unknown tracking speed in preset.".into()),
             }
         } else if key == "obsbot:focus_mode" {

@@ -874,8 +874,18 @@ pub(crate) fn set_mirror_image(device: &str, enabled: bool) -> Result<(), String
     Ok(())
 }
 
+/// Audio auto gain: the tagged selector 0x06 command `17 01 xx`, as OBSBOT's SDK sends it
+/// (`cameraSetAudioAutoGainU`, captured 2026-11-24). It replaced rewriting status byte 25 in the whole block
+/// (see docs/sdk-alignment-backup.md). The state still reads back from status byte 25.
+pub(crate) fn auto_gain_payload(enabled: bool) -> [u8; 60] {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x17, 0x01, u8::from(enabled)]);
+    data
+}
+
 pub(crate) fn set_auto_gain(device: &str, enabled: bool) -> Result<(), String> {
-    set_xu_status_byte(device, XU_AUDIO_AUTO_GAIN_OFFSET, u8::from(enabled))?;
+    let mut data = auto_gain_payload(enabled);
+    xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_auto_gain = Some(enabled));
     Ok(())
 }
@@ -1397,16 +1407,28 @@ pub(crate) fn set_sleep_mode(device: &str, sleep: bool) -> Result<(), String> {
     xu_send_frame(device, group, command)
 }
 
-pub(crate) fn set_tracking_speed(device: &str, sport: bool) -> Result<(), String> {
-    let group = [0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00];
-    let command = if sport {
-        [0x67, 0xfe, 0x02, 0x00, 0x00, 0x00]
-    } else {
-        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
-    };
-    xu_send_frame(device, group, command)?;
-    update_config(|config| config.tracking_speed = Some(if sport { "sport" } else { "standard" }.into()));
+/// Vertical tracking (command 0x0cc4): 0 Standard, 1 Headroom, 2 Motion, as OBSBOT's SDK names it
+/// (`aiSetTrackingModeR(AiVerticalTrackType)`, captured 2026-11-24). It was "Tracking speed", Standard / Sport
+/// (wire 0 / 2); see docs/sdk-alignment-backup.md.
+pub(crate) fn set_vertical_tracking(device: &str, mode: u8) -> Result<(), String> {
+    if mode > 2 { return Err(format!("Vertical tracking is 0 (Standard), 1 (Headroom) or 2 (Motion), not {mode}.")); }
+    send_camera_preset_command(device, 0x0cc4, &[mode])?;
+    update_config(|config| config.tracking_speed = Some(vertical_tracking_name(mode).into()));
     Ok(())
+}
+
+pub(crate) fn vertical_tracking_name(mode: u8) -> &'static str {
+    match mode { 1 => "headroom", 2 => "motion", _ => "standard" }
+}
+
+/// The saved name, including the old "sport" (which is Motion).
+pub(crate) fn vertical_tracking_from_name(name: &str) -> Option<u8> {
+    match name { "standard" => Some(0), "headroom" => Some(1), "motion" | "sport" => Some(2), _ => None }
+}
+
+/// Status byte 0x24: 0, 1, 2 as sent; 0x21 was seen for Motion (then called Sport) in an earlier capture.
+pub(crate) fn vertical_tracking_from_status(byte: u8) -> Option<u8> {
+    match byte { 0 => Some(0), 1 => Some(1), 2 | 0x21 => Some(2), _ => None }
 }
 
 pub(crate) fn set_gesture_zoom_ratio_payload_is_valid(ratio: f32) -> bool {
@@ -2011,5 +2033,20 @@ mod settle_tests {
             assert_eq!(&frame[..expected.len()], &expected[..], "command 0x{command:04x}");
             assert!(frame[expected.len()..].iter().all(|b| *b == 0), "the rest of the frame is zeros");
         }
+    }
+
+    /// The SDK's bytes (2026-11-24 capture): auto gain is the tagged `17 01 xx` command, and vertical tracking
+    /// is command 0x0cc4 with 0 / 1 / 2.
+    #[test]
+    fn auto_gain_and_vertical_tracking_follow_the_sdk() {
+        assert_eq!(&auto_gain_payload(true)[..3], &[0x17, 0x01, 0x01]);
+        assert_eq!(&auto_gain_payload(false)[..3], &[0x17, 0x01, 0x00]);
+        assert!(auto_gain_payload(true)[3..].iter().all(|b| *b == 0));
+        // Captured: aa 25 .. 0a 04 c4 0c 01 00 <crc> 01 for Headroom (crc 27 ff for payload 01).
+        let frame = obsbot_frame_with_payload(0x30, 0x0cc4, &[1]).unwrap();
+        assert_eq!(&frame[8..17], &[0x0a, 0x04, 0xc4, 0x0c, 0x01, 0x00, 0x27, 0xff, 0x01]);
+        assert_eq!(vertical_tracking_from_status(0x21), Some(2));
+        assert_eq!(vertical_tracking_from_name("sport"), Some(2));
+        assert_eq!(vertical_tracking_name(1), "headroom");
     }
 }

@@ -60,3 +60,58 @@ Values the SDK returned for the reads match the replies (for example yaw min `9a
 Moves (`gimbalSetSpeedPositionR`, `cameraSetZoomWithSpeedAbsoluteR`), presets with names, the camera's own sleep
 timer, voice control, and the remaining SDK functions. The probe can be extended for each, with the same
 safety rules (`app/tools/sdk-probe/probe.cpp`).
+
+## 2026-11-24 full run (`run.sh --toggles --moves`)
+
+Every SDK function for the Tiny 2 series was called, except factory reset, preset and boot-position changes,
+background images, the boot AI mode, privacy and firmware. Policy from here: **where this app and the SDK differ,
+the SDK is taken as true**; replaced implementations are kept in `app/docs/sdk-alignment-backup.md`.
+
+### Writes
+
+| Feature (SDK function) | SDK bytes | This app | Result |
+|---|---|---|---|
+| HDR (`cameraSetWdrR`) | sel 0x06 `01 01 01` / `01 01 00` | same | identical |
+| Face / Global exposure (`cameraSetFaceAER`) | sel 0x06 `03 01 xx`; status 0x07 follows | same bytes | identical. The SDK's `face_ae = 1` sends `01`, which our labelled capture of OBSBOT Center shows as Global: the SDK's parameter name is misleading; the bytes agree. |
+| Autofocus priority (`cameraSetFaceFocusR`) | module 02 cmd 0x3602, u32 1 / 0 | same (Face 1) | identical |
+| Mirror (`cameraSetImageFlipHorizonU`) | sel 0x06 `14 01 xx` | same | identical |
+| Listen while asleep (`cameraSetMicrophoneDuringSleepU`) | sel 0x06 `13 01 xx` | same | identical |
+| **Audio auto gain** (`cameraSetAudioAutoGainU`) | sel 0x06 `17 01 xx` | rewrote status byte 25 in the whole block | **changed to the SDK's** |
+| Gestures 0 / 1 / 2 / 3 (`aiSetGestureCtrlIndividualR`) | cmd 0x30c4 / 0x3144 / 0x3344 / 0x33c4, u8 1 on / 0 off | same commands | identical; for 3 ("dynamic zoom direction") the SDK's on is `01`, while our "Reverse dynamic zoom" on is `00` from a labelled capture of OBSBOT Center: same bytes, opposite naming. |
+| **Vertical tracking** (`aiSetTrackingModeR`) | cmd 0x0cc4, u8 0 Standard / 1 Headroom / 2 Motion | "Tracking speed" Standard 0 / Sport 2 | **renamed to the SDK's meaning; Headroom added** |
+| AI mode (`cameraSetAiModeU`) | sel 0x06 `16 02 main sub` | same | identical. Status after each (no one in front of the camera): human modes read 0/0, group 1/0, hand 3/0; whiteboard (4) and desk (5) left the status at 3/0: not taken on this firmware. |
+| Sleep / wake (`cameraSetDevRunStatusR`) | module 02 cmd 0xa0c2, u32 1 / 0 | same | identical |
+| Recall preset (`aiTrgGimbalPresetR`) | cmd 0x39c4, u32 id + 4 × f32 1.0 | same | identical |
+| Brightness, contrast, hue, saturation, sharpness, white balance, anti-flicker, exposure, focus, zoom | standard UVC controls (processing unit 3, camera terminal 1) | same standard controls through V4L2 | identical |
+| AI auto zoom (`aiSetAiAutoZoomR`) | cmd 0x0a44, u8 | — | new |
+| Pan reverse (`aiSetGimbalYawDirReverseR`) | cmd 0x3b84, u8 | — | new |
+| Limited zone: enable / auto select / limits | cmd 0x5084 / 0x4e04 / 0x4c04, 0x4c84, 0x4d04, 0x4d84 (f32) | — | new |
+| Camera's own sleep timer (`cameraSetSuspendTimeU`) | sel 0x06 `0b 02` + u16 seconds (600 = `58 02`; 0 off) | — | new |
+| Voice commands (`cameraSetAudioCtrlStateU`) | sel 0x06 `15 02 cmd state` (cmd 0–6) | — | new (the camera accepted them; whether the Lite has voice control is unverified) |
+| Zone-tracking LED pattern (`cameraSetLedCtrlU`) | sel 0x06 `18 01 xx` | — | new |
+| AI on / off (`aiSetEnabledR`) | cmd 0x0244, u8 | — | new |
+| Zone tracking (`aiSetZoneTrackStateR`) | cmd 0x08c4, u8 | — | new |
+| AI track mode (`aiSetAiTrackModeEnabledR`) | cmd 0x0584 (8 bytes) / reset 0x0504 | — | new (a Tail Air oriented call) |
+
+### Moves (all undone in the run)
+
+| SDK function | Bytes |
+|---|---|
+| `aiSetGimbalMotorAngleR(pitch, yaw)` | cmd 0x6444, 3 × f32: roll (−1000 = leave), pitch, yaw |
+| `aiSetGimbalSpeedCtrlR` / `aiSetGimbalStop` | cmd 0x6484, 3 × f32 / reset 0x6704 |
+| `gimbalSpeedCtrlR(pitch, pan)` | module 03 cmd 0x0103, 3 × i16 degrees/s × 100 (pan 10 = `e8 03`) |
+| `gimbalSetSpeedPositionR` | module 03 cmd 0x0283, 12 bytes |
+| `gimbalRstPosR` | module 03 cmd 0x00c3, 6 zero bytes |
+| `aiTrgGimbalBootPosR` | reset 0x3904 |
+| `aiTrgLimitedZoneTrackInitPosR` | reset 0x4f44 |
+| `cameraSetZoomAbsoluteR(2.0)` | standard UVC zoom 100 |
+| `cameraSetZoomWithSpeedAbsoluteR(150, 5)` | module 02 cmd 0x1942, u32 speed, u32 ratio |
+
+This app moves the gimbal with the standard UVC pan/tilt controls (speed and absolute), which also work; it does
+not use these vendor commands yet.
+
+### Reads with values
+
+Presets: id 0 pan 1.56 / tilt −10.52, id 1 −17.30 / −31.40, id 2 90.80 / −13.30 (names of 5 bytes; info cmd
+0x3a44, name cmd 0x3b04). Limited zone defaults (id −1): yaw −100…100, pitch −30…30; start position (cmd 0x4ec4)
+0 / 0, zoom 1. The first probe run reset yaw min from −13.6 to its default −100; later runs restore what they read.
