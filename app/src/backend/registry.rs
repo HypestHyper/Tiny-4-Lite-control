@@ -1149,10 +1149,10 @@ mod tests {
     fn metering_priority_reads_status_byte_7() {
         let setting = find("obsbot:auto_exposure_mode").unwrap();
         let mut status = [0u8; 60];
-        status[7] = 0x00;
-        let snap = Snapshot { status: Some(status), ..Snapshot::default() };
-        assert_eq!(setting.reading(&snap), Some((Value::Int(1), Origin::Camera))); // Face
         status[7] = 0x01;
+        let snap = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(setting.reading(&snap), Some((Value::Int(1), Origin::Camera))); // Face (as the SDK sets it)
+        status[7] = 0x00;
         let snap = Snapshot { status: Some(status), ..Snapshot::default() };
         assert_eq!(setting.reading(&snap), Some((Value::Int(0), Origin::Camera))); // Global
         // An unrecognised byte is Unknown, even with a saved value on file.

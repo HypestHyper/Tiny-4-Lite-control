@@ -115,3 +115,11 @@ not use these vendor commands yet.
 Presets: id 0 pan 1.56 / tilt −10.52, id 1 −17.30 / −31.40, id 2 90.80 / −13.30 (names of 5 bytes; info cmd
 0x3a44, name cmd 0x3b04). Limited zone defaults (id −1): yaw −100…100, pitch −30…30; start position (cmd 0x4ec4)
 0 / 0, zoom 1. The first probe run reset yaw min from −13.6 to its default −100; later runs restore what they read.
+
+## 2026-11-24 decision: the SDK's values are used where the naming differed
+
+The earlier OBSBOT Center captures behind Face/Global exposure and Reverse dynamic zoom are considered less
+reliable than the SDK. The app now follows the SDK for both: Face exposure = `03 01 01` (status byte 7 = 1),
+Reverse dynamic zoom on = `01`. This supersedes the Face = `00` mapping in
+[02-feature-inventory.md](02-feature-inventory.md) and the 2026-11-20 capture notes. Old code:
+`app/docs/sdk-alignment-backup.md`.

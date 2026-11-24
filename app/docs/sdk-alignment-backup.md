@@ -50,3 +50,50 @@ Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
 **Now** (SDK `aiSetTrackingModeR(AiVerticalTrackType)`): the same command and wire values, which the SDK names
 vertical tracking: Standard 0, Headroom 1, Motion 2 (our "Sport" is Motion; Headroom is new). Presets store
 `obsbot:vertical_tracking` with the wire value; old presets' `obsbot:tracking_speed` 1 is read as Motion.
+
+## Metering priority (Face / Global exposure, selector 0x06 tag 0x03) and Reverse dynamic zoom
+
+Both were taken from earlier captures of OBSBOT Center that the user describes as unreliable, and both are the
+other way round from what OBSBOT's SDK sends (`cameraSetFaceAER`, `aiSetGestureCtrlIndividualR(3, …)`), so the
+SDK's values are used now (2026-11-24, from commit `0d730dc`):
+
+- Metering priority: Face sends `03 01 01` and reads status byte 7 = `01`; Global `03 01 00` / `00`.
+  It was Face `03 01 00` / `00`, Global `03 01 01` / `01`.
+- Reverse dynamic zoom (gesture command 0x33c4): on sends `01`, off `00`, like every other gesture. It was
+  inverted (on `00`, off `01`).
+
+The replaced code:
+
+```rust
+pub(crate) fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 60] {
+    let mut data = [0u8; 60];
+    data[..3].copy_from_slice(&[0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]);
+    data
+}
+
+pub(crate) fn auto_exposure_mode_from_status(status: &[u8; 60]) -> Option<bool> {
+    match status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] {
+        0x00 => Some(true),  // Face
+        0x01 => Some(false), // Global
+        _ => None,
+    }
+}
+
+
+pub(crate) fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
+    // Dynamic Zoom Direction is the exception: its captured ON/OFF payloads
+    // are inverted relative to the other gesture commands.
+    let wire_enabled = if group == [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] {
+        !enabled
+    } else {
+        enabled
+    };
+
+    if wire_enabled {
+        [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]
+    } else {
+        [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
+    }
+}
+
+```

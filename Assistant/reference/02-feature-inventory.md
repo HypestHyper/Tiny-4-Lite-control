@@ -280,7 +280,7 @@ Transport details:
 | SET tag | bytes 0–1: `03 01` |
 | Face SET value | byte 2: `00` |
 | Global SET value | byte 2: `01` |
-| Face GET value | byte 7: `00` |
+| Face GET value | byte 7: `00` (superseded 2026-11-24: the SDK sets Face as `01`; see 16-2026-11-24-sdk-probe-captures.md) |
 | Global GET value | byte 7: `01` |
 
 Every SET is a complete 60-byte buffer. The first three bytes are

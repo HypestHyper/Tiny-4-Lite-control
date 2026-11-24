@@ -941,7 +941,7 @@ pub(crate) static XU_SEQUENCE: OnceLock<AtomicU16> = OnceLock::new();
 pub(crate) static LAST_UI_TEST_QUERY_COMMAND: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_QUERY_SEQUENCE: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
-pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 pub(crate) static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
 pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(1);
 
@@ -1185,14 +1185,16 @@ pub(crate) const XU_AUTO_EXPOSURE_PRIORITY_OFFSET: usize = 7;
 
 pub(crate) fn auto_exposure_mode_payload(face_priority: bool) -> [u8; 60] {
     let mut data = [0u8; 60];
-    data[..3].copy_from_slice(&[0x03, 0x01, if face_priority { 0x00 } else { 0x01 }]);
+    // As OBSBOT's SDK sends it (cameraSetFaceAER, captured 2026-11-24): 1 = face, 0 = global. It was the other
+    // way round from an earlier capture (see docs/sdk-alignment-backup.md).
+    data[..3].copy_from_slice(&[0x03, 0x01, if face_priority { 0x01 } else { 0x00 }]);
     data
 }
 
 pub(crate) fn auto_exposure_mode_from_status(status: &[u8; 60]) -> Option<bool> {
     match status[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] {
-        0x00 => Some(true),  // Face
-        0x01 => Some(false), // Global
+        0x01 => Some(true),  // Face (as the SDK's cameraSetFaceAER(1) leaves it)
+        0x00 => Some(false), // Global
         _ => None,
     }
 }
@@ -1450,15 +1452,11 @@ pub(crate) fn set_gesture_zoom_ratio(device: &str, ratio: f32) -> Result<(), Str
 }
 
 pub(crate) fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
-    // Dynamic Zoom Direction is the exception: its captured ON/OFF payloads
-    // are inverted relative to the other gesture commands.
-    let wire_enabled = if group == [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00] {
-        !enabled
-    } else {
-        enabled
-    };
-
-    if wire_enabled {
+    // On is 1 and off is 0 for every gesture, Dynamic Zoom Direction included, as OBSBOT's SDK sends them
+    // (aiSetGestureCtrlIndividualR, captured 2026-11-24). Direction used to be inverted, from an earlier
+    // capture (see docs/sdk-alignment-backup.md).
+    let _ = group;
+    if enabled {
         [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]
     } else {
         [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]
@@ -1636,8 +1634,9 @@ mod xu_protocol_tests {
     #[test]
     fn dynamic_zoom_direction_payload_matches_lite_capture() {
         let group = [0x0a, 0x04, 0xc4, 0x33, 0x01, 0x00];
-        assert_eq!(gesture_command(group, false), [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
-        assert_eq!(gesture_command(group, true), [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]);
+        // As the SDK sends it: on 01, off 00, like the other gestures.
+        assert_eq!(gesture_command(group, true), [0x27, 0xff, 0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(gesture_command(group, false), [0xe6, 0x3f, 0x00, 0x00, 0x00, 0x00]);
 
         // The capture's sequence values advance across commands, including
         // the separate Dynamic Zoom disable packet: 0x0f, 0x10, 0x11, 0x12.
@@ -1763,13 +1762,15 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn auto_exposure_priority_payloads_match_2026_11_20_capture() {
+    fn auto_exposure_priority_payloads_match_the_sdk() {
         let face = auto_exposure_mode_payload(true);
         let global = auto_exposure_mode_payload(false);
         assert_eq!(face.len(), 60);
         assert_eq!(global.len(), 60);
-        assert_eq!(&face[..3], &[0x03, 0x01, 0x00]);
-        assert_eq!(&global[..3], &[0x03, 0x01, 0x01]);
+        // OBSBOT's SDK (2026-11-24): cameraSetFaceAER(1) sends 03 01 01. The 2026-11-20 capture had them the
+        // other way round.
+        assert_eq!(&face[..3], &[0x03, 0x01, 0x01]);
+        assert_eq!(&global[..3], &[0x03, 0x01, 0x00]);
         assert!(face[3..].iter().all(|byte| *byte == 0));
         assert!(global[3..].iter().all(|byte| *byte == 0));
     }
@@ -1778,10 +1779,13 @@ mod xu_protocol_tests {
     fn auto_exposure_priority_readback_uses_response_byte_seven() {
         let mut status = [0u8; 60];
         status[2] = 0x01; // SET_CUR value is not the GET_CUR read-back field.
-        status[7] = 0x00;
-        assert_eq!(auto_exposure_mode_from_status(&status), Some(true));
         status[7] = 0x01;
+        assert_eq!(auto_exposure_mode_from_status(&status), Some(true));
+        status[7] = 0x00;
         assert_eq!(auto_exposure_mode_from_status(&status), Some(false));
+        // And the command, as the SDK sends it: 03 01 01 face, 03 01 00 global.
+        assert_eq!(&auto_exposure_mode_payload(true)[..3], &[0x03, 0x01, 0x01]);
+        assert_eq!(&auto_exposure_mode_payload(false)[..3], &[0x03, 0x01, 0x00]);
         status[7] = 0x02;
         assert_eq!(auto_exposure_mode_from_status(&status), None);
     }
