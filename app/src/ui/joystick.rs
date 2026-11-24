@@ -817,14 +817,19 @@ impl Joystick {
             }
         });
 
-        // The zoom comes from the camera's zoom control, as the factor it gives.
+        // The Zoom read-out is the camera's live zoom, read with the position (below). Until the first reading, and
+        // whenever the zoom control changes, it shows the factor the control gives.
         {
             let zoom = state.zoom_value.downgrade();
+            let last = Rc::new(Cell::new(None::<i64>));
             let show = move |snapshot: &backend::registry::Snapshot| -> bool {
                 let Some(zoom) = zoom.upgrade() else { return false };
-                match snapshot.control("zoom_absolute") {
-                    Some(control) => zoom.set_text(&backend::zoom::label(backend::zoom::factor(control.value as f64))),
-                    None => zoom.set_text("—"),
+                let value = snapshot.control("zoom_absolute").map(|c| c.value);
+                if last.replace(value) != value {
+                    match value {
+                        Some(value) => zoom.set_text(&backend::zoom::label(backend::zoom::factor(value as f64))),
+                        None => zoom.set_text("—"),
+                    }
                 }
                 true
             };
@@ -1154,15 +1159,16 @@ impl Joystick {
                 }
             };
             state.store.set_gimbal(position);
-            // About every two seconds, the camera's live zoom too: a zoom gesture or tracking changes it without
-            // the app knowing, so a difference from what the window shows reads everything again.
+            // About every two seconds, the camera's live zoom for the Zoom read-out. The zoom slider stays what the
+            // app sent: a zoom gesture or tracking changes the live zoom, not the slider.
             if position.is_some() && state.zoom_checked.get().is_none_or(|at| at.elapsed() >= Duration::from_secs(2)) {
                 state.zoom_checked.set(Some(Instant::now()));
-                let store = state.store.clone();
+                let zoom = state.zoom_value.downgrade();
                 state.store.call(Some("live-zoom"), |device| crate::backend::get_live_zoom_factor(device), move |result| {
-                    let Ok(factor) = result else { return };
-                    let shown = store.snapshot().control("zoom_absolute").map(|c| backend::zoom::factor(c.value as f64));
-                    if shown.is_none_or(|shown| (shown - f64::from(factor)).abs() > 0.03) { store.refresh_soon(); }
+                    if let (Some(zoom), Ok(factor)) = (zoom.upgrade(), result) {
+                        zoom.set_text(&backend::zoom::label(f64::from(factor)));
+                        zoom.set_tooltip_text(Some("The camera's live zoom, including zoom gestures and tracking"));
+                    }
                 });
             }
             // Quick while it moves (or while the stick is held); relaxed when it is still.

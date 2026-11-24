@@ -494,8 +494,6 @@ impl SettingRow {
                 // Colour settings show their colours along the bar.
                 match setting.id {
                     "v4l2:white_balance_temperature" => scale.add_css_class("grad-temperature"),
-                    "v4l2:red_balance" => scale.add_css_class("grad-red"),
-                    "v4l2:blue_balance" => scale.add_css_class("grad-blue"),
                     "v4l2:hue" => scale.add_css_class("grad-hue"),
                     _ => {}
                 }

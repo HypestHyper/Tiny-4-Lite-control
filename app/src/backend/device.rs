@@ -281,8 +281,6 @@ pub(crate) fn set_white_balance_by_gains(device: &str, gains: bool) -> Result<()
 }
 
 pub(crate) fn set_control(device: &str, name: &str, value: i64) -> Result<(), String> {
-    // Every zoom sent (the slider, the buttons, presets): the live reading waits until the camera gets there.
-    if name == "zoom_absolute" { super::zoom::note_sent(); }
     run_v4l2(device, &format!("--set-ctrl={name}={value}"))?;
     // Position and speed are transient movement commands, never preferences.
     if !matches!(name, "pan_absolute" | "tilt_absolute" | "pan_speed" | "tilt_speed") {

@@ -248,13 +248,6 @@ impl Snapshot {
             Ok(text) => snapshot.controls = parse_controls(&text),
             Err(error) => snapshot.error = Some(error),
         }
-        // The zoom control only holds the last zoom sent through it; a zoom gesture or tracking leaves it
-        // behind. The camera's live zoom factor is what the picture has, so the control shows that.
-        if let Some(Ok(factor)) = (!super::zoom::settling()).then(|| get_live_zoom_factor(device)) {
-            if let Some(control) = snapshot.controls.iter_mut().find(|c| c.name == "zoom_absolute") {
-                control.value = (super::zoom::position(f64::from(factor)).round() as i64).clamp(control.min, control.max);
-            }
-        }
         // The camera answers one question at a time and now and then misses one, so ask again before
         // giving up on a reading.
         snapshot.status = retry(|| xu_status(device));
@@ -645,7 +638,7 @@ fn build() -> Vec<Setting> {
             // A preset is lit only after it is pressed, and only while the zoom stays there, so sliding the
             // zoom through a preset does not make the buttons flicker.
             |s| from_camera(s.control("zoom_absolute").map(|c| Value::Int(lit_preset(c.value)))),
-            |d, v| { PRESSED_PRESET.store(v.as_i64(), std::sync::atomic::Ordering::Relaxed); super::zoom::note_sent(); sent(set_control(d, "zoom_absolute", v.as_i64())) })
+            |d, v| { PRESSED_PRESET.store(v.as_i64(), std::sync::atomic::Ordering::Relaxed); sent(set_control(d, "zoom_absolute", v.as_i64())) })
             .needs("obsbot:ai_tracking_mode", ZOOM_TRACKING, "Zoom works with tracking off or on Normal. Change Tracking mode to use it.")
             .info("Jumps to one of three common zoom levels: 1×, 1.15× and 1.47×. The angles are the approximate horizontal field of view at each. Works with tracking off or on Normal."),
 

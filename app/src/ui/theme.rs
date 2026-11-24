@@ -289,6 +289,10 @@ window.t4.csd { border-radius: §18§; }
 
 /* Buttons */
 .t4 button { min-height: §40§; min-width: §40§; padding: 0 §18§; border: none; border-radius: §20§; background: @t_secondary_container; color: @t_on_secondary_container; font-size: ¶14¶; font-weight: 600; transition: background 200ms cubic-bezier(0.2,0,0,1), border-radius 220ms cubic-bezier(0.34,1.36,0.64,1), color 200ms; }
+/* The desktop's GTK theme must not move or resize anything under the pointer: some grow, shift or scale buttons
+   on hover through properties this stylesheet did not set. These win over the theme in every state. */
+.t4 button, .t4 switch, .t4 checkbutton, .t4 scale slider { margin: 0; transform: none; box-shadow: none; text-shadow: none; -gtk-icon-shadow: none; }
+.t4 entry, .t4 spinbutton, .t4 dropdown, .t4 expander, .t4 row, .t4 scale, .t4 checkbutton check, .t4 radio { transform: none; margin: 0; }
 .t4 button:hover { background: @t_secondary_container_hover; }
 .t4 button:active { border-radius: §10§; }
 .t4 button:disabled { opacity: 0.45; }
@@ -443,11 +447,9 @@ window.t4.csd { border-radius: §18§; }
 /* Colour temperature tells the camera what colour the light is, and it corrects for it: a low setting makes
    the picture cold (blue), a high one warm (red). The bar shows what happens to the picture. */
 .t4 scale.grad-temperature trough { background-image: linear-gradient(to right, #5f8dff, #b9d0ff 30%, #f2f0ea 50%, #ffb27a 70%, #ff5a36); }
-.t4 scale.grad-red trough { background-image: linear-gradient(to right, #3fb8b4, #9aa3a6 50%, #e5484d); }
-.t4 scale.grad-blue trough { background-image: linear-gradient(to right, #e2bf3c, #a3a39b 50%, #4a7de3); }
 /* Hue on this camera only shifts the tint a little, from bluish to reddish, through neutral in the middle. */
 .t4 scale.grad-hue trough { background-image: linear-gradient(to right, #d05bc0, #a49aa8 50%, #5bbf6a); }
-.t4 scale.grad-temperature highlight, .t4 scale.grad-red highlight, .t4 scale.grad-blue highlight, .t4 scale.grad-hue highlight { background: transparent; }
+.t4 scale.grad-temperature highlight, .t4 scale.grad-hue highlight { background: transparent; }
 .t4 scale slider { min-width: 4px; min-height: §32§; margin: -§8§ 0; border-radius: 3px; background: @t_primary; border: none; box-shadow: 0 0 0 §4§ @t_surface; transition: min-width 160ms cubic-bezier(0.2,0,0,1); }
 .card-inner scale slider { box-shadow: 0 0 0 §4§ @t_surface_high; }
 /* The slider keeps its width while pressed, so nothing around it moves. */
@@ -586,6 +588,8 @@ mod tests {
                 check("outline", "surface", 3.0);
             }
         }
+        // And the theme's own hover effects are switched off for every button.
+        assert!(source.contains(".t4 button, .t4 switch, .t4 checkbutton, .t4 scale slider { margin: 0; transform: none;"));
     }
 }
 
@@ -599,7 +603,7 @@ mod hover_tests {
     #[test]
     fn hover_and_press_never_change_a_size() {
         let source = include_str!("theme.rs");
-        let sizes = ["min-width", "min-height", "padding", "margin", "border-width", "font-size", "font-weight", "width", "height"];
+        let sizes = ["min-width", "min-height", "padding", "margin", "border-width", "font-size", "font-weight", "width", "height", "transform", "letter-spacing"];
         let start = source.find("const TEMPLATE").or_else(|| source.find("r#\"")).unwrap_or(0);
         for line in source[start..].lines() {
             let selector = line.split('{').next().unwrap_or("");
