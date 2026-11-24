@@ -268,6 +268,13 @@ fn perform(action: &Action, device: &str, status: &mut Status) {
             let mut parts = Vec::new();
             if let Some(message) = backend::apply_saved_video_mode(device) { parts.push(message); }
             let config = current_config();
+            // The tracking area: the camera cannot say whether it is on, so what the settings say is sent again.
+            if config.tracking_area {
+                match backend::device::apply_tracking_area(device, &config) {
+                    Ok(()) => parts.push("Tracking area set.".into()),
+                    Err(error) => parts.push(format!("Tracking area: {error}")),
+                }
+            }
             match restore_preset(&config) {
                 Some(preset) => match presets::apply(device, &preset) {
                     Ok(done) => parts.push(done),

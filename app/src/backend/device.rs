@@ -628,6 +628,81 @@ pub(crate) fn get_gimbal_position(device: &str) -> Result<(f64, f64), String> {
     decode_live_gimbal_position(&reply)
 }
 
+// ── Tracking area (OBSBOT's limited-zone tracking), from the SDK captures of 2026-11-24 ──
+// The camera keeps AI tracking between a yaw (pan) and a pitch (tilt) range. Its yaw is our pan; its pitch is
+// "down positive", the opposite of our tilt, so tilt limits are negated and swapped. Ranges: yaw ±120°,
+// pitch ±90° (the SDK's documented valid ranges).
+
+const ZONE_YAW_MIN_SET: u16 = 0x4c04;
+const ZONE_YAW_MAX_SET: u16 = 0x4c84;
+const ZONE_PITCH_MIN_SET: u16 = 0x4d04;
+const ZONE_PITCH_MAX_SET: u16 = 0x4d84;
+const ZONE_YAW_MIN_GET: u16 = 0x4c44;
+const ZONE_YAW_MAX_GET: u16 = 0x4cc4;
+const ZONE_PITCH_MIN_GET: u16 = 0x4d44;
+const ZONE_PITCH_MAX_GET: u16 = 0x4dc4;
+const ZONE_ENABLED_SET: u16 = 0x5084;
+const ZONE_AUTO_SELECT_SET: u16 = 0x4e04;
+const ZONE_AUTO_SELECT_GET: u16 = 0x4e44;
+pub(crate) const ZONE_YAW_LIMIT: f64 = 120.0;
+pub(crate) const ZONE_PITCH_LIMIT: f64 = 90.0;
+
+/// Our pan and tilt limits as the camera's (yaw min, yaw max, pitch min, pitch max), clamped to its ranges.
+pub(crate) fn tracking_area_to_camera(pan: (f64, f64), tilt: (f64, f64)) -> [f32; 4] {
+    let yaw = |d: f64| d.clamp(-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT) as f32;
+    let pitch = |d: f64| d.clamp(-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT) as f32;
+    [yaw(pan.0), yaw(pan.1), pitch(-tilt.1), pitch(-tilt.0)]
+}
+
+/// The camera's (yaw min, yaw max, pitch min, pitch max) as our (pan low, pan high), (tilt low, tilt high).
+pub(crate) fn tracking_area_from_camera(zone: [f32; 4]) -> ((f64, f64), (f64, f64)) {
+    ((f64::from(zone[0]), f64::from(zone[1])), (-f64::from(zone[3]), -f64::from(zone[2])))
+}
+
+/// Send the tracking area's limits (our convention) to the camera.
+pub(crate) fn set_tracking_area_limits(device: &str, pan: (f64, f64), tilt: (f64, f64)) -> Result<(), String> {
+    let zone = tracking_area_to_camera(pan, tilt);
+    for (command, value) in [(ZONE_YAW_MIN_SET, zone[0]), (ZONE_YAW_MAX_SET, zone[1]), (ZONE_PITCH_MIN_SET, zone[2]), (ZONE_PITCH_MAX_SET, zone[3])] {
+        send_camera_preset_command(device, command, &value.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+/// Turn the tracking area on or off. The camera does not answer a read of this on firmware 6.2.8.1.
+pub(crate) fn set_tracking_area_enabled(device: &str, enabled: bool) -> Result<(), String> {
+    send_camera_preset_command(device, ZONE_ENABLED_SET, &[u8::from(enabled)])
+}
+
+pub(crate) fn set_tracking_area_auto_select(device: &str, enabled: bool) -> Result<(), String> {
+    send_camera_preset_command(device, ZONE_AUTO_SELECT_SET, &[u8::from(enabled)])
+}
+
+pub(crate) fn get_tracking_area_auto_select(device: &str) -> Result<bool, String> {
+    let reply = query_obsbot(device, 0x04, ZONE_AUTO_SELECT_GET)?;
+    reply.first().map(|b| *b != 0).ok_or_else(|| "The camera sent no auto-select value.".to_string())
+}
+
+/// The tracking area the camera holds now, in our convention: (pan low, pan high), (tilt low, tilt high).
+pub(crate) fn get_tracking_area(device: &str) -> Result<((f64, f64), (f64, f64)), String> {
+    let mut zone = [0f32; 4];
+    for (slot, command) in [ZONE_YAW_MIN_GET, ZONE_YAW_MAX_GET, ZONE_PITCH_MIN_GET, ZONE_PITCH_MAX_GET].into_iter().enumerate() {
+        let reply = query_obsbot(device, 0x04, command)?;
+        let bytes: [u8; 4] = reply.get(..4).ok_or("The camera sent a short tracking-area value.")?.try_into().unwrap();
+        zone[slot] = f32::from_le_bytes(bytes);
+    }
+    Ok(tracking_area_from_camera(zone))
+}
+
+/// Send what the settings say: the area's limits (the gimbal limits, or the camera's full range for an axis
+/// whose limit is off) and switch it on, or switch it off.
+pub(crate) fn apply_tracking_area(device: &str, config: &crate::config::AppConfig) -> Result<(), String> {
+    if !config.tracking_area { return set_tracking_area_enabled(device, false); }
+    let pan = if config.pan_limit { (config.pan_limit_low, config.pan_limit_high) } else { (-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT) };
+    let tilt = if config.tilt_limit { (config.tilt_limit_low, config.tilt_limit_high) } else { (-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT) };
+    set_tracking_area_limits(device, pan, tilt)?;
+    set_tracking_area_enabled(device, true)
+}
+
 pub(crate) fn get_live_zoom_factor(device: &str) -> Result<f32, String> {
     let reply = query_obsbot(device, 0x04, 0x6804)?;
     let bytes: [u8; 4] = reply.get(..4)
@@ -2052,5 +2127,21 @@ mod settle_tests {
         assert_eq!(vertical_tracking_from_status(0x21), Some(2));
         assert_eq!(vertical_tracking_from_name("sport"), Some(2));
         assert_eq!(vertical_tracking_name(1), "headroom");
+    }
+
+    /// The tracking area's commands as captured from the SDK (2026-11-24), and our tilt convention turned into
+    /// the camera's "down positive" pitch.
+    #[test]
+    fn tracking_area_frames_and_conventions() {
+        // Pan -30..30 and tilt -10..10: yaw -30..30, pitch -10..10 (tilt negated and swapped).
+        assert_eq!(tracking_area_to_camera((-30.0, 30.0), (-10.0, 10.0)), [-30.0, 30.0, -10.0, 10.0]);
+        // Tilt -30..70 (down 30, up 70) is pitch -70..30.
+        assert_eq!(tracking_area_to_camera((-140.0, 140.0), (-30.0, 70.0)), [-120.0, 120.0, -70.0, 30.0]);
+        assert_eq!(tracking_area_from_camera([-100.0, 100.0, -70.0, 30.0]), ((-100.0, 100.0), (-30.0, 70.0)));
+        // The frames, byte for byte, as the SDK sent them.
+        let yaw_min = obsbot_frame_with_payload(0x14, ZONE_YAW_MIN_SET, &(-30.0f32).to_le_bytes()).unwrap();
+        assert_eq!(&yaw_min[..20], &[0xaa, 0x25, 0x14, 0x00, 0x0c, 0x00, 0xbb, 0x11, 0x0a, 0x04, 0x04, 0x4c, 0x04, 0x00, 0x3b, 0x97, 0x00, 0x00, 0xf0, 0xc1]);
+        let on = obsbot_frame_with_payload(0x1c, ZONE_ENABLED_SET, &[1]).unwrap();
+        assert_eq!(&on[..17], &[0xaa, 0x25, 0x1c, 0x00, 0x0c, 0x00, 0x5a, 0xf2, 0x0a, 0x04, 0x84, 0x50, 0x01, 0x00, 0x27, 0xff, 0x01]);
     }
 }

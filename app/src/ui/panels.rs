@@ -1450,7 +1450,7 @@ const AXES: [AxisLimits; 2] = [
 /// its two ends typed in or taken from where the camera points now.
 pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Gimbal limits", "open_with",
-        "How far the stick, the 1° steps and presets may turn the camera, in degrees. The stick slows near an end and stops just short of it.");
+        "How far the stick, the 1° steps and presets may turn the camera, in degrees, and, if you choose, AI tracking too. The stick slows near an end and stops just short of it.");
     // Where the camera points now, for the buttons that take it.
     let position: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
     {
@@ -1465,7 +1465,99 @@ pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
         }
         body.append(&axis_limits(store, axis, &position));
     }
+    let divider = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    divider.add_css_class("divider");
+    body.append(&divider);
+    body.append(&tracking_area_section(store));
     card
+}
+
+/// The limits above, applied to AI tracking too: OBSBOT's limited-zone tracking, on the camera. Sent again
+/// whenever the limits change (the fields, the "use current position" buttons, a preset, the command line).
+fn tracking_area_section(store: &Store) -> gtk::Box {
+    use crate::backend::device as dev;
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let config = current_config();
+    // What the camera holds, read back after every change.
+    let readout = widgets::text("", &["small", "dim"]);
+    readout.set_wrap(true);
+    readout.set_xalign(0.0);
+    let read_back: Rc<dyn Fn()> = {
+        let (store, readout) = (store.clone(), readout.downgrade());
+        Rc::new(move || {
+            let readout = readout.clone();
+            store.call(Some("tracking-area-read"), |device| dev::get_tracking_area(device), move |result| {
+                let Some(readout) = readout.upgrade() else { return };
+                readout.set_text(&match result {
+                    Ok(((pan_low, pan_high), (tilt_low, tilt_high))) => format!("The camera's tracking area now: pan {} to {}, tilt {} to {}.",
+                        crate::backend::angles::format(pan_low), crate::backend::angles::format(pan_high),
+                        crate::backend::angles::format(tilt_low), crate::backend::angles::format(tilt_high)),
+                    Err(_) => "The camera's tracking area could not be read.".to_string(),
+                });
+            });
+        })
+    };
+    // Send the area when what it depends on changes (checked every second, so every way of changing it counts).
+    let key = |c: &crate::config::AppConfig| (c.tracking_area, c.pan_limit, c.pan_limit_low, c.pan_limit_high, c.tilt_limit, c.tilt_limit_low, c.tilt_limit_high);
+    let last = Rc::new(RefCell::new(key(&config)));
+    {
+        let (store, readout, read_back, last) = (store.clone(), readout.downgrade(), read_back.clone(), last.clone());
+        glib::timeout_add_local(Duration::from_secs(1), move || {
+            if readout.upgrade().is_none() { return glib::ControlFlow::Break; }
+            let config = current_config();
+            let now = key(&config);
+            // Changes while it is off are only remembered; switching it off is sent by the switch itself.
+            if *last.borrow() != now {
+                let was_on = last.borrow().0;
+                *last.borrow_mut() = now;
+                if config.tracking_area || was_on {
+                    let (store_done, read_back) = (store.clone(), read_back.clone());
+                    store.call(Some("tracking-area"), move |device| dev::apply_tracking_area(device, &config), move |result| {
+                        if let Err(error) = result { store_done.error(&format!("Could not set the tracking area: {error}")); }
+                        read_back();
+                    });
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+    section.append(&plain_switch_row("Keep AI tracking inside these limits",
+        "The camera follows you only within the pan and tilt limits above (OBSBOT's limited-zone tracking). A limit that is off lets tracking use the camera's full range on that axis.",
+        config.tracking_area, |on| update_config(|c| c.tracking_area = on)));
+    // Auto-select: read from the camera when the card opens.
+    let auto = gtk::Switch::new();
+    auto.set_valign(gtk::Align::Center);
+    widgets::label_accessible(&auto, "Pick a target inside the area automatically");
+    let reading = Rc::new(Cell::new(true));
+    {
+        let (auto, reading) = (auto.downgrade(), reading.clone());
+        store.call(Some("tracking-area-auto-read"), |device| dev::get_tracking_area_auto_select(device), move |result| {
+            if let (Some(auto), Ok(on)) = (auto.upgrade(), result) { reading.set(true); auto.set_active(on); }
+            reading.set(false);
+        });
+    }
+    {
+        let (store, reading) = (store.clone(), reading.clone());
+        auto.connect_active_notify(move |switch| {
+            if reading.get() { return; }
+            let on = switch.is_active();
+            let store_done = store.clone();
+            store.call(Some("tracking-area-auto"), move |device| dev::set_tracking_area_auto_select(device, on), move |result| {
+                if let Err(error) = result { store_done.error(&format!("Could not change automatic target selection: {error}")); }
+            });
+        });
+    }
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.set_hexpand(true);
+    titles.append(&widgets::text("Pick a target inside the area automatically", &["setting-label"]));
+    titles.append(&widgets::text("When someone is inside the tracking area, the camera picks them to follow by itself.", &["setting-summary"]));
+    row.append(&titles);
+    row.append(&auto);
+    section.append(&row);
+    section.append(&readout);
+    read_back();
+    section
 }
 
 fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Option<(f64, f64)>>>) -> gtk::Box {

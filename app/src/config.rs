@@ -136,6 +136,9 @@ pub struct AppConfig {
     pub pan_limit: bool,
     pub pan_limit_low: f64,
     pub pan_limit_high: f64,
+    /// Keep AI tracking inside the same pan and tilt limits, on the camera (OBSBOT's limited-zone tracking).
+    #[serde(default)]
+    pub tracking_area: bool,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
     /// Cards folded down to their heading, by title.
@@ -297,6 +300,7 @@ impl Default for AppConfig {
             pan_limit: true,
             pan_limit_low: -140.0,
             pan_limit_high: 140.0,
+            tracking_area: false,
         }
     }
 }
