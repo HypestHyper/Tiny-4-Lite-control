@@ -138,6 +138,8 @@ impl SlimWindow {
         let banner = connection_banner(ctx);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         content.add_css_class("slim-root");
+        // Everything from the top, even when the window is taller than what it shows.
+        content.set_valign(gtk::Align::Start);
         content.append(&banner);
         content.append(&preview_wrap);
         content.append(&joystick_card);
@@ -219,11 +221,14 @@ impl SlimWindow {
         window.add_controller(keys);
 
         let (weak_ctx, js) = (Rc::downgrade(ctx), joystick.clone());
-        window.connect_close_request(move |_| {
+        window.connect_close_request(move |w| {
             js.stop_now_blocking();
+            // Remember its size for next time (not while maximised).
+            if !w.is_maximized() { let (width, height) = w.default_size(); if width > 0 && height > 0 { crate::backend::update_config(|c| c.slim_size = Some((width, height))); } }
             if let Some(ctx) = weak_ctx.upgrade() { ctx.quit(); }
             glib::Propagation::Proceed
         });
+        if let Some((width, height)) = current_config().slim_size { if !crate::backend::ui_test_mode() { window.set_default_size(width.max(320), height.max(260)); } }
         if crate::backend::ui_test_mode() {
             if let (Ok(w), Ok(h)) = (std::env::var("TINY4LITE_UI_TEST_WIDTH"), std::env::var("TINY4LITE_UI_TEST_HEIGHT")) {
                 if let (Ok(w), Ok(h)) = (w.parse::<i32>(), h.parse::<i32>()) { window.set_default_size(w, h); }

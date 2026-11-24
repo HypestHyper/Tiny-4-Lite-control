@@ -547,7 +547,12 @@ impl FullWindow {
                 for (_, button) in state.tabs.borrow().iter() {
                     let words = width >= 420;
                     if let Some(content) = button.child() {
-                        if let Some(label) = content.last_child() { label.set_visible(words); }
+                        // The words, by their class (the Settings tab also holds the update dot).
+                        let mut child = content.first_child();
+                        while let Some(w) = child {
+                            if w.has_css_class("tab-label") { w.set_visible(words); }
+                            child = w.next_sibling();
+                        }
                         // With the words gone the gap beside the icon goes too, so the icon sits in the middle.
                         if let Ok(row) = content.downcast::<gtk::Box>() { row.set_spacing(if words { 8 } else { 0 }); }
                     }
@@ -629,11 +634,14 @@ impl FullWindow {
 
         // Closing the window ends the app, with the gimbal stopped.
         let (weak_ctx, js) = (Rc::downgrade(ctx), joystick.clone());
-        window.connect_close_request(move |_| {
+        window.connect_close_request(move |w| {
             js.stop_now_blocking();
+            // Remember its size for next time (not while maximised).
+            if !w.is_maximized() { let (width, height) = w.default_size(); if width > 0 && height > 0 { crate::backend::update_config(|c| c.full_size = Some((width, height))); } }
             if let Some(ctx) = weak_ctx.upgrade() { ctx.quit(); }
             glib::Propagation::Proceed
         });
+        if let Some((width, height)) = current_config().full_size { if !crate::backend::ui_test_mode() { window.set_default_size(width, height); } }
 
         // Links on cards open a page by its name.
         {

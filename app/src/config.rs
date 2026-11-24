@@ -149,6 +149,9 @@ pub struct AppConfig {
     pub check_updates: bool,
     /// AI auto zoom as last sent (the camera does not report it).
     pub ai_auto_zoom: Option<bool>,
+    /// The size each window had when it was last closed.
+    pub full_size: Option<(i32, i32)>,
+    pub slim_size: Option<(i32, i32)>,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
     /// Cards folded down to their heading, by title.
@@ -320,6 +323,8 @@ impl Default for AppConfig {
             zone_tilt_high: 30.0,
             check_updates: true,
             ai_auto_zoom: None,
+            full_size: None,
+            slim_size: None,
         }
     }
 }

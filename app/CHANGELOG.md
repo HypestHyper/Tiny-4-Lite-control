@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- The Microphone switch could not be turned back on: it followed the camera's sound card, which comes back a while
+  after switching on. What you choose now wins, and the card only confirms it; the meter waits for the card.
+- The Settings tab showed its update dot all the time and hid it in a narrow window instead of the word.
+
 - **Keep AI tracking inside this area** now also turns on the camera's zone tracking itself (the SDK's
   "enable the zone tracking function", 0x08c4), not only the limited-zone switch, and sets the area in the
   order OBSBOT's SDK documents (LED pattern on, gimbal auto-tracking off, area, both back). Before, the camera
@@ -20,6 +24,9 @@
   between 29 and 30.
 
 ### Changed
+
+- Quick controls: slider rows are slimmer (thinner track and handle, a smaller value pill with closer arrows,
+  smaller reset and info buttons), the column starts at the top, and both windows open at the size they were closed at.
 
 - Tooltips and info texts written for people using the camera, without notes about how the app talks to it.
 - Quick controls rows are tighter.

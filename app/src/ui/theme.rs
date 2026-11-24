@@ -431,7 +431,21 @@ window.t4.csd { border-radius: §18§; }
 /* Setting rows */
 .setting-row { padding: §6§ 0; }
 .setting-row.slim { padding: §3§ 0; }
-.setting-row.slim .slim-head { min-height: §30§; }
+.setting-row.slim .slim-head { min-height: §28§; }
+/* Quick controls: slider rows as slim as toggle rows. A thinner track and handle, a smaller value pill with its
+   arrows close together, smaller reset and info buttons, smaller marks. */
+.t4 .setting-row.slim scale { padding: §2§ §2§ 0 §2§; }
+.t4 .setting-row.slim scale trough { min-height: §8§; border-radius: §5§; }
+.t4 .setting-row.slim scale highlight { min-height: §8§; border-radius: §5§; }
+.t4 .setting-row.slim scale slider { min-height: §20§; margin: -§6§ 0; }
+.t4 .setting-row.slim scale mark label { font-size: ¶10.5¶; }
+.t4 .setting-row.slim scale mark indicator { min-height: §3§; }
+.t4 .setting-row.slim .value-pill { min-height: §22§; padding: 0 §2§ 0 §8§; }
+.t4 .setting-row.slim .value-pill .setting-value { font-size: ¶12¶; }
+.t4 .setting-row.slim .value-pill .pill-arrow { min-width: §16§; min-height: §10§; border-radius: §4§; }
+.t4 .setting-row.slim .value-pill .pill-arrow .icon { font-size: §13§; margin: -§3§ 0; }
+.t4 .setting-row.slim button.round.small { min-height: §24§; min-width: §24§; border-radius: §12§; }
+.t4 .setting-row.slim button.round.small .icon { font-size: §16§; }
 /* The small window's shortcut buttons: equal cells, names shortened rather than cut off. */
 .t4 .slim-presets button.preset { min-width: 0; padding: 0 §6§; }
 .setting-label { font-size: ¶14¶; font-weight: 600; }

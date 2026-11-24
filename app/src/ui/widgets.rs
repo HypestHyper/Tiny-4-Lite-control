@@ -1114,8 +1114,11 @@ pub fn mic_meter(store: &Store) -> gtk::Box {
     // Its own colours (below), not the theme's low/high/full steps.
     for name in ["low", "high", "full"] { bar.remove_offset_value(Some(name)); }
     label_accessible(&bar, "Microphone level");
+    let waiting = text("Waiting for the microphone…", &["small", "dim"]);
+    waiting.set_visible(false);
     row.append(&glyph);
     row.append(&bar);
+    row.append(&waiting);
     row.set_visible(false);
 
     let meter: Rc<RefCell<Option<crate::backend::audio::Meter>>> = Rc::default();
@@ -1144,11 +1147,19 @@ pub fn mic_meter(store: &Store) -> gtk::Box {
     }
     { let sync = sync.clone(); row.connect_map(move |_| sync()); }
     { let meter = meter.clone(); row.connect_unmap(move |_| { meter.borrow_mut().take(); }); }
-    // Draw the newest level, falling back slowly like a real meter.
+    // Draw the newest level, falling back slowly like a real meter. Without a meter (the microphone's sound card
+    // has not come back yet after switching on), try again every two seconds.
     {
-        let (bar, meter, row_weak) = (bar.downgrade(), meter.clone(), row.downgrade());
+        let (bar, meter, row_weak, waiting, on) = (bar.downgrade(), meter.clone(), row.downgrade(), waiting.downgrade(), on.clone());
+        let tries = Rc::new(Cell::new(0u32));
         glib::timeout_add_local(Duration::from_millis(40), move || {
-            let (Some(bar), Some(_)) = (bar.upgrade(), row_weak.upgrade()) else { return glib::ControlFlow::Break };
+            let (Some(bar), Some(row)) = (bar.upgrade(), row_weak.upgrade()) else { return glib::ControlFlow::Break };
+            let missing = on.get() && row.is_mapped() && meter.borrow().is_none();
+            if missing && tries.get() % 50 == 0 { *meter.borrow_mut() = crate::backend::audio::start_meter(); }
+            tries.set(if missing { tries.get() + 1 } else { 0 });
+            let missing = on.get() && meter.borrow().is_none();
+            bar.set_visible(!missing);
+            if let Some(waiting) = waiting.upgrade() { waiting.set_visible(missing); }
             let fresh = meter.borrow().as_ref().map(|m| m.levels.try_iter().fold(0.0f64, f64::max));
             let shown = bar.value();
             bar.set_value(match fresh { Some(level) if level >= shown => level, Some(_) => (shown - 0.04).max(0.0), None => 0.0 });
