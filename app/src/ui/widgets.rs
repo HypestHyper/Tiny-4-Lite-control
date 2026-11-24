@@ -1136,10 +1136,10 @@ pub fn mic_meter(store: &Store) -> gtk::Box {
     };
     {
         let (on, sync) = (on.clone(), sync.clone());
-        let setting = crate::backend::registry::find("obsbot:mic_enabled");
+        let setting = crate::backend::registry::find("obsbot:mic_disabled");
         let show = move |snapshot: &Snapshot| -> bool {
-            // Shown unless the switch says off: with nothing chosen yet, the meter itself shows whether sound comes.
-            let now = setting.and_then(|s| s.reading(snapshot)).is_none_or(|(v, _)| v.as_bool());
+            // Shown unless the microphone is disabled: with nothing known, the meter itself shows whether sound comes.
+            let now = setting.and_then(|s| s.reading(snapshot)).is_none_or(|(v, _)| !v.as_bool());
             if on.replace(now) != now { sync(); }
             true
         };

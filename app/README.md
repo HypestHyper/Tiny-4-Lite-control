@@ -141,7 +141,7 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Microphone volume and the camera's own sleep timer.** Volume (0 to 100, read from the camera) is on the Microphone card; **Camera's own sleep timer** (Off to 1 h, read from the camera) on the Power card. Both come from the SDK's undeclared functions.
 
-**Presets** also carry noise reduction, auto gain, listen while asleep, volume, HDR, the camera's sleep timer, the tracking area on or off, Auto-track new targets and the return position, plus the microphone switch, pickup distance and pop filter as last sent. The gimbal limits themselves stay the same for every preset.
+**Presets** also carry noise reduction, auto gain, listen while asleep, volume, HDR, the camera's sleep timer, the tracking area on or off, Auto-track new targets and the return position, Disable microphone, plus pickup distance and pop filter as last sent. The gimbal limits themselves stay the same for every preset.
 
 **HDR.** A switch in the Exposure card (and `tiny4lite-control set hdr on|off`). It sends the HDR command captured from OBSBOT's own app (selector `0x06`, `01 01 01` on, `01 01 00` off) and reads the state back from status byte `0x06`. Switching reconfigures the camera's sensor, so, following OBSBOT's guidance of 3 seconds between switches, the switch rests for 3 seconds after each change, and the command itself waits if it is sent again sooner. Some capture modes may not support HDR.
 
@@ -350,8 +350,9 @@ the full font). A unit test fails if the UI asks for an icon that is not in the 
 
 ## Microphone
 
-The camera does not report whether its microphone is on, and its sound card stays on the computer either way, so
-the **Microphone** switch shows what you last chose. A level meter under it (found by OBSBOT's USB vendor id, 3564)
+**Disable microphone** works like OBSBOT's own setting: on means the camera's microphone is off. It is read
+from the camera (status byte 34, bit 4 is set while the USB microphone is on). The camera reconnects briefly
+when it changes, so the app asks first. A level meter under it (found by OBSBOT's USB vendor id, 3564)
 shows whether sound actually comes: it records through PipeWire or PulseAudio (`parec`, so other apps keep the
 microphone) or ALSA (`arecord`) only while it is on screen, measures the peak 25 times a second, and keeps nothing.
 

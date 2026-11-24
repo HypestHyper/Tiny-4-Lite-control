@@ -193,3 +193,14 @@ pattern, gimbal auto-tracking off, area, both back), and shows byte 10; the star
 (before: 0x3ec4 and 0x3e44 after reading 0x3e84); saving a position ends in 0 instead of −1000, an update uses
 0x3a04 (before 0x3e04), and a delete sends 0x3984 only (before also a cleared block to 0x3d84). Old code in
 `app/docs/sdk-alignment-backup.md`.
+
+## Microphone (`run.sh --mic`, 2026-11-25)
+
+| What | Command | Result |
+|---|---|---|
+| `cameraSetAudioMicDisabledU(true)` | status block `1c 01 00` | same bytes as this app's "off" |
+| `cameraSetAudioMicDisabledU(false)` | status block `1c 01 01` | status byte 34 went from `02` to `12`, then the camera dropped off USB and came back (re-enumerated to bring its microphone up), so the next status read failed |
+
+Status byte 34 is the SDK's `audio_opt`: low nibble = pickup distance, bit 4 = `uac_enabled` (USB microphone on).
+The camera had its microphone disabled before the run; the probe left it enabled. The app now shows the switch as
+"Disable microphone" (on = disabled), read from bit 4.

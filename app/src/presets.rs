@@ -113,6 +113,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if status[0x08] <= 3 { settings.insert("obsbot:noise_reduction".into(), i64::from(status[0x08])); }
         if status[25] <= 1 { settings.insert("obsbot:auto_gain".into(), i64::from(status[25])); }
         if status[16] <= 1 { settings.insert("obsbot:mic_during_sleep".into(), i64::from(status[16])); }
+        settings.insert("obsbot:mic_disabled".into(), i64::from(status[34] & 0x10 == 0));
         if let Some(on) = hdr_state_from_status(&status) { settings.insert("obsbot:hdr".into(), i64::from(on)); }
     }
     // Hand side and the gestures, from the camera's AI status (ahead of the last-sent values below).
@@ -147,7 +148,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
 
     let saved = current_config();
     // Settings the camera cannot report: what this app last sent.
-    if let Some(disabled) = saved.audio_microphone_disabled { settings.insert("obsbot:mic_enabled".into(), i64::from(!disabled)); }
+    if let Some(disabled) = saved.audio_microphone_disabled { settings.entry("obsbot:mic_disabled".into()).or_insert(i64::from(disabled)); }
     if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
     if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
     if let Some(on) = saved.ai_auto_zoom { settings.insert("obsbot:ai_auto_zoom".into(), i64::from(on)); }
@@ -253,7 +254,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             set_auto_gain(device, *value == 1)
         } else if key == "obsbot:mic_during_sleep" {
             set_microphone_during_sleep(device, *value == 1)
+        } else if key == "obsbot:mic_disabled" {
+            set_microphone_disabled(device, *value == 1)
         } else if key == "obsbot:mic_enabled" {
+            // Presets saved before the switch became "Disable microphone".
             set_microphone_disabled(device, *value == 0)
         } else if key == "obsbot:radio_distance" {
             u8::try_from(*value).ok().filter(|v| *v <= 2).ok_or_else(|| "Unknown pickup distance.".to_string())

@@ -767,19 +767,18 @@ fn build() -> Vec<Setting> {
             .info("Swaps which hand movement zooms in."),
 
         // ── Microphone ──
-        Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
-            "On: the microphones work. Off: they are muted.", Kind::Toggle,
-            // The camera does not report it, and its sound card stays on the computer whichever way it is set,
-            // so the switch shows what you last chose here.
-            |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
-            |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
-            .last_sent()
+        Setting::custom("obsbot:mic_disabled", Microphone, "Disable microphone",
+            "On: the camera's microphone is turned off. Off: it works.", Kind::Toggle,
+            // Status byte 34, bit 4 is set while the camera's USB microphone is on (capture of 2026-11-24).
+            |s| from_camera(s.byte(34).map(|b| Value::Bool(b & 0x10 == 0)))
+                .or_else(|| if s.byte(34).is_none() { from_saved(flag(s.config.audio_microphone_disabled)) } else { None }),
+            |d, v| sent(set_microphone_disabled(d, v.as_bool())))
             .confirm(Confirm {
                 title: "Restart the camera's audio?",
                 body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
                 action: "OK",
             })
-            .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment."),
+            .info("Turns the camera's own microphone off. The camera briefly reconnects when this changes, so apps using it can drop out for a moment."),
         Setting::custom("obsbot:mic_volume", Microphone, "Volume",
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
             |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),
@@ -1292,11 +1291,16 @@ mod tests {
         assert_eq!(find("obsbot:mirror_image").unwrap().reading(&read), Some((Value::Bool(true), Origin::Camera)));
         assert_eq!(find("obsbot:radio_distance").unwrap().reading(&read), Some((Value::Int(2), Origin::Camera)));
         assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
-        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
+        // The microphone is read from status byte 34, bit 4 (on = microphone working).
+        assert_eq!(find("obsbot:mic_disabled").unwrap().reading(&read), Some((Value::Bool(false), Origin::Camera)));
+        status[34] = 0x02;
+        let off = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(find("obsbot:mic_disabled").unwrap().reading(&off), Some((Value::Bool(true), Origin::Camera)));
+        assert_eq!(find("obsbot:mic_disabled").unwrap().reading(&snap), None);
         // The sound card does not say whether the microphone is on, so it never decides the switch.
         let present = Snapshot { mic_present: Some(true), ..Snapshot::default() };
-        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&present), None);
-        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom", "obsbot:mic_enabled"] {
+        assert_eq!(find("obsbot:mic_disabled").unwrap().reading(&present), None);
+        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
     }

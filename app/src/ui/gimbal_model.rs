@@ -434,7 +434,7 @@ const MIN_WIDTH: i32 = 230;
 /// Pixels per model unit at the full height.
 const FIXED_SCALE: f64 = 185.0 / 3.15;
 /// At this tilt and below the camera is in its sleeping pose, looking at nothing, so the view cone goes.
-pub const SLEEP_TILT: f64 = -32.0;
+pub const SLEEP_TILT: f64 = -38.0;
 /// The cone fades in over this many degrees above the sleeping pose (and out again going down).
 pub const CONE_FADE_DEGREES: f64 = 4.0;
 
@@ -883,10 +883,10 @@ mod shape_tests {
     #[test]
     fn the_view_cone_fades_out_towards_the_sleeping_pose_and_back() {
         assert_eq!(cone_visibility(-60.0), 0.0);
-        assert_eq!(cone_visibility(-32.0), 0.0);
-        assert_eq!(cone_visibility(-28.0), 1.0);
+        assert_eq!(cone_visibility(-38.0), 0.0);
+        assert_eq!(cone_visibility(-34.0), 1.0);
         assert_eq!(cone_visibility(0.0), 1.0);
-        assert!((cone_visibility(-30.0) - 0.5).abs() < 1e-9);
+        assert!((cone_visibility(-36.0) - 0.5).abs() < 1e-9);
     }
 
     #[test]

@@ -4,9 +4,10 @@
 
 ### Fixed
 
-- The Microphone switch could not be turned back on: it took the camera's sound card as a sign the microphone was
-  on, but the card stays whichever way it is set, so the switch showed the wrong state. It shows what you chose
-  again; the meter under it shows whether sound comes.
+- The microphone switch is now **Disable microphone**, as in OBSBOT's SDK (on = microphone off), and it is read
+  from the camera: status byte 34, bit 4 is set while the USB microphone is on. The commands were right all
+  along (the SDK sends the same `1c 01 00` / `1c 01 01`); the microphone had simply been disabled, and the old
+  switch could not tell. Presets saved with the old Microphone switch still apply.
 - The Settings tab showed its update dot all the time and hid it in a narrow window instead of the word.
 
 - **Keep AI tracking inside this area** now also turns on the camera's zone tracking itself (the SDK's
@@ -14,7 +15,8 @@
   order OBSBOT's SDK documents (LED pattern on, gimbal auto-tracking off, area, both back). Before, the camera
   kept tracking outside the area and did not go back to the return position.
 
-- The camera model's view cone fades out again as the camera goes down to its sleeping pose (it had stopped doing so).
+- The camera model's view cone fades out again as the camera goes down to its sleeping pose (it had stopped doing
+  so). It is gone at −38°, where the camera's sleeping tilt actually is, and fades in by −34°.
 - The camera is put to sleep at shutdown again. The background service used to crash with a bus error
   when systemd stopped it, if its AppImage had been replaced while it was running. It now sleeps the camera
   as soon as the shutdown is announced (logind `PrepareForShutdown`). Stopping the service is kept as a fallback.

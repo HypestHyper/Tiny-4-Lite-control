@@ -61,7 +61,7 @@ fn every_setting_can_be_read_and_set_from_the_terminal() {
     let ids: Vec<&str> = settings.iter().filter_map(|s| s["id"].as_str()).collect();
     for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:ai_tracking_mode", "obsbot:tracking_speed",
                "obsbot:sleep", "obsbot:led_brightness", "obsbot:fov", "obsbot:focus_mode", "obsbot:auto_exposure_mode",
-               "obsbot:exposure_compensation", "obsbot:mic_enabled", "obsbot:noise_reduction", "obsbot:radio_distance",
+               "obsbot:exposure_compensation", "obsbot:mic_disabled", "obsbot:noise_reduction", "obsbot:radio_distance",
                "obsbot:auto_gain", "obsbot:mic_during_sleep", "obsbot:gesture_zoom", "obsbot:gesture_zoom_ratio",
                "obsbot:gesture_target", "obsbot:gesture_dynamic_zoom", "obsbot:gesture_dynamic_zoom_direction"] {
         assert!(ids.contains(&id), "{id} cannot be reached from the command line");
