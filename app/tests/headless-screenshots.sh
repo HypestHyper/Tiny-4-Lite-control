@@ -159,7 +159,7 @@ grep -q 'tilt_speed=-[1-9]' "$FLIP" || fail "pushing down after up did not send 
 echo "ok: a quick up-then-down flip is not stuck"
 
 # ── With Mirror image on, pushing the stick right turns the camera the other way ──
-START_CONFIG='mirror_image_enabled = true' TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick-mirror
+TINY4LITE_UI_TEST_MIRROR=1 TINY4LITE_UI_TEST_WIDTH=1300 TINY4LITE_UI_TEST_HEIGHT=900 start joystick-mirror
 xdotool mousemove --window "$WINDOW" "$CENTRE_X" "$CENTRE_Y" mousedown 1
 sleep 0.2
 xdotool mousemove --window "$WINDOW" $((CENTRE_X + 60)) $((CENTRE_Y)); sleep 0.35

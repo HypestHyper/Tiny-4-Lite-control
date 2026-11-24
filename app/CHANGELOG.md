@@ -8,6 +8,15 @@
   from the camera: status byte 34, bit 4 is set while the USB microphone is on. The commands were right all
   along (the SDK sends the same `1c 01 00` / `1c 01 01`); the microphone had simply been disabled, and the old
   switch could not tell. Presets saved with the old Microphone switch still apply.
+- Disable microphone no longer flips back after you turn it on. The camera only takes the change when it
+  restarts (turning the microphone on, it restarts by itself; turning it off, it does not), so the switch keeps
+  your choice and the card says to unplug the camera and plug it back in.
+- Headless UI check: the pretend camera reports Mirror image in its status, as the real one does, so the
+  joystick-follows-the-mirror check works again since mirror is read from the camera.
+
+### Changed
+
+- Gimbal limits: the card notes that at faster movement speeds the camera can overshoot a limit a little.
 - The Settings tab showed its update dot all the time and hid it in a narrow window instead of the word.
 
 - **Keep AI tracking inside this area** now also turns on the camera's zone tracking itself (the SDK's

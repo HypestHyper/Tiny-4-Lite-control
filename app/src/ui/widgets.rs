@@ -1014,7 +1014,9 @@ impl SettingRow {
     fn update_hint(&self, snapshot: &Snapshot, value: Option<Value>) {
         let row = &self.0;
         if row.density != Density::Full { return; }
-        if let (Kind::Choice(_), Some(value)) = (&row.setting.kind, value) {
+        if row.setting.id == "obsbot:mic_disabled" && crate::backend::registry::microphone_waits_for_restart(snapshot) {
+            row.summary.set_text("Unplug the camera and plug it back in to finish.");
+        } else if let (Kind::Choice(_), Some(value)) = (&row.setting.kind, value) {
             let hint = row.setting.options(snapshot).into_iter().find(|o| o.value == value.as_i64()).map(|o| o.hint).unwrap_or("");
             row.summary.set_text(if hint.is_empty() { row.setting.summary } else { hint });
         } else {

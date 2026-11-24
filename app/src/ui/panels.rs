@@ -1587,7 +1587,7 @@ const ZONE_AXES: [AxisLimits; 2] = [
 /// its two ends typed in or taken from where the camera points now.
 pub fn gimbal_limits_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Gimbal limits", "open_with",
-        "How far the stick, the 1° steps and presets may turn the camera, in degrees. The stick slows near an end and stops just short of it. AI tracking has its own area: see Tracking area.");
+        "How far the stick, the 1° steps and presets may turn the camera, in degrees. The stick slows near an end and stops just short of it. At faster movement speeds the camera can still overshoot a limit a little. AI tracking has its own area: see Tracking area.");
     // Where the camera points now, for the buttons that take it.
     let position: Rc<Cell<Option<(f64, f64)>>> = Rc::default();
     {

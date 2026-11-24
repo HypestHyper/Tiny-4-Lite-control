@@ -410,6 +410,8 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
             LAST_UI_TEST_AI_MODE.store(u16::from_le_bytes([data[2], data[3]]), Ordering::Relaxed);
         } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x03 && data[1] == 0x01 {
             LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.store(data[2], Ordering::Relaxed);
+        } else if selector == 0x06 && request == UVC_SET_CUR && data.len() >= 60 && data[0] == 0x14 && data[1] == 0x01 {
+            ui_test_mirror().store(data[2] == 1, Ordering::Relaxed);
         } else if selector == 0x02 && request == UVC_SET_CUR && data.len() >= 20
             && data[..2] == [0xaa, 0x25]
             && data[8..12] == [0x0a, 0x02, 0x02, 0x36]
@@ -488,6 +490,7 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                 data[0x1c] = (mode >> 8) as u8;
                 data[XU_AUTO_EXPOSURE_PRIORITY_OFFSET] = LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY.load(Ordering::Relaxed);
                 data[0x10] = 1;
+                data[0x13] = u8::from(ui_test_mirror().load(Ordering::Relaxed));
                 data[0x21] = 1;
             } else if selector == 0x0d && !data.is_empty() {
                 data[0] = 0x02;
@@ -1000,7 +1003,26 @@ pub(crate) fn set_microphone_disabled(device: &str, disabled: bool) -> Result<()
     data[XU_AUDIO_MICROPHONE_DISABLED_OFFSET] = microphone_disabled_wire_value(disabled);
     xu_query(device, 0x06, UVC_SET_CUR, &mut data)?;
     update_config(|config| config.audio_microphone_disabled = Some(disabled));
+    MICROPHONE_PENDING.store(if disabled { 2 } else { 1 }, Ordering::Relaxed);
     Ok(())
+}
+
+/// What the microphone was last set to while the camera still reports the other state. The camera takes
+/// the change only when it restarts (turning it on, it restarts by itself; turning it off, it does not).
+/// 0 nothing waiting, 1 on, 2 off.
+static MICROPHONE_PENDING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// `Some(disabled)` while a microphone change waits for the camera to restart.
+pub(crate) fn microphone_pending() -> Option<bool> {
+    match MICROPHONE_PENDING.load(Ordering::Relaxed) { 1 => Some(false), 2 => Some(true), _ => None }
+}
+
+/// The camera now reports what was asked for (or something else was chosen): nothing waits any more.
+pub(crate) fn clear_microphone_pending() { MICROPHONE_PENDING.store(0, Ordering::Relaxed); }
+
+#[cfg(test)]
+pub(crate) fn set_microphone_pending_for_test(disabled: Option<bool>) {
+    MICROPHONE_PENDING.store(match disabled { None => 0, Some(false) => 1, Some(true) => 2 }, Ordering::Relaxed);
 }
 
 pub(crate) fn radio_distance_label(distance: u8) -> &'static str {
@@ -1130,6 +1152,11 @@ pub(crate) static LAST_UI_TEST_AI_MODE: AtomicU16 = AtomicU16::new(0);
 pub(crate) static LAST_UI_TEST_AUTO_EXPOSURE_PRIORITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 pub(crate) static LAST_UI_TEST_EXPOSURE_COMPENSATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(9);
 pub(crate) static LAST_UI_TEST_FOCUS_VALUE: AtomicU32 = AtomicU32::new(1);
+/// The pretend camera's Mirror image (status byte 19). TINY4LITE_UI_TEST_MIRROR=1 starts it on.
+fn ui_test_mirror() -> &'static std::sync::atomic::AtomicBool {
+    static MIRROR: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
+    MIRROR.get_or_init(|| std::sync::atomic::AtomicBool::new(std::env::var("TINY4LITE_UI_TEST_MIRROR").is_ok_and(|v| v == "1")))
+}
 
 pub(crate) fn xu_sequence_counter() -> &'static AtomicU16 {
     XU_SEQUENCE.get_or_init(|| {

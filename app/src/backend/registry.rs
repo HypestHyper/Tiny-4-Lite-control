@@ -213,6 +213,15 @@ pub fn from_camera(value: Option<Value>) -> Reading { value.map(|v| (v, Origin::
 /// A value this app saved after sending it.
 pub fn from_saved(value: Option<Value>) -> Reading { value.map(|v| (v, Origin::Saved)) }
 
+/// Whether the camera reports its microphone disabled: status byte 34, bit 4 is set while its USB
+/// microphone is on (capture of 2026-11-24).
+pub fn microphone_disabled_on_camera(snapshot: &Snapshot) -> Option<bool> { snapshot.byte(34).map(|b| b & 0x10 == 0) }
+
+/// A microphone change waits for the camera to restart.
+pub fn microphone_waits_for_restart(snapshot: &Snapshot) -> bool {
+    matches!((microphone_disabled_on_camera(snapshot), super::device::microphone_pending()), (Some(now), Some(wanted)) if now != wanted)
+}
+
 // ── Snapshot ──────────────────────────────────────────────────────────────
 
 /// Everything the UI needs to know about the camera right now. Read on the
@@ -770,15 +779,22 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:mic_disabled", Microphone, "Disable microphone",
             "On: the camera's microphone is turned off. Off: it works.", Kind::Toggle,
             // Status byte 34, bit 4 is set while the camera's USB microphone is on (capture of 2026-11-24).
-            |s| from_camera(s.byte(34).map(|b| Value::Bool(b & 0x10 == 0)))
-                .or_else(|| if s.byte(34).is_none() { from_saved(flag(s.config.audio_microphone_disabled)) } else { None }),
+            |s| match (microphone_disabled_on_camera(s), super::device::microphone_pending()) {
+                // The camera takes the change when it restarts; until then the switch keeps what was chosen.
+                (Some(now), Some(wanted)) if now != wanted => from_saved(Some(Value::Bool(wanted))),
+                (Some(now), pending) => {
+                    if pending.is_some() { super::device::clear_microphone_pending(); }
+                    from_camera(Some(Value::Bool(now)))
+                }
+                (None, _) => from_saved(flag(s.config.audio_microphone_disabled)),
+            },
             |d, v| sent(set_microphone_disabled(d, v.as_bool())))
             .confirm(Confirm {
                 title: "Restart the camera's audio?",
-                body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
+                body: "Turning the microphone on restarts the camera by itself. Turning it off takes effect once the camera restarts: unplug it and plug it back in. Apps using the camera can drop out for a moment.",
                 action: "OK",
             })
-            .info("Turns the camera's own microphone off. The camera briefly reconnects when this changes, so apps using it can drop out for a moment."),
+            .info("Turns the camera's own microphone off. The camera takes the change when it restarts: turning the microphone on, it restarts by itself; turning it off, unplug the camera and plug it back in."),
         Setting::custom("obsbot:mic_volume", Microphone, "Volume",
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
             |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),
@@ -1303,6 +1319,26 @@ mod tests {
         for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
+    }
+
+    /// Turning the microphone off takes effect when the camera restarts; until then the switch keeps the choice.
+    #[test]
+    fn a_microphone_change_waits_for_the_camera_to_restart() {
+        let mut status = [0u8; 60];
+        status[34] = 0x12; // microphone on
+        let on = Snapshot { status: Some(status), ..Snapshot::default() };
+        let setting = find("obsbot:mic_disabled").unwrap();
+        super::super::device::clear_microphone_pending();
+        assert_eq!(setting.reading(&on), Some((Value::Bool(false), Origin::Camera)));
+        // Disabled, camera not restarted yet.
+        super::super::device::set_microphone_pending_for_test(Some(true));
+        assert_eq!(setting.reading(&on), Some((Value::Bool(true), Origin::Saved)));
+        assert!(microphone_waits_for_restart(&on));
+        // After the restart the camera reports it off, and nothing waits.
+        status[34] = 0x02;
+        let off = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(setting.reading(&off), Some((Value::Bool(true), Origin::Camera)));
+        assert!(!microphone_waits_for_restart(&on));
     }
 
     /// The gestures, their zoom amount and the hand side come from the camera's AI status (capture of
