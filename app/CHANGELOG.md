@@ -22,7 +22,9 @@
   Headroom, behaves like Standard and is not offered).
 - Manual white balance is the colour temperature only: red and blue balance are gone (they turned the picture
   green), and presets no longer save or write them.
-- The zoom slider and the model follow the camera's live zoom, so a zoom gesture shows up.
+- The Zoom read-out under the camera model shows the camera's live zoom (gestures and tracking included); the
+  zoom slider stays what the app sent.
+- The desktop's GTK theme can no longer move or resize buttons and other controls on hover.
 - The camera's own sleep timer is on the Sleep timer card, above this app's timer.
 - Return position: each change is read back and checked; **Go there** turns the camera to it.
 

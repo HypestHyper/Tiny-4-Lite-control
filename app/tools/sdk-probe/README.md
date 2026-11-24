@@ -22,6 +22,14 @@ position and others). It finds each by its exact signature with `nm` and calls o
 numbers; anything taking an undocumented structure, or whose argument order is unknown, is skipped.
 `python3 inventory.py` lists everything in the SDK, by device.
 
+```bash
+bash run.sh --round4 --moves      # return position written and read back, hand side, gesture bytes in the AI status
+bash run.sh --round4 --sleep-images   # also downloads the three sleep picture thumbnails (run on its own)
+```
+
+`report.txt` ends with a SUMMARY: each step's commands decoded (write/read, module, command, payload) with
+the camera's replies, which is the part to compare.
+
 It needs cmake, a C++ compiler, tshark, python3 and lsusb, and sudo for the USB capture. It stops this app's
 background service during the run and starts it again afterwards; close the app's windows first. The output
 folder is `~/obsbot-sdk-probe-<date>/` with `report.txt` (steps with their packets), `probe.log` and the raw

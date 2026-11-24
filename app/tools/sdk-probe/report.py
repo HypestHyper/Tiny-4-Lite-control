@@ -132,3 +132,56 @@ if final:
     print("=" * 100)
     for line in final:
         print(line)
+
+
+# ── Summary: one line per command the SDK sent, decoded ─────────────────────────────────────────────────────
+# Framed commands on selector 0x02: aa KK seq(2) 0c 00 crc(2) 0a MM cmd(2 LE) len(2 LE) crc(2) payload.
+# Tagged commands on selector 0x06: tag len value... Replies (aa 29 / aa 89) are shown beside their request.
+KINDS = {0x25: "write", 0x01: "read", 0x05: "reset", 0x21: "default", 0x41: "read?"}
+
+
+def framed(data):
+    if len(data) < 16 or data[0] != 0xAA:
+        return None
+    length = struct.unpack_from("<H", data, 12)[0]
+    return data[1], data[9], struct.unpack_from("<H", data, 10)[0], data[16:16 + min(length, 44)]
+
+
+try:
+    print("=" * 100)
+    print("SUMMARY (KK module cmd payload; replies: ok = aa 29 with its payload, refused = aa 89)")
+    for i, (name, begin, end, ret, detail) in enumerate(steps):
+        stop = steps[i + 1][1] - 0.05 if i + 1 < len(steps) else (end or begin) + 2.0
+        lines_out = []
+        for _, h, setup, payload in [r for r in rows if begin - 0.02 <= r[0] < stop]:
+            if not setup or not payload:
+                continue
+            bm, req, value, index, wlen = struct.unpack("<BBHHH", setup)
+            selector = value >> 8
+            if selector == 0x02:
+                f = framed(payload)
+                if not f:
+                    continue
+                kk, module, cmd, body = f
+                if kk == 0x29:
+                    lines_out.append("      ok      %02x %04x  %s" % (module, cmd, body.hex(" ")))
+                elif kk in (0x89, 0x09):
+                    lines_out.append("      refused %02x %04x" % (module, cmd))
+                elif h["kind"] == "S":
+                    text = "  %-7s %02x %04x  %s" % (KINDS.get(kk, "kk%02x" % kk), module, cmd, body.hex(" ") if kk == 0x25 else "")
+                    lines_out.append(text)
+            elif selector == 0x06 and bm == 0x21 and h["kind"] == "S":
+                tag, size = payload[0], payload[1]
+                lines_out.append("  status  tag %02x  %s" % (tag, payload[2:2 + min(size, 20)].hex(" ")))
+        if lines_out:
+            print("%s (ret %s)" % (name, ret))
+            seen = []
+            for line in lines_out:
+                if line not in seen:
+                    seen.append(line)
+                    print(line)
+            for line in detail:
+                if not line.strip().startswith(("AiStatus", "CameraStatus", "PresetPosInfo")) and not re.match(r"\s+[0-9a-f]{2}( [0-9a-f]{2})+$", line):
+                    print("    " + line.strip())
+except Exception as error:  # the full report above is what counts
+    print("(summary failed: %s)" % error)
