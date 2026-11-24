@@ -278,12 +278,25 @@ fn app_presets_card(store: &Store) -> gtk::Box {
                 titles.append(&widgets::text(&format!("{} settings", preset.settings.len()), &["small", "dim"]));
                 let apply = gtk::Button::with_label("Apply");
                 apply.add_css_class("small");
+                let update = widgets::icon_button("save", &format!("Update {} with the camera's current settings", preset.name), true);
+                update.add_css_class("flat-icon");
                 let delete = widgets::icon_button("delete", &format!("Delete {}", preset.name), true);
                 delete.add_css_class("danger");
                 item.append(&titles);
                 item.append(&apply);
+                item.append(&update);
                 item.append(&delete);
                 list.append(&item);
+
+                // Update: asks first, then takes everything the preset holds from the camera as it is now.
+                let (store_update, render_update) = (store.clone(), render.clone());
+                let name = preset.name.clone();
+                update.connect_clicked(move |_| {
+                    let (store, render, name) = (store_update.clone(), render_update.clone(), name.clone());
+                    store_update.confirm("save", &format!("Update {name}?"), &overwrite_warning(&name), "Update", move || {
+                        overwrite_preset(&store, name.clone(), render.borrow().clone());
+                    });
+                });
 
                 let (store_apply, preset_apply) = (store.clone(), preset.clone());
                 apply.connect_clicked(move |_| {
@@ -323,6 +336,15 @@ fn app_presets_card(store: &Store) -> gtk::Box {
     save.connect_clicked(move |_| {
         let name = entry_save.text().trim().to_string();
         if name.is_empty() { store_save.error("Name the preset first."); return; }
+        // A name already used: the same question as Update.
+        if let Some(existing) = current_config().presets.iter().find(|p| p.name.eq_ignore_ascii_case(&name)).map(|p| p.name.clone()) {
+            let (store, rebuild, entry) = (store_save.clone(), rebuild_save.clone(), entry_save.clone());
+            store_save.confirm("save", &format!("Update {existing}?"), &overwrite_warning(&existing), "Update", move || {
+                entry.set_text("");
+                overwrite_preset(&store, existing.clone(), Some(rebuild.clone()));
+            });
+            return;
+        }
         let (store, rebuild, entry) = (store_save.clone(), rebuild_save.clone(), entry_save.clone());
         let captured_name = name.clone();
         store_save.call(None, move |d| presets::capture(d, captured_name), move |r| {
@@ -345,6 +367,31 @@ fn app_presets_card(store: &Store) -> gtk::Box {
         });
     });
     card
+}
+
+fn overwrite_warning(name: &str) -> String {
+    format!("Every setting saved in {name} is replaced with what the camera has now: picture, tracking, position, microphone, the Studio camera's look and the rest. This cannot be undone.")
+}
+
+/// Take a preset again from the camera as it is now, under the same name and in the same place in the list.
+fn overwrite_preset(store: &Store, name: String, rebuild: Option<Rc<dyn Fn()>>) {
+    let done = store.clone();
+    let captured = name.clone();
+    store.call(None, move |d| presets::capture(d, captured), move |r| {
+        match r {
+            Ok(preset) => {
+                let saved = update_config_checked(|c| {
+                    if let Some(existing) = c.presets.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&name)) { *existing = preset.clone(); }
+                });
+                match saved {
+                    Ok(()) => done.toast(&format!("Updated {name}")),
+                    Err(e) => done.error(&format!("Could not update {name}: {e}")),
+                }
+                if let Some(rebuild) = &rebuild { rebuild(); }
+            }
+            Err(e) => done.error(&format!("Could not read the camera's settings: {e}")),
+        }
+    });
 }
 
 pub fn startup_pose_card(store: &Store) -> gtk::Box {

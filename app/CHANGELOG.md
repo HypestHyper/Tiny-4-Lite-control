@@ -73,6 +73,9 @@
 
 ### Added
 
+- **Update** on each app preset: takes the preset again from the camera as it is now, after asking (every setting
+  in it is replaced). Saving under a name that is already used asks the same question.
+
 - **Stay in tracking area** on the AI tracking card (the same switch as on the Tracking area card, read from the
   camera).
 - Settings buttons that open the card behind a control: AI tracking → Tracking area, the joystick → Gimbal
