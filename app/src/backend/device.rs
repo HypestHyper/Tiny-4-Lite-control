@@ -862,28 +862,25 @@ pub(crate) fn initial_pose_payload(source: u32, pan: f32, tilt: f32, zoom: f32) 
     }
     let mut payload = Vec::with_capacity(24);
     payload.extend_from_slice(&source.to_le_bytes());
-    for value in [pan, -tilt, 0.0f32, zoom, 0.0f32] {
+    // 0.0 - tilt: level is +0.0, as the camera and the SDK write it, not -0.0.
+    for value in [pan, 0.0 - tilt, 0.0f32, zoom, 0.0f32] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
     Ok(payload)
 }
 
+/// The start-up position, as OBSBOT's SDK sets it (aiSetGimbalBootPosR): one write, 04 0x3844, 24 bytes
+/// (id 3 = a position of its own, yaw, pitch, 0, zoom, 0), then read back from 0x3884.
+pub(crate) const BOOT_POSITION_SET: u16 = 0x3844;
 pub(crate) fn set_initial_camera_state(device: &str) -> Result<InitialCameraState, String> {
     let (pan, tilt) = get_gimbal_position(device)?;
     let zoom = get_live_zoom_factor(device)?;
     let pose = initial_pose_payload(3, pan as f32, tilt as f32, zoom)?;
-    // Read and preserve the existing initial-state picture/action block. If it
-    // cannot be read, abort before changing the boot pose.
-    let actions = query_obsbot(device, 0x04, 0x3e84)?;
-    if actions.len() != 40 {
-        return Err(format!("Initial-state settings reply is {} bytes; expected 40. Nothing was changed.", actions.len()));
-    }
-    send_camera_preset_command(device, 0x3ec4, &pose)?;
+    send_camera_preset_command(device, BOOT_POSITION_SET, &pose)?;
     std::thread::sleep(std::time::Duration::from_millis(100));
-    send_camera_preset_command(device, 0x3e44, &actions)?;
     let saved = read_initial_camera_state(device)?;
     if (saved.pan - pan as f32).abs() > 0.2 || (saved.tilt - tilt as f32).abs() > 0.2 {
-        return Err(format!("Initial-state write was sent, but read-back differs: requested Pan {pan:+.1}° / Tilt {tilt:+.1}°, camera reports Pan {:+.1}° / Tilt {:+.1}°.", saved.pan, saved.tilt));
+        return Err(format!("The start-up position was sent, but the camera reports Pan {:+.1}° / Tilt {:+.1}° instead of Pan {pan:+.1}° / Tilt {tilt:+.1}°.", saved.pan, saved.tilt));
     }
     Ok(saved)
 }
@@ -1372,10 +1369,12 @@ pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: boo
     if !(1.0..=4.0).contains(&zoom) {
         return Err(format!("Current live zoom {zoom:.2}× is outside preset limits 1.0–4.0×."));
     }
-    for value in [pan as f32, -tilt as f32, 0.0f32, zoom, -1000.0f32] {
+    // As OBSBOT's SDK writes it (aiAddGimbalPresetR 04 0x3944, aiUpdGimbalPresetR 04 0x3a04): id, yaw, pitch, 0,
+    // zoom, 0; then the name (0x3a84).
+    for value in [pan as f32, 0.0 - tilt as f32, 0.0f32, zoom, 0.0f32] {
         payload.extend_from_slice(&value.to_le_bytes());
     }
-    send_camera_preset_command(device, if update { 0x3e04 } else { 0x3944 }, &payload)?;
+    send_camera_preset_command(device, if update { PRESET_UPDATE } else { PRESET_ADD }, &payload)?;
     std::thread::sleep(std::time::Duration::from_millis(100));
     rename_camera_preset(device, slot, trimmed)?;
     Ok(())
@@ -1392,16 +1391,13 @@ pub(crate) fn rename_camera_preset(device: &str, slot: u8, name: &str) -> Result
     send_camera_preset_command(device, 0x3a84, &payload)
 }
 
+pub(crate) const PRESET_ADD: u16 = 0x3944;
+pub(crate) const PRESET_UPDATE: u16 = 0x3a04;
+pub(crate) const PRESET_DELETE: u16 = 0x3984;
+
+/// Delete a saved position as OBSBOT's SDK does (aiDelGimbalPresetR): 04 0x3984 with the id, nothing else.
 pub(crate) fn delete_camera_preset(device: &str, slot: u8) -> Result<(), String> {
-    let index = preset_slot_index(slot)?.to_le_bytes();
-    send_camera_preset_command(device, 0x3984, &index)?;
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    const CLEARED: [u8; 44] = [
-        0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-    send_camera_preset_command(device, 0x3d84, &CLEARED)
+    send_camera_preset_command(device, PRESET_DELETE, &preset_slot_index(slot)?.to_le_bytes())
 }
 
 pub(crate) fn recall_camera_preset(device: &str, slot: u8) -> Result<(), String> {
@@ -2385,6 +2381,21 @@ mod settle_tests {
         let (pan, tilt, zoom) = zone_home_from_reply(&boot).unwrap();
         assert!((pan - 27.64).abs() < 0.01 && (tilt - 22.45).abs() < 0.01 && zoom == 1.0);
         assert_eq!(zone_home_from_reply(&zone_home_payload(-12.5, 20.0, 1.5)).unwrap(), (-12.5, 20.0, 1.5));
+        // Start-up position and saved positions, byte for byte as the SDK wrote them (probe round 5).
+        let boot = obsbot_frame_with_payload(0x11, BOOT_POSITION_SET, &initial_pose_payload(3, 27.64, 22.45, 1.0).unwrap()).unwrap();
+        let captured = "aa 25 11 00 0c 00 9a e6 0a 04 44 38 18 00 5c e6 03 00 00 00 b8 1e dd 41 9a 99 b3 c1 00 00 00 00 00 00 80 3f 00 00 00 00";
+        let expected: Vec<u8> = captured.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+        assert_eq!(&boot[..expected.len()], &expected[..]);
+        let delete = obsbot_frame_with_payload(0x1f, PRESET_DELETE, &1u32.to_le_bytes()).unwrap();
+        assert_eq!(&delete[..20], &[0xaa, 0x25, 0x1f, 0x00, 0x0c, 0x00, 0x6a, 0xd3, 0x0a, 0x04, 0x84, 0x39, 0x04, 0x00, 0xbf, 0xfb, 0x01, 0x00, 0x00, 0x00]);
+        let mut add = 1u32.to_le_bytes().to_vec();
+        // The stored floats exactly (yaw -17.3, pitch -31.4 as the camera holds them), then 0, zoom 1, 0.
+        for value in [f32::from_bits(0xc18a6667), f32::from_bits(0xc1fb3333), 0.0, 1.0, 0.0] { add.extend_from_slice(&value.to_le_bytes()); }
+        let add = obsbot_frame_with_payload(0x20, PRESET_ADD, &add).unwrap();
+        let captured = "aa 25 20 00 0c 00 0a 1c 0a 04 44 39 18 00 c7 cf 01 00 00 00 67 66 8a c1 33 33 fb c1 00 00 00 00 00 00 80 3f 00 00 00 00";
+        let expected: Vec<u8> = captured.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+        assert_eq!(&add[..expected.len()], &expected[..]);
+        assert_eq!(PRESET_UPDATE, 0x3a04);
         // Gimbal auto-tracking off while the zone is set, as the SDK sent it (sequence 0x34).
         let gimbal = obsbot_frame_with_payload(0x34, ZONE_TRACK_GIMBAL_SET, &[0]).unwrap();
         assert_eq!(&gimbal[..17], &[0xaa, 0x25, 0x34, 0x00, 0x0c, 0x00, 0x8b, 0x88, 0x0a, 0x04, 0x44, 0x08, 0x01, 0x00, 0xe6, 0x3f, 0x00]);

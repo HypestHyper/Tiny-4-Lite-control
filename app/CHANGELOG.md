@@ -21,6 +21,10 @@
 
 ### Changed
 
+- Saving, updating and deleting the camera's own positions, and setting the start-up position, send exactly what
+  OBSBOT's SDK sends (old commands in `docs/sdk-alignment-backup.md`).
+- The Tracking area card says whether zone tracking is on in the camera itself.
+
 - The zoom gesture, dynamic zoom, reverse dynamic zoom and the gesture zoom amount are read from the camera
   (no more Unknown); presets save them from the camera too.
 

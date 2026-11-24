@@ -1586,13 +1586,15 @@ fn tracking_area_section(store: &Store, position: &Rc<Cell<Option<(f64, f64)>>>)
         let (store, readout) = (store.clone(), readout.downgrade());
         Rc::new(move || {
             let readout = readout.clone();
-            store.call(Some("tracking-area-read"), |device| dev::get_tracking_area(device), move |result| {
+            // The area and whether zone tracking is on in the camera (AI status byte 10).
+            store.call(Some("tracking-area-read"), |device| (dev::get_tracking_area(device), dev::get_ai_status(device).ok().and_then(|a| a.get(10).copied())), move |(result, zone)| {
                 let Some(readout) = readout.upgrade() else { return };
+                let state = match zone { Some(1) => "Zone tracking is on in the camera. ", Some(0) => "Zone tracking is off in the camera. ", _ => "" };
                 readout.set_text(&match result {
-                    Ok(((pan_low, pan_high), (tilt_low, tilt_high))) => format!("The camera's tracking area now: pan {} to {}, tilt {} to {}.",
+                    Ok(((pan_low, pan_high), (tilt_low, tilt_high))) => format!("{state}Its area: pan {} to {}, tilt {} to {}.",
                         crate::backend::angles::format(pan_low), crate::backend::angles::format(pan_high),
                         crate::backend::angles::format(tilt_low), crate::backend::angles::format(tilt_high)),
-                    Err(_) => "The camera's tracking area could not be read.".to_string(),
+                    Err(_) => format!("{state}The camera's tracking area could not be read."),
                 });
             });
         })

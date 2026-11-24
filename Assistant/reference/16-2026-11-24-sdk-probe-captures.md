@@ -173,3 +173,23 @@ failed.
 
 The return position the user's camera held before the test (yaw −12.49, pitch 0.92, zoom 1.26) was set by this
 app's Use current position, so the app's command works.
+
+## Round 5 (`run.sh --round5 --toggles`, firmware 6.2.8.1, 2026-11-25)
+
+| What | Command | Payload | Result |
+|---|---|---|---|
+| Zone tracking (`aiSetZoneTrackStateR`) | write 04 `0x08c4` | u8 | AI status byte 10 follows it (0 → 1 → 0). It was 0 on the user's camera, which is why tracking ignored the area: this app only sent the limited-zone switch (04 `0x5084`), which leaves byte 10 alone |
+| Limited zone (`aiSetLimitedZoneTrackEnabledR`) | write 04 `0x5084` | u8 | no change in the AI status |
+| Gimbal auto-tracking while setting a zone (`aiSetZoneTrackGimbalEnabledR`) | write 04 `0x0844` | u8 | — |
+| LED pattern while setting (`cameraSetLedCtrlU`) | status block `18 01 xx` | — | — |
+| Start-up position (`aiSetGimbalBootPosR`) | write 04 `0x3844` | 24 bytes: id 3, yaw, pitch, 0, zoom, 0 | written back as read (0x3884) |
+| Saved position: add / update / name / delete | write 04 `0x3944` / `0x3a04` / `0x3a84` / `0x3984` | 24 bytes as above / same / u32 id + name / u32 id | position 1 deleted and added back (add, then name); the list read the same after |
+| Saved position: read info / name / list | default read (KK 21) 04 `0x3a44` / `0x3b04`; read 04 `0x3b44` | — | as before |
+
+AI status byte 0 read 03 in this run (00 in round 4); its meaning is not known.
+
+The app now uses these: the tracking area switch sends 0x08c4 with 0x5084, set in the documented order (LED
+pattern, gimbal auto-tracking off, area, both back), and shows byte 10; the start-up position is one 0x3844 write
+(before: 0x3ec4 and 0x3e44 after reading 0x3e84); saving a position ends in 0 instead of −1000, an update uses
+0x3a04 (before 0x3e04), and a delete sends 0x3984 only (before also a cleared block to 0x3d84). Old code in
+`app/docs/sdk-alignment-backup.md`.

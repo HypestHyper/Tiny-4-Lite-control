@@ -132,3 +132,53 @@ helper `set_white_balance_by_gains` still in device.rs:
 Shown as "Vertical tracking: Standard / Headroom / Motion" (the SDK's names) for one build; back to
 **Tracking speed: Standard / Sport** at the user's request. The wire values are unchanged (0 Standard, 2 Sport,
 which the SDK calls Motion); Headroom (1) behaves like Standard on the user's camera and is not offered.
+
+
+## Start-up position and saved positions (aligned with the SDK, 2026-11-25)
+
+Probe round 5 captured the SDK's own writes: start-up position `aiSetGimbalBootPosR` is one write, 04 `0x3844`
+(24 bytes: id 3, yaw, pitch, 0, zoom, 0); a saved position is added with 04 `0x3944` (same 24 bytes, last value 0),
+updated with 04 `0x3a04`, named with 04 `0x3a84` and deleted with 04 `0x3984` (u32 id) alone. The code before:
+
+```rust
+pub(crate) fn set_initial_camera_state(device: &str) -> Result<InitialCameraState, String> {
+    let (pan, tilt) = get_gimbal_position(device)?;
+    let zoom = get_live_zoom_factor(device)?;
+    let pose = initial_pose_payload(3, pan as f32, tilt as f32, zoom)?;
+    // Read and preserve the existing initial-state picture/action block. If it
+    // cannot be read, abort before changing the boot pose.
+    let actions = query_obsbot(device, 0x04, 0x3e84)?;
+    if actions.len() != 40 {
+        return Err(format!("Initial-state settings reply is {} bytes; expected 40. Nothing was changed.", actions.len()));
+    }
+    send_camera_preset_command(device, 0x3ec4, &pose)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    send_camera_preset_command(device, 0x3e44, &actions)?;
+    let saved = read_initial_camera_state(device)?;
+    if (saved.pan - pan as f32).abs() > 0.2 || (saved.tilt - tilt as f32).abs() > 0.2 {
+        return Err(format!("Initial-state write was sent, but read-back differs: requested Pan {pan:+.1}° / Tilt {tilt:+.1}°, camera reports Pan {:+.1}° / Tilt {:+.1}°.", saved.pan, saved.tilt));
+    }
+    Ok(saved)
+}
+
+
+// save_camera_preset, payload and command:
+    for value in [pan as f32, -tilt as f32, 0.0f32, zoom, -1000.0f32] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    send_camera_preset_command(device, if update { 0x3e04 } else { 0x3944 }, &payload)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+pub(crate) fn delete_camera_preset(device: &str, slot: u8) -> Result<(), String> {
+    let index = preset_slot_index(slot)?.to_le_bytes();
+    send_camera_preset_command(device, 0x3984, &index)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    const CLEARED: [u8; 44] = [
+        0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    send_camera_preset_command(device, 0x3d84, &CLEARED)
+}
+
+```
