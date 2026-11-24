@@ -588,8 +588,6 @@ mod tests {
                 check("outline", "surface", 3.0);
             }
         }
-        // And the theme's own hover effects are switched off for every button.
-        assert!(source.contains(".t4 button, .t4 switch, .t4 checkbutton, .t4 scale slider { margin: 0; transform: none;"));
     }
 }
 
@@ -614,5 +612,7 @@ mod hover_tests {
                 assert!(!body.split(';').any(|rule| rule.trim().starts_with(size)), "a size changes under the pointer: {line}");
             }
         }
+        // And the desktop theme's own hover effects are switched off for every button.
+        assert!(source.contains(".t4 button, .t4 switch, .t4 checkbutton, .t4 scale slider { margin: 0; transform: none;"));
     }
 }
