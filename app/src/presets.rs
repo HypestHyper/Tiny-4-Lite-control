@@ -150,6 +150,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     if let Some(disabled) = saved.audio_microphone_disabled { settings.insert("obsbot:mic_enabled".into(), i64::from(!disabled)); }
     if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
     if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
+    if let Some(on) = saved.ai_auto_zoom { settings.insert("obsbot:ai_auto_zoom".into(), i64::from(on)); }
     if let Some(ratio) = saved.gesture_zoom_ratio {
         settings.entry("obsbot:gesture_zoom_ratio_milli".into()).or_insert((ratio * 1000.0).round() as i64);
     }
@@ -241,6 +242,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         } else if key == "app:white_balance_by" {
             // Presets saved before red and blue were taken out: nothing to do, the temperature is used.
             continue;
+        } else if key == "obsbot:ai_auto_zoom" {
+            set_ai_auto_zoom(device, *value == 1)
         } else if key == "obsbot:hand_side" {
             set_hand_side(device, *value == 1)
         } else if key == "obsbot:noise_reduction" {

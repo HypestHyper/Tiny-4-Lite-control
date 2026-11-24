@@ -666,9 +666,10 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,
-            |s| from_saved(flag(s.config.mirror_image_enabled)),
+            // The camera reports it in byte 19 of its status (OBSBOT's SDK; checked by switching it on a Tiny 2 Lite).
+            |s| from_camera(s.byte(19).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1)))
+                .or_else(|| if s.status.is_none() { from_saved(flag(s.config.mirror_image_enabled)) } else { None }),
             |d, v| sent(set_mirror_image(d, v.as_bool())))
-            .last_sent()
             .info("Flips the picture left to right."),
 
         // ── Tracking ──
@@ -715,6 +716,11 @@ fn build() -> Vec<Setting> {
                 sent(apply_tracking_area(d, &current_config()))
             })
             .info("Tracking, of a person or a hand, stays inside the area set on the Tracking area card (Device tab). When the person leaves it, the camera goes back to its return position."),
+        Setting::custom("obsbot:ai_auto_zoom", Tracking, "Auto zoom",
+            "Zoom in and out to keep you framed while tracking.", Kind::Toggle,
+            |s| from_saved(flag(s.config.ai_auto_zoom)),
+            |d, v| sent(set_ai_auto_zoom(d, v.as_bool())))
+            .last_sent(),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows you.",
             Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),
@@ -792,9 +798,10 @@ fn build() -> Vec<Setting> {
         Setting::custom("obsbot:radio_distance", Microphone, "Pickup distance",
             "How far away the voice you want is.",
             Kind::Choice(vec![opt(0, "Close", "About arm's length"), opt(1, "Standard", ""), opt(2, "Far", "Across a room")]),
-            |s| from_saved(number(s.config.audio_radio_distance.filter(|d| *d <= 2))),
-            |d, v| sent(set_radio_distance(d, v.as_i64().clamp(0, 2) as u8)))
-            .last_sent(),
+            // Byte 34 of the status, low four bits (OBSBOT's SDK: audio reception distance).
+            |s| from_camera(s.byte(34).map(|b| b & 0x0f).filter(|b| *b <= 2).map(|b| Value::Int(i64::from(b))))
+                .or_else(|| if s.status.is_none() { from_saved(number(s.config.audio_radio_distance.filter(|d| *d <= 2))) } else { None }),
+            |d, v| sent(set_radio_distance(d, v.as_i64().clamp(0, 2) as u8))),
         Setting::custom("obsbot:pop_filter", Microphone, "Pop filter",
             "Soften plosive sounds such as “p” and “b”.", Kind::Toggle,
             |s| from_saved(flag(s.config.pop_filter_enabled)),
@@ -1270,10 +1277,17 @@ mod tests {
     #[test]
     fn settings_without_read_back_are_saved_or_unknown_never_camera() {
         let snap = with_config(|c| { c.mirror_image_enabled = Some(true); c.pop_filter_enabled = Some(false); });
+        // Mirror is read from the camera's status; saved only when there is none.
         assert_eq!(find("obsbot:mirror_image").unwrap().reading(&snap), Some((Value::Bool(true), Origin::Saved)));
+        let mut status = [0u8; 60];
+        status[19] = 1;
+        status[34] = 0x12;
+        let read = Snapshot { status: Some(status), ..Snapshot::default() };
+        assert_eq!(find("obsbot:mirror_image").unwrap().reading(&read), Some((Value::Bool(true), Origin::Camera)));
+        assert_eq!(find("obsbot:radio_distance").unwrap().reading(&read), Some((Value::Int(2), Origin::Camera)));
         assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
         assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
-        for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:radio_distance"] {
+        for id in ["obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:ai_auto_zoom"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
     }

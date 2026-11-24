@@ -147,6 +147,8 @@ pub struct AppConfig {
     pub zone_tilt_high: f64,
     /// Look for a newer version on GitHub when the app starts.
     pub check_updates: bool,
+    /// AI auto zoom as last sent (the camera does not report it).
+    pub ai_auto_zoom: Option<bool>,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
     /// Cards folded down to their heading, by title.
@@ -317,6 +319,7 @@ impl Default for AppConfig {
             zone_tilt_low: -30.0,
             zone_tilt_high: 30.0,
             check_updates: true,
+            ai_auto_zoom: None,
         }
     }
 }

@@ -1339,6 +1339,13 @@ pub(crate) fn set_hand_side(device: &str, left: bool) -> Result<(), String> {
     send_camera_preset_command(device, HAND_SIDE_SET, &[u8::from(left)])
 }
 
+/// AI auto zoom (aiSetAiAutoZoomR): write 04 0x0a44, u8, as captured from the SDK. The camera does not report it.
+pub(crate) fn set_ai_auto_zoom(device: &str, on: bool) -> Result<(), String> {
+    send_camera_preset_command(device, 0x0a44, &[u8::from(on)])?;
+    update_config(|c| c.ai_auto_zoom = Some(on));
+    Ok(())
+}
+
 /// Follow the person at a point of the picture. With tracking off, Normal tracking is turned on first, since
 /// picking a target only means something while the camera tracks.
 pub(crate) fn track_at(device: &str, x: f32, y: f32) -> Result<(), String> {

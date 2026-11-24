@@ -80,6 +80,10 @@
 
 ### Added
 
+- **Auto zoom** on the AI tracking card (OBSBOT's AI auto zoom; the camera does not report it, so it shows what you
+  last chose).
+- Mirror image and Pickup distance are read from the camera (no more Unknown).
+
 - **Settings** tab: App and background service, **Backup** (a copy of your settings and presets each day you open
   the app, the last ten kept; Export and Import), **Updates** (a newer release on GitHub shows a small dot on the
   tab and a link to its page; can be turned off), Appearance and Developer tools.

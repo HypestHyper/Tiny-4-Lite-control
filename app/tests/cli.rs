@@ -152,9 +152,12 @@ fn toggle_reset_and_info_work() {
     assert_eq!(out.status.code(), Some(0));
     let out = run.run(&["info", "shutter-speed"]);
     assert!(text(&out.stdout).contains("Needs:"));
-    // The camera does not report mirror image, so there is nothing to flip.
-    let out = run.run(&["toggle", "mirror-image"]);
+    // The camera does not report the pop filter, so with nothing chosen yet there is nothing to flip.
+    let out = run.run(&["toggle", "pop-filter"]);
     assert_eq!(out.status.code(), Some(2));
+    // Mirror image is read from the camera, so it flips.
+    let out = run.run(&["toggle", "mirror-image"]);
+    assert_eq!(out.status.code(), Some(0));
 }
 
 #[test]
