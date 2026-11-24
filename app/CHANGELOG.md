@@ -21,6 +21,9 @@
 
 ### Changed
 
+- Tooltips and info texts written for people using the camera, without notes about how the app talks to it.
+- Quick controls rows are tighter.
+
 - Quick controls: the six shortcut buttons sit in their own card under the gimbal, three to a row in equal
   columns; the joystick knob is a third of the pad; rows are evenly spaced, with no divider lines (hairlines drew
   one or two pixels thick under fractional scaling), and every title line has the same height.
@@ -76,6 +79,11 @@
 - Gesture pictures traced from the reference drawings.
 
 ### Added
+
+- **Settings** tab: App and background service, **Backup** (a copy of your settings and presets each day you open
+  the app, the last ten kept; Export and Import), **Updates** (a newer release on GitHub shows a small dot on the
+  tab and a link to its page; can be turned off), Appearance and Developer tools.
+- Search keywords for app menus: camera, tiny, gimbal, obsbot.
 
 - **Update** on each app preset: takes the preset again from the camera as it is now, after asking (every setting
   in it is replaced). Saving under a name that is already used asks the same question.

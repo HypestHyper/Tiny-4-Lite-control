@@ -187,7 +187,7 @@ fn camera_memory_card(store: &Store) -> gtk::Box {
             }, move |r| {
                 match r {
                     Ok(true) => store.toast(&format!("Saved position {}", slot_number + 1)),
-                    Ok(false) => store.error(&format!("The camera accepted the command, but position {} did not read back as saved.", slot_number + 1)),
+                    Ok(false) => store.error(&format!("The camera did not keep position {}. Try saving it again.", slot_number + 1)),
                     Err(e) => store.error(&format!("Could not save position {}: {e}", slot_number + 1)),
                 }
                 reload();
@@ -407,7 +407,7 @@ pub fn startup_pose_card(store: &Store) -> gtk::Box {
     actions.append(&refresh);
     actions.append(&set);
     actions.append(&widgets::info_button("Start-up position", &[
-        "This is stored in the camera, separate from your saved positions. Using the current position keeps the camera's other start-up picture settings as they are.".into(),
+        "Stored in the camera, separate from your saved positions.".into(),
     ]));
     body.append(&actions);
 
@@ -633,16 +633,16 @@ pub fn sleep_timer_card(store: &Store) -> gtk::Box {
     });
 
     body.append(&switch_row("Sleep when nothing is using the camera",
-        "After the time below with no app using the camera or the Studio camera (a paused preview does not count) and no control used in this window.",
+        "After the time below with no app using the camera and no control touched here. A paused preview does not count.",
         config.service.auto_sleep_enabled,
         Box::new({ let minutes = minutes.clone(); move |on| { minutes.set_sensitive(on); update_config(|c| c.service.auto_sleep_enabled = on); } })));
     body.append(&minutes);
     body.append(&switch_row("Sleep when the computer shuts down",
-        "Also at a reboot and when you log out, so the camera is not left on. Done as soon as the shutdown is announced, while the computer is still fully up (needs dbus-monitor and systemd-inhibit, or elogind-inhibit; without them, when the service is stopped).",
+        "Also when you restart or log out, so the camera is not left on.",
         config.service.sleep_on_shutdown,
         Box::new(|on| update_config(|c| c.service.sleep_on_shutdown = on))));
     body.append(&switch_row("Sleep when the computer suspends",
-        "Needs dbus-monitor and systemd-inhibit (or elogind-inhibit). The camera is put to sleep just before the suspend.",
+        "The camera goes to sleep just before the computer does.",
         config.service.sleep_on_suspend,
         Box::new(|on| update_config(|c| c.service.sleep_on_suspend = on))));
     card
@@ -652,7 +652,7 @@ pub fn sleep_timer_card(store: &Store) -> gtk::Box {
 /// app-menu entry), with Install, Update and Remove.
 fn app_section(store: &Store) -> gtk::Box {
     let (card, body) = section("App", "open_in_full",
-        "Install keeps the AppImage in ~/Applications and adds the tiny4lite-control command and an app menu entry. The background service uses the installed copy. A new version opened from ~/Applications takes over by itself.");
+        "Install puts the app in your app menu. A newer version you open from ~/Applications takes over by itself.");
     let status = widgets::text("", &["setting-summary"]);
     status.set_wrap(true);
     status.set_xalign(0.0);
@@ -939,7 +939,7 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
         });
     }
     section.append(&plain_switch_row("Use the graphics chip",
-        "Apply the LUT on the GPU (Vulkan, through libplacebo) when it can: light. Otherwise the processor does it, which is heavy.",
+        "Apply the LUT on the graphics chip when it can, which is light. Otherwise the processor does it, which is heavy.",
         config.lut_gpu, |on| update_config(|c| c.studio.lut_gpu = on)));
     section
 }
@@ -1200,7 +1200,7 @@ fn how_long(seconds: u64) -> String {
 fn service_section(store: &Store) -> gtk::Box {
     use crate::setup::{self, InstalledAs};
     let (card, body) = section("Background service", "terminal",
-        "Watches the camera and does the sleep timer, shutdown and suspend sleep, restoring settings and waiting capture changes.");
+        "Runs in the background: restores your settings when the camera connects, puts it to sleep on the timer and when the computer sleeps or shuts down, and runs the Studio camera.");
     let status = widgets::text("", &["setting-summary"]);
     status.set_wrap(true);
     status.set_xalign(0.0);
@@ -1743,8 +1743,7 @@ fn zone_home_row(store: &Store) -> gtk::Box {
     actions.append(&here);
     actions.append(&go);
     actions.append(&widgets::info_button("Return position", &[
-        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; it does not move the camera. Go there turns the camera to it.".into(),
-        "After each change the camera is asked what it holds; if that is not what was sent, the app says so.".into(),
+        "Stored in the camera. Use current position takes where the camera points now and its zoom; it does not move the camera. Go there turns the camera to it.".into(),
     ]));
     row.append(&actions);
 

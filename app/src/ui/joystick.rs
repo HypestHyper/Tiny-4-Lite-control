@@ -263,7 +263,7 @@ pub fn power_buttons(store: &Store, sent: Option<Rc<dyn Fn()>>) -> gtk::Box {
     head.append(&state);
     head.append(&widgets::link_button("bedtime", "Sleep timer", "Sleep timer"));
     head.append(&widgets::info_button("Camera power", &[
-        "Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position.".into(),
+        "Sleep turns the lens down and moves the gimbal to its resting position.".into(),
         "The camera can take a moment to report its new state.".into(),
     ]));
     row.append(&head);

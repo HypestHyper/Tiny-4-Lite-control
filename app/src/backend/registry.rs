@@ -615,7 +615,7 @@ fn build() -> Vec<Setting> {
                 .or_else(|| if s.status.is_none() { from_saved(s.config.hdr_enabled.map(Value::Bool)) } else { None }),
             |d, v| sent(set_hdr_enabled(d, v.as_bool())))
             .cooldown(HDR_SETTLE)
-            .info("The camera combines two exposures of each frame. It reconfigures its sensor to switch, which takes a moment and can make the picture flicker, so the switch rests for 3 seconds after each change (OBSBOT's own guidance). Some capture modes may not support HDR. The state is read back from the camera."),
+            .info("Brings out detail in bright and dark parts of the picture at once. Switching takes the camera a moment and the picture can flicker, so the switch rests for 3 seconds after each change. Some capture modes may not support HDR."),
 
         // ── White balance ──
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
@@ -623,7 +623,7 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("white_balance_temperature", "v4l2:white_balance_temperature", WhiteBalance, "Colour temperature",
             "Match it to your light: lower makes the picture bluer, higher makes it redder.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature.")
-            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero)."),
+            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Set too high for warm light, the picture turns orange."),
         // ── Focus ──
         Setting::v4l2("focus_automatic_continuous", af, Focus, "Autofocus",
             "Keep the picture sharp as things move.", Kind::Toggle),
@@ -662,14 +662,14 @@ fn build() -> Vec<Setting> {
         Setting::v4l2("contrast", "v4l2:contrast", Picture, "Contrast", "Separate light from dark.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("saturation", "v4l2:saturation", Picture, "Saturation", "How vivid colours look.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::v4l2("hue", "v4l2:hue", Picture, "Hue", "Shift the tint between magenta and green.", ticked(0.0, 100.0, 1.0, Fmt::Plain, vec![(50.0, "●")]))
-            .info("Measured on the camera: lower pulls the picture towards magenta, higher towards green; 50 leaves it as it is. It does not make it warmer or cooler: use Colour temperature for that."),
+            .info("Lower pulls the picture towards magenta, higher towards green; 50 leaves it as it is. It does not make it warmer or cooler: use Colour temperature for that."),
         Setting::v4l2("sharpness", "v4l2:sharpness", Picture, "Sharpness", "Edge enhancement.", slider(0.0, 100.0, 1.0, Fmt::Plain)),
         Setting::custom("obsbot:mirror_image", Picture, "Mirror image",
             "Flip the picture left to right.", Kind::Toggle,
             |s| from_saved(flag(s.config.mirror_image_enabled)),
             |d, v| sent(set_mirror_image(d, v.as_bool())))
             .last_sent()
-            .info("Flips the picture left to right. The camera can't report this setting, so the switch shows what you last chose here."),
+            .info("Flips the picture left to right."),
 
         // ── Tracking ──
         Setting::custom("obsbot:ai_tracking_mode", Tracking, "Tracking mode",
@@ -703,7 +703,7 @@ fn build() -> Vec<Setting> {
             |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(2).copied()).filter(|b| *b <= 1).map(|b| Value::Int(i64::from(b)))),
             |d, v| sent(set_hand_side(d, v.as_i64() == 1)))
             .only_when("obsbot:ai_tracking_mode", Cond::Is(7))
-            .info("Shown while Tracking mode is Hand. Read from the camera."),
+            .info("Shown while Tracking mode is Hand."),
         Setting::custom("obsbot:zone_tracking", Tracking, "Stay in tracking area",
             "Follow only inside the area set on the Tracking area card.", Kind::Toggle,
             // The camera reports zone tracking in byte 10 of its AI status (probe round 5).
@@ -714,7 +714,7 @@ fn build() -> Vec<Setting> {
                 crate::backend::update_config_checked(|c| c.tracking_area = on)?;
                 sent(apply_tracking_area(d, &current_config()))
             })
-            .info("OBSBOT's zone tracking: AI tracking, of a person or a hand, stays inside the area on the Tracking area card (Device tab), and when the person leaves, the camera goes back to its return position. Read from the camera."),
+            .info("Tracking, of a person or a hand, stays inside the area set on the Tracking area card (Device tab). When the person leaves it, the camera goes back to its return position."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows you.",
             Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),
@@ -723,7 +723,7 @@ fn build() -> Vec<Setting> {
             |s| from_camera(s.byte(0x24).and_then(vertical_tracking_from_status).map(|m| Value::Int(i64::from(m))))
                 .or_else(|| if s.status.is_none() { from_saved(s.config.tracking_speed.as_deref().and_then(vertical_tracking_from_name).map(|m| Value::Int(i64::from(m)))) } else { None }),
             |d, v| sent(set_vertical_tracking(d, if v.as_i64() >= 2 { 2 } else { 0 })))
-            .info("Standard follows at the usual speed; Sport keeps up with quick movement. OBSBOT's SDK names these modes Standard and Motion (with a third, Headroom, that behaves like Standard on a Tiny 2 Lite)."),
+            .info("Standard follows at the usual speed; Sport keeps up with quick movement."),
 
         // ── Gestures ──
         Setting::custom("obsbot:gesture_target", Gestures, "Target selection",
@@ -736,7 +736,7 @@ fn build() -> Vec<Setting> {
             "Zoom in and out with an L-shaped hand pose.", Kind::Toggle,
             |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(4).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "zoom_l_pose") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_ZOOM, v.as_bool())))
-            .info("Read from the camera (its AI status)."),
+            .info("Zoom in by showing an L shape with your thumb and index finger; do it again to zoom out."),
         Setting::custom("obsbot:gesture_zoom_ratio", Gestures, "Gesture zoom amount",
             "How far the zoom gesture zooms in.",
             slider(1.0, 4.0, 0.01, Fmt::Ratio),
@@ -749,12 +749,12 @@ fn build() -> Vec<Setting> {
             "Zoom by moving your hand towards or away from the camera.", Kind::Toggle,
             |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(5).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "dynamic_zoom") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_DYNAMIC, v.as_bool())))
-            .info("Read from the camera (its AI status)."),
+            .info("Raise your hand and move it towards or away from the camera to zoom."),
         Setting::custom("obsbot:gesture_dynamic_zoom_direction", Gestures, "Reverse dynamic zoom",
             "Swap which hand movement zooms in.", Kind::Toggle,
             |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(6).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "dynamic_zoom_direction") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_DIRECTION, v.as_bool())))
-            .info("Swaps which hand movement zooms in. Read from the camera (its AI status)."),
+            .info("Swaps which hand movement zooms in."),
 
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
@@ -767,12 +767,12 @@ fn build() -> Vec<Setting> {
                 body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
                 action: "OK",
             })
-            .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment. The camera can't report this setting, so the switch shows what you last chose here."),
+            .info("The camera may restart its audio when this changes, so apps using the microphone can drop out for a moment."),
         Setting::custom("obsbot:mic_volume", Microphone, "Volume",
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
             |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),
             |d, v| sent(set_mic_volume(d, v.as_i64().clamp(0, 100) as i16)))
-            .info("The microphone's own volume in the camera, read from the camera. OBSBOT's SDK calls it the audio volume; the Tiny 2 Lite starts at 50."),
+            .info("The volume of the camera's own microphone. It starts at 50."),
         Setting::custom("obsbot:mic_during_sleep", Microphone, "Listen while asleep",
             "Keep the microphone running when the camera is asleep.", Kind::Toggle,
             |s| from_camera(s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
@@ -800,7 +800,7 @@ fn build() -> Vec<Setting> {
             |s| from_saved(flag(s.config.pop_filter_enabled)),
             |d, v| sent(set_pop_filter(d, v.as_bool())))
             .last_sent().experimental()
-            .info("Softens harsh “p” and “b” sounds. The camera can't report this setting, so the switch shows what you last chose here."),
+            .info("Softens harsh “p” and “b” sounds."),
 
         // ── Light ──
         Setting::custom("obsbot:led_brightness", Lighting, "LED brightness",
@@ -829,14 +829,14 @@ fn build() -> Vec<Setting> {
             |s| from_camera(s.byte(0x02).and_then(|b| match b { 0 => Some(Value::Int(0)), 1 => Some(Value::Int(1)), _ => None })),
             |d, v| sent(set_sleep_mode(d, v.as_i64() == 1)))
             .not_quick()
-            .info("Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position."),
+            .info("Sleep turns the lens down and moves the gimbal to its resting position."),
         Setting::custom("obsbot:camera_sleep", Power, "Camera's own sleep timer",
             "The camera sleeps by itself after this long.",
             Kind::Choice(vec![opt(0, "Off", ""), opt(300, "5 min", ""), opt(600, "10 min", ""), opt(900, "15 min", ""), opt(1800, "30 min", ""), opt(3600, "1 h", "")]),
             |s| from_camera(s.camera_sleep.map(|v| Value::Int(i64::from(v)))),
             |d, v| sent(set_camera_sleep_time(d, v.as_i64().clamp(0, 65535) as u32)))
             .not_quick()
-            .info("A timer inside the camera, read from it (OBSBOT's SDK: auto sleep time). It works without this app or its background service. The Sleep timer card is this app's own timer, which can also follow your computer's sleep and shutdown; use either or both."),
+            .info("A timer inside the camera itself: it works without this app or its background service. The Sleep timer card is this app's own timer, which can also follow your computer's sleep and shutdown; use either or both."),
     ]
 }
 
@@ -872,7 +872,7 @@ pub fn discovered(snapshot: &Snapshot) -> Vec<Setting> {
             let kind = if control.kind.contains("menu") { Kind::DriverMenu }
                 else if control.kind == "bool" { Kind::Toggle }
                 else { slider(control.min as f64, control.max as f64, control.step as f64, Fmt::Plain) };
-            Setting::v4l2(name, id, Group::Other, label, "Reported by the camera driver.", kind)
+            Setting::v4l2(name, id, Group::Other, label, "A setting the camera offers.", kind)
         })
         .collect()
 }

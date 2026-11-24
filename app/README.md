@@ -348,6 +348,17 @@ The icon font is a subset of Material Symbols Rounded. After adding an icon name
 `assets/icon-names.txt`, run `python3 tools/subset-fonts.py` (needs `pip install fonttools`; it downloads
 the full font). A unit test fails if the UI asks for an icon that is not in the font.
 
+## Backups and updates
+
+The **Settings** tab keeps a copy of the settings file (settings and presets, not LUT files or the sleep
+picture) in `~/.config/tiny4lite-control/backups/` each day the app opens, the last ten kept. **Export** writes
+the same to a file; **Import** reads one back (a copy of the current settings is kept first) and restarts the app.
+
+At start-up the app asks GitHub once for the latest release (`curl`, in the background; turn it off on the
+Updates card). If its tag is a higher version than the one running, the Settings tab shows a small dot and the
+Updates card links to the release. For that to work, publish releases tagged `vX.Y.Z` with the same number as
+`version` in `Cargo.toml`.
+
 ## Building
 
 ```sh

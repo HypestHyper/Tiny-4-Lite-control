@@ -492,7 +492,7 @@ impl SettingRow {
         let unknown = line("Unknown", &["badge", "neutral"]);
         unknown.set_valign(gtk::Align::Center);
         unknown.set_visible(false);
-        unknown.set_tooltip_text(Some("The camera can't report this setting, and you haven't changed it in this app yet. The control shows a starting position, not the camera's real state."));
+        unknown.set_tooltip_text(Some("Not set in this app yet, and the camera can't report it."));
 
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -1003,9 +1003,7 @@ impl SettingRow {
             out.push(format!("Available when: {}", needs.join(" ")));
         }
         if setting.readback == Readback::LastSent {
-            out.push("The camera can't report this setting back, so the row shows the last value you chose here, or Unknown if you haven't chosen one. It may differ if you change it in another program.".into());
-        } else if matches!(setting.source, crate::backend::registry::Source::Custom { .. }) {
-            out.push("Read from the camera. If it can't be read, the row shows the value you chose earlier, or Unknown if there isn't one.".into());
+            out.push("The camera can't report this one, so it shows what you last chose here.".into());
         }
         if setting.experimental { out.push("Experimental: not fully tested on this camera.".into()); }
         if out.is_empty() { return out; }
