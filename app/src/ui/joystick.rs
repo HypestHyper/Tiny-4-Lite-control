@@ -416,7 +416,7 @@ impl Joystick {
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
             "Speed limits the fastest the stick can go. The readout shows where the camera is pointing, in degrees.".into(),
-            "With Mirror image on, the stick turns the camera the other way so the picture still moves the way you push. You can turn that off in Settings (the Device tab, under Appearance).".into(),
+            "With Mirror image on, the stick turns the camera the other way so the picture still moves the way you push. You can turn that off on the Settings tab, under Appearance.".into(),
             "If the camera model turns the wrong way when the camera pans, you can reverse it there too.".into(),
         ]));
         column.append(&head);

@@ -169,11 +169,11 @@ impl PreviewHub {
             return Some("The Studio camera is not set up yet: Device tab \u{2192} Studio camera \u{2192} Set up\u{2026}. Or pick Camera above.".into());
         }
         let Some(status) = crate::service::running_status() else {
-            return Some("The Studio camera needs the background service, and it is not running: Device tab \u{2192} Background service \u{2192} Start (or Install\u{2026}). Or pick Camera above.".into());
+            return Some("The Studio camera needs the background service, and it is not running: Settings tab \u{2192} Background service \u{2192} Start (or Install\u{2026}). Or pick Camera above.".into());
         };
         match status.studio {
             // Turned on, but the service says nothing about it: it is an older version.
-            None if current_config().studio.enabled => Some("The background service that is running is an older version without the Studio camera. Install this version (Device tab \u{2192} App), or stop and start the service (Device tab \u{2192} Background service).".into()),
+            None if current_config().studio.enabled => Some("The background service that is running is an older version without the Studio camera. Install this version (Settings tab \u{2192} App), or stop and start the service (Settings tab \u{2192} Background service).".into()),
             None => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
             Some(r) if r.state == "off" => Some("The Studio camera is turned off: Device tab \u{2192} Studio camera. Or pick Camera above.".into()),
             Some(r) if r.state == "unavailable" || r.state == "error" => Some(format!("The Studio camera is not working: {}", r.detail)),

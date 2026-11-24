@@ -1,4 +1,5 @@
 mod backend;
+mod backup;
 mod capture;
 mod cli;
 mod config;
@@ -10,6 +11,7 @@ mod service;
 mod setup;
 mod suspend;
 mod ui;
+mod update;
 mod video;
 
 pub(crate) use backend::*;

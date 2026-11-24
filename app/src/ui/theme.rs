@@ -352,6 +352,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 windowcontrols button.close:hover { background: @t_error_hover; color: #ffffff; }
 
 .sleep-thumb { border-radius: §8§; }
+/* A newer version: a small dot on the Settings tab, and a tinted line on the Updates card. */
+.news-dot { min-width: §8§; min-height: §8§; border-radius: 999px; background: @t_primary; margin-top: §2§; }
+.update-news { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: §12§; padding: §8§ §12§; }
 /* A folded card says it opens with a click; a card opened from a link glows for a moment. */
 .t4 .card.folded { transition: box-shadow 300ms cubic-bezier(0.2,0,0,1); }
 .t4 .card.folded:hover { background-color: @t_surface_high; }
@@ -421,8 +424,8 @@ window.t4.csd { border-radius: §18§; }
 
 /* Setting rows */
 .setting-row { padding: §6§ 0; }
-.setting-row.slim { padding: §8§ 0; }
-.setting-row.slim .slim-head { min-height: §36§; }
+.setting-row.slim { padding: §3§ 0; }
+.setting-row.slim .slim-head { min-height: §30§; }
 /* The small window's shortcut buttons: equal cells, names shortened rather than cut off. */
 .t4 .slim-presets button.preset { min-width: 0; padding: 0 §6§; }
 .setting-label { font-size: ¶14¶; font-weight: 600; }

@@ -64,7 +64,7 @@ pub fn path_hint() -> String {
 pub fn desktop_entry(program: &Path) -> String {
     let program = crate::service::quoted_path(&program.to_string_lossy());
     format!("[Desktop Entry]\nType=Application\nName=Tiny 2 Lite Control\nComment=Camera, gimbal and tracking controls for the OBSBOT Tiny 2 Lite\n\
-        Exec={program}\nIcon=tiny4lite-control\nTerminal=false\nCategories=AudioVideo;Video;Utility;\nStartupNotify=true\n\
+        Exec={program}\nIcon=tiny4lite-control\nTerminal=false\nCategories=AudioVideo;Video;Utility;\nKeywords=camera;tiny;gimbal;obsbot;\nStartupNotify=true\n\
         StartupWMClass=io.github.hypesthyper.Tiny4LiteControl\nActions=Slim;Preview;\n\n\
         [Desktop Action Slim]\nName=Quick controls\nExec={program} --slim\n\n\
         [Desktop Action Preview]\nName=Preview in its own window\nExec={program} --preview\n")
@@ -170,7 +170,7 @@ pub fn keep_up_to_date() -> Vec<Result<String, String>> {
             said.push(install().map(|m| format!("This version is now the installed one. {m}")));
             moved = true;
         } else if let Some(from) = &from {
-            said.push(Ok(format!("This window runs {}, not the installed {}. To use this one from now on: Device tab \u{2192} App \u{2192} Install this version.", from.display(), target.display())));
+            said.push(Ok(format!("This window runs {}, not the installed {}. To use this one from now on: Settings tab \u{2192} App \u{2192} Install this version.", from.display(), target.display())));
         }
     }
     if !moved {

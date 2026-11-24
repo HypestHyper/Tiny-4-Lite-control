@@ -66,7 +66,7 @@ impl Ctx {
         ctx.watch_unplug();
         // The camera is controlled through v4l2-ctl, so say so plainly if it is not there.
         if !backend::ui_test_mode() && !crate::setup::program_found("v4l2-ctl") {
-            ctx.store.error("v4l2-ctl is not installed, so the camera cannot be controlled. Install it from the Device tab, under Background service.");
+            ctx.store.error("v4l2-ctl is not installed, so the camera cannot be controlled. Install it from the Settings tab, under Background service.");
         }
         // A new version: make it the installed one and put the background service on it, without the user
         // removing and installing anything (away from the window, since restarting the service takes a moment).
@@ -80,6 +80,9 @@ impl Ctx {
                 }
             });
         }
+        // A daily copy of the settings, and a look for a newer version (in the background).
+        crate::backup::daily();
+        super::panels::check_for_updates();
         if connection == Connection::Connected {
             // Restore the remembered capture mode; this never moves the gimbal.
             ctx.store.call(None, |device| backend::apply_saved_video_mode(device), |_| {});

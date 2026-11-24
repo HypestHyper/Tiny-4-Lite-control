@@ -20,21 +20,22 @@ use std::rc::Rc;
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Page { Tab(Tab), Presets }
+enum Page { Tab(Tab), Presets, Settings }
 
 /// Icons used by the tab bar, for the icon coverage test.
 #[cfg(test)]
 pub(crate) fn page_icons() -> Vec<&'static str> { PAGES.iter().map(|p| p.2).collect() }
 
-const PAGES: [(Page, &str, &str); 3] = [
+const PAGES: [(Page, &str, &str); 4] = [
     (Page::Tab(Tab::Camera), "Camera", "photo_camera"),
     (Page::Presets, "Presets", "bookmarks"),
     (Page::Tab(Tab::Device), "Device", "tune"),
+    (Page::Settings, "Settings", "settings"),
 ];
 
 fn page_name(page: Page) -> &'static str {
     match page {
-        Page::Tab(Tab::Camera) => "camera", Page::Tab(Tab::Device) => "device", Page::Presets => "presets",
+        Page::Tab(Tab::Camera) => "camera", Page::Tab(Tab::Device) => "device", Page::Presets => "presets", Page::Settings => "settings",
     }
 }
 
@@ -188,15 +189,12 @@ impl FullWindow {
                     let built = settings::tab_page(&store, tab, &rows);
                     if tab == Tab::Device {
                         // Extra cards that are not registry settings.
-                        built.holder.prepend(&panels::setup_card(&store));
                         built.masonry.add(&panels::capture_mode_card(&store, &ctx.hub), 6);
                         built.masonry.add(&panels::studio_card(&store), 5);
                         built.masonry.add(&panels::startup_pose_card(&store), 5);
                         built.masonry.add(&panels::gimbal_limits_card(&store), 3);
                         built.masonry.add(&panels::tracking_area_card(&store), 3);
                         built.masonry.add(&panels::sleep_timer_card(&store), 5);
-                        built.masonry.add(&panels::appearance_card(&ctx.style), 8);
-                        built.masonry.add(&panels::developer_card(&store), 4);
                     }
                     if tab == Tab::Camera {
                         // Driver controls with no catalogue entry appear once the camera has answered.
@@ -213,6 +211,26 @@ impl FullWindow {
                     masonries.push(built.masonry.clone());
                     page_scrollers.borrow_mut().push(built.root.clone());
                     stack.add_named(&built.root, Some(page_name(page)));
+                }
+                Page::Settings => {
+                    // The app itself: installing and the service, backups, updates, appearance, developer tools.
+                    let masonry = settings::Masonry::new();
+                    masonry.add(&panels::backup_card(&store), 3);
+                    masonry.add(&panels::updates_card(), 3);
+                    masonry.add(&panels::appearance_card(&ctx.style), 8);
+                    masonry.add(&panels::developer_card(&store), 4);
+                    let holder = gtk::Box::new(gtk::Orientation::Vertical, 12);
+                    holder.set_margin_end(6);
+                    holder.set_margin_bottom(20);
+                    holder.append(&panels::setup_card(&store));
+                    holder.append(masonry.widget());
+                    let root = widgets::scroller();
+                    root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                    root.set_vexpand(true);
+                    root.set_child(Some(&holder));
+                    masonries.push(masonry);
+                    page_scrollers.borrow_mut().push(root.clone());
+                    stack.add_named(&root, Some(page_name(page)));
                 }
                 Page::Presets => {
                     let presets = panels::presets_page(&store);
@@ -284,6 +302,16 @@ impl FullWindow {
             // The words give way to the icons rather than forcing the window wide.
             text.set_ellipsize(gtk::pango::EllipsizeMode::End);
             content.append(&text);
+            // Settings shows a small dot while a newer version is out.
+            if matches!(*page, Page::Settings) {
+                let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                dot.add_css_class("news-dot");
+                dot.set_valign(gtk::Align::Start);
+                dot.set_visible(false);
+                content.append(&dot);
+                let weak = dot.downgrade();
+                panels::on_update(move |_| match weak.upgrade() { Some(dot) => { dot.set_visible(true); true } None => false });
+            }
             let button = gtk::ToggleButton::new();
             button.set_child(Some(&content));
             button.add_css_class("tab");

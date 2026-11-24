@@ -119,7 +119,7 @@ impl SlimWindow {
         // Shown with the gimbal card.
         joystick_card.bind_property("visible", &presets_card, "visible").sync_create().build();
 
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         list.add_css_class("card");
         list.add_css_class("tight");
 

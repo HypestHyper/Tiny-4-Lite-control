@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VideoModeConfig {
@@ -145,6 +145,8 @@ pub struct AppConfig {
     pub zone_pan_high: f64,
     pub zone_tilt_low: f64,
     pub zone_tilt_high: f64,
+    /// Look for a newer version on GitHub when the app starts.
+    pub check_updates: bool,
     /// "Not now" was chosen on the banner that offers to set up the background service.
     pub service_setup_dismissed: bool,
     /// Cards folded down to their heading, by title.
@@ -314,6 +316,7 @@ impl Default for AppConfig {
             zone_pan_high: 100.0,
             zone_tilt_low: -30.0,
             zone_tilt_high: 30.0,
+            check_updates: true,
         }
     }
 }

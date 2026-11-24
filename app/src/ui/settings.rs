@@ -128,8 +128,6 @@ fn settings_in(group: Group) -> Vec<&'static Setting> {
 pub struct TabPage {
     pub root: gtk::ScrolledWindow,
     pub masonry: Masonry,
-    /// The page's column: a card put first here spans the whole width, above the others.
-    pub holder: gtk::Box,
 }
 
 pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
@@ -152,7 +150,7 @@ pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
     root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     root.set_vexpand(true);
     root.set_child(Some(&holder));
-    TabPage { root, masonry, holder }
+    TabPage { root, masonry }
 }
 
 /// Rows matching a search, grouped by their group.

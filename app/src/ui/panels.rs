@@ -46,7 +46,7 @@ fn section(title: &str, glyph: &str, subtitle: &str) -> (gtk::Box, gtk::Box) {
     (part, body)
 }
 
-/// The app and the background service together, at the top of the Device tab: installing, updating and
+/// The app and the background service together, at the top of the Settings tab: installing, updating and
 /// running both in one place.
 pub fn setup_card(store: &Store) -> gtk::Box {
     let (card, body) = card("App and background service", "install_desktop", "");
@@ -539,7 +539,7 @@ pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
                     if crate::service::running_status().is_some() {
                         store.toast(&format!("{who} using the camera, so the mode changes as soon as it is free."));
                     } else {
-                        store.error(&format!("{who} using the camera. The change waits for it to be free, but the background service is not running to do it: start it on the Device tab, or close the program and choose again."));
+                        store.error(&format!("{who} using the camera. The change waits for it to be free, but the background service is not running to do it: start it on the Settings tab, or close the program and choose again."));
                     }
                     load();
                     return;
@@ -599,7 +599,7 @@ pub fn sleep_timer_card(store: &Store) -> gtk::Box {
     divider.add_css_class("divider");
     body.append(&divider);
     body.append(&widgets::text("This app's timer", &["setting-label"]));
-    body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it at the top of this tab."));
+    body.append(&service_needed_notice("The background service is not running, so none of these happen. Install or start it on the Settings tab."));
     let switch_row = |title: &str, summary: &str, active: bool, on_change: Box<dyn Fn(bool)>| -> gtk::Box {
         plain_switch_row(title, summary, active, move |on| on_change(on))
     };
@@ -1023,7 +1023,7 @@ fn sleep_picture_row(store: &Store, config: &config::StudioConfig) -> gtk::Box {
 pub fn studio_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Studio camera", "blur_on",
         "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, that apps can choose. It only uses the camera while an app has it open.");
-    body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it at the top of this tab."));
+    body.append(&service_needed_notice("The background service is not running, so the Studio camera is not either. Install or start it on the Settings tab."));
     let config = current_config().studio;
     body.append(&plain_switch_row("Studio camera",
         "Make \u{201c}Tiny 2 Lite Studio\u{201d} available to apps.",
@@ -1160,7 +1160,7 @@ pub fn service_setup_banner(store: &Store) -> gtk::Revealer {
         later.connect_clicked(move |_| {
             update_config(|c| c.service_setup_dismissed = true);
             if let Some(revealer) = weak.upgrade() { revealer.set_reveal_child(false); }
-            store.toast("You can set it up any time on the Device tab, under Background service.");
+            store.toast("You can set it up any time on the Settings tab, under Background service.");
         });
     }
     revealer
@@ -1915,3 +1915,156 @@ pub fn developer_card(store: &Store) -> gtk::Box {
 
 #[allow(dead_code)]
 fn unused(_: &glib::SourceId) {}
+
+
+// ── Settings page ─────────────────────────────────────────────────────────
+
+/// Backups of the settings and presets: a copy is kept each day the app opens; export to a file, and import one
+/// (or a daily copy) back.
+pub fn backup_card(store: &Store) -> gtk::Box {
+    let (card, body) = card("Backup", "save",
+        "Your settings and presets (not LUT files or the sleep picture) are copied each day you open the app; the last ten copies are kept. Export saves them to a file you choose; Import brings a file or a daily copy back, after keeping a copy of what you have now.");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let export = gtk::Button::with_label("Export…");
+    export.add_css_class("small");
+    let import = gtk::Button::with_label("Import…");
+    import.add_css_class("small");
+    actions.append(&export);
+    actions.append(&import);
+    body.append(&actions);
+    {
+        let store = store.clone();
+        export.connect_clicked(move |button| {
+            let window = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            #[allow(deprecated)]
+            let dialog = gtk::FileChooserNative::new(Some("Export settings and presets"), window.as_ref(), gtk::FileChooserAction::Save, Some("Export"), Some("Cancel"));
+            #[allow(deprecated)]
+            dialog.set_current_name(&crate::backup::suggested_name());
+            let store = store.clone();
+            #[allow(deprecated)]
+            dialog.connect_response(move |dialog, response| {
+                if response != gtk::ResponseType::Accept { return; }
+                let Some(path) = dialog.file().and_then(|f| f.path()) else { return };
+                match crate::backup::export(&path) {
+                    Ok(()) => store.toast("Settings and presets exported"),
+                    Err(e) => store.error(&e),
+                }
+            });
+            #[allow(deprecated)]
+            dialog.show();
+            unsafe { button.set_data("export-dialog", dialog); }
+        });
+    }
+    {
+        let store = store.clone();
+        import.connect_clicked(move |button| {
+            let window = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            #[allow(deprecated)]
+            let dialog = gtk::FileChooserNative::new(Some("Import settings and presets"), window.as_ref(), gtk::FileChooserAction::Open, Some("Import"), Some("Cancel"));
+            let _ = std::fs::create_dir_all(crate::backup::backups_dir());
+            #[allow(deprecated)]
+            let _ = dialog.set_current_folder(Some(&gtk::gio::File::for_path(crate::backup::backups_dir())));
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Settings files (.toml)"));
+            filter.add_pattern("*.toml");
+            #[allow(deprecated)]
+            dialog.add_filter(&filter);
+            let store = store.clone();
+            #[allow(deprecated)]
+            dialog.connect_response(move |dialog, response| {
+                if response != gtk::ResponseType::Accept { return; }
+                let Some(path) = dialog.file().and_then(|f| f.path()) else { return };
+                let imported = match crate::backup::read(&path) { Ok(c) => c, Err(e) => { store.error(&e); return; } };
+                let count = imported.presets.len();
+                let store_go = store.clone();
+                store.confirm("save", "Replace your settings and presets?",
+                    &format!("Everything in this app is replaced with the file's settings and its {count} preset(s). A copy of what you have now is kept in the backups. The app restarts to load them."),
+                    "Import", move || {
+                        match crate::backup::import(imported.clone()) {
+                            Ok(()) => restart_app(),
+                            Err(e) => store_go.error(&format!("Could not import: {e}")),
+                        }
+                    });
+            });
+            #[allow(deprecated)]
+            dialog.show();
+            unsafe { button.set_data("import-dialog", dialog); }
+        });
+    }
+    card
+}
+
+/// Start the app again (after an import), in the same window mode.
+fn restart_app() {
+    if let Ok(program) = std::env::current_exe() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let _ = std::process::Command::new(program).args(args).spawn();
+    }
+    if let Some(app) = gtk::gio::Application::default() { app.quit(); }
+}
+
+thread_local! {
+    /// The newer release found at start-up, for the Updates card.
+    static NEWER: std::cell::RefCell<Option<crate::update::Release>> = const { std::cell::RefCell::new(None) };
+    static UPDATE_LISTENERS: std::cell::RefCell<Vec<Box<dyn Fn(&crate::update::Release) -> bool>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Look for a newer release in the background (if allowed), and tell whoever listens when one is found.
+pub fn check_for_updates() {
+    if !current_config().check_updates { return; }
+    // With the synthetic camera nothing goes online; TINY4LITE_UI_TEST_UPDATE pretends a release, for screenshots.
+    let pretend = std::env::var("TINY4LITE_UI_TEST_UPDATE").ok();
+    if crate::backend::ui_test_mode() && pretend.is_none() { return; }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let found = match pretend { Some(version) => Some(crate::update::Release { version, url: crate::update::RELEASES.into() }), None => crate::update::latest() };
+        let _ = sender.send(found);
+    });
+    glib::timeout_add_local(Duration::from_millis(500), move || match receiver.try_recv() {
+        Ok(Some(release)) if crate::update::is_newer(&release.version, crate::update::current()) => {
+            NEWER.with(|n| *n.borrow_mut() = Some(release.clone()));
+            UPDATE_LISTENERS.with(|l| l.borrow_mut().retain(|listener| listener(&release)));
+            glib::ControlFlow::Break
+        }
+        Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+    });
+}
+
+/// Be told of a newer release (now, if one was already found). Return false to stop listening.
+pub fn on_update(listener: impl Fn(&crate::update::Release) -> bool + 'static) {
+    if let Some(release) = NEWER.with(|n| n.borrow().clone()) { if !listener(&release) { return; } }
+    UPDATE_LISTENERS.with(|l| l.borrow_mut().push(Box::new(listener)));
+}
+
+/// The version you have, a newer one if there is one (with its page), and whether to look at start-up.
+pub fn updates_card() -> gtk::Box {
+    let (card, body) = card("Updates", "refresh", "");
+    let have = widgets::text(&format!("You have version {}.", crate::update::current()), &["body"]);
+    have.set_xalign(0.0);
+    body.append(&have);
+    let news = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    news.add_css_class("update-news");
+    news.set_visible(false);
+    let words = widgets::text("", &["setting-label"]);
+    words.set_hexpand(true);
+    words.set_xalign(0.0);
+    let open = gtk::LinkButton::with_label(crate::update::RELEASES, "Open the release page");
+    news.append(&words);
+    news.append(&open);
+    body.append(&news);
+    {
+        let (news, words, open) = (news.downgrade(), words.downgrade(), open.downgrade());
+        on_update(move |release| {
+            let (Some(news), Some(words), Some(open)) = (news.upgrade(), words.upgrade(), open.upgrade()) else { return false };
+            words.set_text(&format!("Version {} is out.", release.version));
+            open.set_uri(&release.url);
+            news.set_visible(true);
+            true
+        });
+    }
+    body.append(&plain_switch_row("Look for updates when the app starts",
+        "Asks GitHub for the latest release; nothing else is sent.",
+        current_config().check_updates, |on| update_config(|c| c.check_updates = on)));
+    card
+}

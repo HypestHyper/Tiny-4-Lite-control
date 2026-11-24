@@ -6,6 +6,7 @@ Exec=tiny4lite-control
 Icon=tiny4lite-control
 Terminal=false
 Categories=AudioVideo;Video;Utility;
+Keywords=camera;tiny;gimbal;obsbot;
 StartupNotify=true
 StartupWMClass=io.github.hypesthyper.Tiny4LiteControl
 Actions=Slim;Preview;
