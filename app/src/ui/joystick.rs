@@ -261,6 +261,7 @@ pub fn power_buttons(store: &Store, sent: Option<Rc<dyn Fn()>>) -> gtk::Box {
     state.set_hexpand(true);
     head.append(&title);
     head.append(&state);
+    head.append(&widgets::link_button("bedtime", "Sleep timer", "Sleep timer"));
     head.append(&widgets::info_button("Camera power", &[
         "Wake and Sleep each send their command to the camera. Sleep turns the lens down and moves the gimbal to its resting position.".into(),
         "The camera can take a moment to report its new state.".into(),
@@ -410,6 +411,7 @@ impl Joystick {
             head.append(&zoom_caption);
             head.append(&state.zoom_value);
         }
+        if !compact { head.append(&widgets::link_button("mic_external_on", "Microphone settings", "Microphone")); }
         head.append(&widgets::info_button("Gimbal joystick", &[
             "Drag the stick to turn the camera. The further you push, the faster it turns. Let go and it stops.".into(),
             "With the stick focused, the arrow keys also move the gimbal and stop it when released.".into(),
@@ -486,7 +488,15 @@ impl Joystick {
             pad_row.append(&side(0));
             pad_row.append(&state.pad);
             pad_row.append(&side(QUICK_COUNT / 2));
-            column.append(&pad_row);
+            // The gimbal limits, a click away, in the corner above the stick.
+            let pad_area = gtk::Overlay::new();
+            pad_row.set_hexpand(true);
+            pad_area.set_child(Some(&pad_row));
+            let limits = widgets::link_button("settings", "Gimbal limits", "Gimbal limits");
+            limits.set_halign(gtk::Align::End);
+            limits.set_valign(gtk::Align::Start);
+            pad_area.add_overlay(&limits);
+            column.append(&pad_area);
         }
 
         column.append(&self.step_row(compact));

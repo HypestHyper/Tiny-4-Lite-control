@@ -1600,7 +1600,8 @@ fn tracking_area_section(store: &Store, position: &Rc<Cell<Option<(f64, f64)>>>)
         })
     };
     // Send the area when what it depends on changes (checked every second, so every way of changing it counts).
-    let key = |c: &crate::config::AppConfig| (c.tracking_area, c.zone_pan_low, c.zone_pan_high, c.zone_tilt_low, c.zone_tilt_high);
+    // The switch itself sends on and off (Stay in tracking area); this sends edits to the area while it is on.
+    let key = |c: &crate::config::AppConfig| (c.zone_pan_low, c.zone_pan_high, c.zone_tilt_low, c.zone_tilt_high);
     let last = Rc::new(RefCell::new(key(&config)));
     {
         let (store, readout, read_back, last) = (store.clone(), readout.downgrade(), read_back.clone(), last.clone());
@@ -1608,11 +1609,10 @@ fn tracking_area_section(store: &Store, position: &Rc<Cell<Option<(f64, f64)>>>)
             if readout.upgrade().is_none() { return glib::ControlFlow::Break; }
             let config = current_config();
             let now = key(&config);
-            // Changes while it is off are only remembered; switching it off is sent by the switch itself.
+            // Changes while it is off are only remembered, and sent when it is switched on.
             if *last.borrow() != now {
-                let was_on = last.borrow().0;
                 *last.borrow_mut() = now;
-                if config.tracking_area || was_on {
+                if config.tracking_area {
                     let (store_done, read_back) = (store.clone(), read_back.clone());
                     store.call(Some("tracking-area"), move |device| dev::apply_tracking_area(device, &config), move |result| {
                         if let Err(error) = result { store_done.error(&format!("Could not set the tracking area: {error}")); }
@@ -1633,14 +1633,12 @@ fn tracking_area_section(store: &Store, position: &Rc<Cell<Option<(f64, f64)>>>)
         }
         table.append(&axis_limits(store, axis, position));
     }
-    table.set_sensitive(config.tracking_area);
-    let table_weak = table.downgrade();
-    section.append(&plain_switch_row("Keep AI tracking inside this area",
-        "Person and hand tracking stay within the ends below. This is OBSBOT's limited-zone tracking, with the hand-tracking area set to the same ends. The hand-tracking area cannot be read back from the camera, so only the person-tracking area shows below.",
-        config.tracking_area, move |on| {
-            update_config(|c| c.tracking_area = on);
-            if let Some(table) = table_weak.upgrade() { table.set_sensitive(on); }
-        }));
+    // The same switch as on the AI tracking card, read back from the camera.
+    if let Some(setting) = crate::backend::registry::find("obsbot:zone_tracking") {
+        let row = widgets::SettingRow::new(store, setting, widgets::Density::Full);
+        section.append(row.widget());
+        section.connect_destroy(move |_| { let _ = &row; });
+    }
     section.append(&table);
     // Auto-select: read from the camera when the card opens.
     let auto = gtk::Switch::new();
@@ -1692,17 +1690,13 @@ fn zone_home_row(store: &Store) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let here = gtk::Button::with_label("Use current position");
     here.add_css_class("small");
-    let reset = widgets::icon_text_button("restart_alt", "Centre");
-    reset.add_css_class("small");
-    widgets::label_accessible(&reset, "Set the return position to the centre");
     let go = gtk::Button::with_label("Go there");
     go.add_css_class("small");
     go.set_tooltip_text(Some("Turn the camera to the return position"));
     actions.append(&here);
-    actions.append(&reset);
     actions.append(&go);
     actions.append(&widgets::info_button("Return position", &[
-        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; Centre sets it to straight ahead at 1×, OBSBOT's default. Neither moves the camera: Go there does.".into(),
+        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; it does not move the camera. Go there turns the camera to it.".into(),
         "After each change the camera is asked what it holds; if that is not what was sent, the app says so.".into(),
     ]));
     row.append(&actions);
@@ -1738,7 +1732,6 @@ fn zone_home_row(store: &Store) -> gtk::Box {
         });
     };
     set(&here, dev::set_zone_home_here);
-    set(&reset, |d| dev::set_zone_home_checked(d, 0.0, 0.0, 1.0));
     {
         let store = store.clone();
         go.connect_clicked(move |_| {
@@ -1786,7 +1779,7 @@ fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Opti
         spin.set_width_chars(4);
         widgets::lock_wheel(&spin);
         widgets::label_accessible(&spin, &format!("{} {} limit, degrees", axis.name, caption.to_lowercase()));
-        let take = widgets::icon_button("center_focus_strong", &format!("Use where the camera points now as the {} limit", caption.to_lowercase()), true);
+        let take = widgets::icon_button("my_location", &format!("Use where the camera points now as the {} limit", caption.to_lowercase()), true);
         take.add_css_class("take-current");
         line.append(&spin);
         line.append(&take);

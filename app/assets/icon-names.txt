@@ -23,7 +23,9 @@ lightbulb
 lock
 memory
 mic
+mic_external_on
 more_horiz
+my_location
 open_in_full
 open_in_new
 open_with
@@ -43,6 +45,7 @@ restart_alt
 save
 search
 search_off
+settings
 star
 terminal
 tune

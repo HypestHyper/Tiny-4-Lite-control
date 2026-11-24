@@ -188,6 +188,77 @@ fn value_stepper(value: &gtk::Label, scale: &gtk::Scale, label: &str) -> gtk::Bo
 
 /// Let a card fold down to its heading: an arrow at the right of the heading hides or shows the rest. The
 /// choice is remembered by the card's title. Returns the box the card's content goes in.
+// ── Cards that can be opened from elsewhere ──────────────────────────────
+
+/// A foldable card: the card, and how to fold or unfold it.
+struct CardEntry { card: glib::WeakRef<gtk::Box>, fold: Rc<dyn Fn(bool)> }
+thread_local! {
+    static CARDS: RefCell<Vec<(String, CardEntry)>> = const { RefCell::new(Vec::new()) };
+    /// Shows a page of the window by its name ("camera", "presets", "device"); set by the full window.
+    static PAGE_OPENER: RefCell<Option<Rc<dyn Fn(&str)>>> = const { RefCell::new(None) };
+}
+
+pub fn set_page_opener(opener: impl Fn(&str) + 'static) { PAGE_OPENER.with(|o| *o.borrow_mut() = Some(Rc::new(opener))); }
+
+/// Show the card with this title: its tab, unfolded, scrolled into view. False if no window has it.
+pub fn open_card(title: &str) -> bool {
+    let found = CARDS.with(|cards| {
+        cards.borrow_mut().retain(|(_, e)| e.card.upgrade().is_some());
+        cards.borrow().iter().filter(|(t, _)| t == title).filter_map(|(_, e)| e.card.upgrade().map(|c| (c, e.fold.clone())))
+            .find(|(c, _)| c.root().is_some())
+    });
+    let Some((card, fold)) = found else { return false };
+    fold(false);
+    // The page it is on: the child of a stack that holds it.
+    let mut widget: Option<gtk::Widget> = Some(card.clone().upcast());
+    while let Some(w) = widget {
+        if let Some(stack) = w.parent().and_then(|p| p.downcast::<gtk::Stack>().ok()) {
+            if let Some(name) = stack.page(&w).name() {
+                if let Some(opener) = PAGE_OPENER.with(|o| o.borrow().clone()) { opener(name.as_str()); } else { stack.set_visible_child(&w); }
+            }
+            break;
+        }
+        widget = w.parent();
+    }
+    // Scroll to it once the page is shown and laid out.
+    let weak = card.downgrade();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(60), move || {
+        let Some(card) = weak.upgrade() else { return };
+        let mut parent = card.parent();
+        while let Some(p) = parent {
+            if let Ok(scrolled) = p.clone().downcast::<gtk::ScrolledWindow>() {
+                if let Some(child) = scrolled.child() {
+                    if let Some(point) = card.compute_point(&child, &gtk::graphene::Point::new(0.0, 0.0)) {
+                        let adjustment = scrolled.vadjustment();
+                        adjustment.set_value((f64::from(point.y()) - 12.0).clamp(adjustment.lower(), adjustment.upper() - adjustment.page_size()));
+                    }
+                }
+                break;
+            }
+            parent = p.parent();
+        }
+        card.add_css_class("flash");
+        let weak = card.downgrade();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(900), move || { if let Some(card) = weak.upgrade() { card.remove_css_class("flash"); } });
+    });
+    true
+}
+
+/// A small round button that opens the card with this title (on its tab, unfolded).
+pub fn link_button(glyph: &str, tooltip: &str, target: &'static str) -> gtk::Button {
+    let button = icon_button(glyph, tooltip, true);
+    button.add_css_class("flat-icon");
+    button.add_css_class("card-link");
+    button.connect_clicked(move |b| {
+        if !open_card(target) {
+            b.set_tooltip_text(Some(&format!("{target} is in the full window")));
+        }
+    });
+    button
+}
+
+/// Make a card foldable: an arrow in its heading folds it away and unfolds it; a click anywhere on a folded
+/// card unfolds it too. Folded cards stay folded (by title, in the settings).
 pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let reveal = gtk::Revealer::new();
@@ -214,18 +285,31 @@ pub fn collapsible(card: &gtk::Box, head: &gtk::Box, title: &str) -> gtk::Box {
     };
     show(&arrow, folded, title);
     head.append(&arrow);
-    let title = title.to_string();
-    let card = card.clone();
-    arrow.connect_clicked(move |arrow| {
-        let folded = reveal.reveals_child();
-        reveal.set_reveal_child(!folded);
-        if folded { card.add_css_class("folded"); } else { card.remove_css_class("folded"); }
-        show(arrow, folded, &title);
-        crate::backend::update_config(|c| {
-            c.collapsed_cards.retain(|t| t != &title);
-            if folded { c.collapsed_cards.push(title.clone()); }
-        });
-    });
+    let set: Rc<dyn Fn(bool)> = {
+        let (title, card, reveal, arrow) = (title.to_string(), card.downgrade(), reveal.clone(), arrow.downgrade());
+        Rc::new(move |fold: bool| {
+            if reveal.reveals_child() == !fold { return; }
+            reveal.set_reveal_child(!fold);
+            if let Some(card) = card.upgrade() { if fold { card.add_css_class("folded"); } else { card.remove_css_class("folded"); } }
+            if let Some(arrow) = arrow.upgrade() { show(&arrow, fold, &title); }
+            crate::backend::update_config(|c| {
+                c.collapsed_cards.retain(|t| t != &title);
+                if fold { c.collapsed_cards.push(title.clone()); }
+            });
+        })
+    };
+    {
+        let (set, reveal) = (set.clone(), reveal.clone());
+        arrow.connect_clicked(move |_| set(reveal.reveals_child()));
+    }
+    // A click anywhere on a folded card opens it (folding is only with the arrow).
+    {
+        let click = gtk::GestureClick::new();
+        let (set, reveal) = (set.clone(), reveal.clone());
+        click.connect_released(move |_, _, _, _| { if !reveal.reveals_child() { set(false); } });
+        card.add_controller(click);
+    }
+    CARDS.with(|cards| cards.borrow_mut().push((title.to_string(), CardEntry { card: card.downgrade(), fold: set })));
     content
 }
 

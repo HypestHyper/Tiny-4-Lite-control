@@ -607,6 +607,15 @@ impl FullWindow {
             glib::Propagation::Proceed
         });
 
+        // Links on cards open a page by its name.
+        {
+            let weak = Rc::downgrade(&state);
+            widgets::set_page_opener(move |name| {
+                if let Some(state) = weak.upgrade() {
+                    if let Some(index) = PAGES.iter().position(|(p, _, _)| page_name(*p) == name) { select_page(&state, index); }
+                }
+            });
+        }
         // Hooks for the headless screenshot harness. Only active with the synthetic camera.
         if crate::backend::ui_test_mode() {
             let env = |name: &str| std::env::var(name).ok();

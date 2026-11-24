@@ -704,6 +704,17 @@ fn build() -> Vec<Setting> {
             |d, v| sent(set_hand_side(d, v.as_i64() == 1)))
             .only_when("obsbot:ai_tracking_mode", Cond::Is(7))
             .info("Shown while Tracking mode is Hand. Read from the camera."),
+        Setting::custom("obsbot:zone_tracking", Tracking, "Stay in tracking area",
+            "Follow only inside the area set on the Tracking area card.", Kind::Toggle,
+            // The camera reports zone tracking in byte 10 of its AI status (probe round 5).
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(10).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1)))
+                .or_else(|| if s.ai_status.is_none() { from_saved(Some(Value::Bool(s.config.tracking_area))) } else { None }),
+            |d, v| {
+                let on = v.as_bool();
+                crate::backend::update_config_checked(|c| c.tracking_area = on)?;
+                sent(apply_tracking_area(d, &current_config()))
+            })
+            .info("OBSBOT's zone tracking: AI tracking, of a person or a hand, stays inside the area on the Tracking area card (Device tab), and when the person leaves, the camera goes back to its return position. Read from the camera."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows you.",
             Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),

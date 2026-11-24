@@ -352,6 +352,10 @@ window.t4.csd { border-radius: §18§; }
 .t4 windowcontrols button.close:hover { background: @t_error_hover; color: #ffffff; }
 
 .sleep-thumb { border-radius: §8§; }
+/* A folded card says it opens with a click; a card opened from a link glows for a moment. */
+.t4 .card.folded { transition: box-shadow 300ms cubic-bezier(0.2,0,0,1); }
+.t4 .card.folded:hover { background-color: @t_surface_high; }
+.t4 .card.flash { box-shadow: 0 0 0 2px @t_primary; }
 
 /* Header */
 .header { min-height: §64§; padding: 0 §20§; background: @t_surface_dim; }

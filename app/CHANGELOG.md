@@ -21,6 +21,13 @@
 
 ### Changed
 
+- Focus peaking marks only crisp edges: each edge is compared with itself blurred, so a strong but soft edge
+  is no longer outlined (it was, with the Canny detector), and the picture is checked at full size while it is on.
+- A folded card opens with a click anywhere on it; it folds with its arrow.
+- Camera power is the first card on the Device tab.
+- "Use where the camera points now" has its own icon, no longer the same as Centre.
+- Return position: Centre is gone (it did not move the camera); Use current position and Go there remain.
+
 - Saving, updating and deleting the camera's own positions, and setting the start-up position, send exactly what
   OBSBOT's SDK sends (old commands in `docs/sdk-alignment-backup.md`).
 - The Tracking area card says whether zone tracking is on in the camera itself.
@@ -65,6 +72,11 @@
 - Gesture pictures traced from the reference drawings.
 
 ### Added
+
+- **Stay in tracking area** on the AI tracking card (the same switch as on the Tracking area card, read from the
+  camera).
+- Settings buttons that open the card behind a control: AI tracking → Tracking area, the joystick → Gimbal
+  limits, Camera power → Sleep timer, and a microphone button on Camera controls → Microphone.
 
 - **Hand to follow** (Right / Left) under Tracking mode, shown while Hand tracking is on; read from the camera.
 - **Picture while the camera sleeps** on the Studio camera card: shown on the Studio camera instead of the

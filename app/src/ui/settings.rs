@@ -78,6 +78,8 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
     head.set_margin_bottom(4);
     head.append(&widgets::icon(group.icon()));
     head.append(&widgets::text(group.title(), &["group-title"]));
+    // Settings on another card that change how this one works, a click away.
+    if foldable && group == Group::Tracking { head.append(&widgets::link_button("settings", "Tracking area settings", "Tracking area")); }
     card.append(&head);
     // In a tab the card can be folded away; in search results it always shows.
     let content = if foldable { widgets::collapsible(&card, &head, group.title()) } else { card.clone() };
@@ -133,7 +135,10 @@ pub struct TabPage {
 pub fn tab_page(store: &Store, tab: Tab, keep: &Rows) -> TabPage {
     let masonry = Masonry::new();
     // Zoom and field of view live in the Camera controls card beside the preview, not in a tab.
-    for group in Group::ALL.iter().copied().filter(|g| g.tab() == tab && *g != Group::Zoom) {
+    // Camera power first on the Device tab, where it is easy to find.
+    let mut groups: Vec<Group> = Group::ALL.iter().copied().filter(|g| g.tab() == tab && *g != Group::Zoom).collect();
+    groups.sort_by_key(|g| *g != Group::Power);
+    for group in groups {
         let settings = settings_in(group);
         if settings.is_empty() { continue; }
         let (card, weight) = group_card(store, group, &settings, Density::Full, keep, true);

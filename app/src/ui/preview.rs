@@ -853,8 +853,11 @@ pub fn set_peaking_strictness(value: u8) {
 /// What strictness means: the edge strength Canny's detector needs to start an edge (its high threshold, on
 /// the Sobel gradient of the slightly blurred picture): 40 at 0, 240 at 100. Edges then continue down to
 /// half of that.
-fn peaking_threshold(strictness: u8) -> f32 {
-    40.0 + f32::from(strictness.min(100)) * 2.0
+/// (How much crisper than its blurred self an edge must be, the smallest step in grey levels.) Strictness
+/// 0 takes edges up to about three pixels wide; 100 only the crispest, of about one pixel.
+fn peaking_threshold(strictness: u8) -> (f32, i32) {
+    let s = f32::from(strictness.min(100)) / 100.0;
+    (2.4 + 1.6 * s, 16 + (32.0 * s) as i32)
 }
 
 pub fn set_focus_peaking(on: bool) {
@@ -865,29 +868,75 @@ pub fn set_focus_peaking(on: bool) {
 /// The colour edges in focus are painted.
 const PEAK_COLOUR: [u8; 3] = [40, 255, 90];
 
-/// The edges in focus, as a mask of the picture: the Canny edge detector from the imageproc library (a light
-/// Gaussian blur against noise, Sobel gradients, thinning to one-pixel lines, and a strong/weak threshold
-/// pair so an edge is followed as long as it holds up). Sharper focus makes edges steeper, so more of them
-/// clear the threshold; the strictness slider sets the threshold.
+/// Where the picture is in focus. An edge counts when it is crisp, not merely contrasty: its steepest step
+/// is compared with the same place blurred over five pixels. A perfectly sharp edge loses most of its step to
+/// the blur (5 to 1); an edge already spread over a few pixels by being out of focus hardly changes (an edge
+/// three pixels wide: 2.3 to 1). That ratio does not depend on contrast, so a soft edge between dark and light
+/// is not marked however strong it is, as with the focus peaking of cameras and phones. A floor on the step
+/// keeps sensor noise out. Works at the picture's full size (see `decode_width`).
 fn peak_mask(width: u32, height: u32, luma: Vec<u8>) -> Option<Vec<u8>> {
-    let gray = imageproc::image::GrayImage::from_raw(width, height, luma)?;
-    let high = peaking_threshold(PEAKING_STRICTNESS.load(Ordering::Relaxed));
-    Some(imageproc::edges::canny(&gray, high / 2.0, high).into_raw())
+    let (w, h) = (width as usize, height as usize);
+    if w < 8 || h < 8 || luma.len() != w * h { return None; }
+    let (ratio_min, step_min) = peaking_threshold(PEAKING_STRICTNESS.load(Ordering::Relaxed));
+    // The picture blurred by a 5 × 5 box (two separable passes, in sums of 25), with running sums.
+    let mut across = vec![0i32; w * h];
+    for y in 0..h {
+        let row = &luma[y * w..(y + 1) * w];
+        let at = |x: i32| i32::from(row[x.clamp(0, w as i32 - 1) as usize]);
+        let mut sum: i32 = (-2..=2).map(at).sum();
+        for x in 0..w {
+            across[y * w + x] = sum;
+            sum += at(x as i32 + 3) - at(x as i32 - 2);
+        }
+    }
+    let mut blurred = vec![0i32; w * h];
+    for x in 0..w {
+        let at = |y: i32| across[y.clamp(0, h as i32 - 1) as usize * w + x];
+        let mut sum: i32 = (-2..=2).map(at).sum();
+        for y in 0..h {
+            blurred[y * w + x] = sum;
+            sum += at(y as i32 + 3) - at(y as i32 - 2);
+        }
+    }
+    // The steepest step at each pixel (to its right or below; the edge's other side is found from its
+    // neighbour and painted by `paint_mask`), sharp and blurred.
+    let mut mask = vec![0u8; w * h];
+    let ratio25 = ratio_min / 25.0;
+    let floor25 = step_min as f32 * 25.0 / 8.0;
+    for y in 0..h - 1 {
+        let row = y * w;
+        for x in 0..w - 1 {
+            let i = row + x;
+            let here = i32::from(luma[i]);
+            let g = (i32::from(luma[i + 1]) - here).abs().max((i32::from(luma[i + w]) - here).abs());
+            if g < step_min { continue; }
+            let b = blurred[i];
+            let gb = (blurred[i + 1] - b).abs().max((blurred[i + w] - b).abs()) as f32;
+            if gb >= floor25 && g as f32 >= ratio25 * gb { mask[i] = 255; }
+        }
+    }
+    Some(mask)
 }
 
 fn luma_of(frame: &Frame) -> Vec<u8> {
     frame.rgb.chunks_exact(3).map(|p| ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as u8).collect()
 }
 
-/// Paint a mask's edges green, two pixels wide so they stay visible when the picture is shown smaller.
+/// Paint a mask's edges green, thick enough to stay visible when the picture is shown smaller (two pixels,
+/// and more on a big picture).
 fn paint_mask(frame: &mut Frame, mask: &[u8]) {
     let (w, h) = (frame.width as usize, frame.height as usize);
     if mask.len() != w * h || frame.rgb.len() < w * h * 3 { return; }
+    // Each marked pixel paints a small square to its right and below it (the edge's other side included).
+    let reach = (w / 900).max(1) + 1;
     for y in 0..h {
         for x in 0..w {
-            let i = y * w + x;
-            if mask[i] > 0 || (x > 0 && mask[i - 1] > 0) || (y > 0 && mask[i - w] > 0) {
-                frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR);
+            if mask[y * w + x] == 0 { continue; }
+            for yy in y..(y + reach).min(h) {
+                for xx in x..(x + reach).min(w) {
+                    let i = yy * w + xx;
+                    frame.rgb[i * 3..i * 3 + 3].copy_from_slice(&PEAK_COLOUR);
+                }
             }
         }
     }
@@ -945,8 +994,9 @@ fn focus_peaking_now(frame: &mut Frame) {
 /// How wide to decode for the preview: the window's width, or, with focus peaking on, at least 960 pixels,
 /// so edges are judged on a picture not shrunk too far (shrinking makes a soft edge look sharp). A JPEG is
 /// decoded at a half or a quarter of its size for that, which costs far less than a full decode.
+/// Focus peaking looks at the picture at (nearly) full size: made smaller, a soft edge looks crisp.
 fn decode_width(target: u32) -> u32 {
-    if FOCUS_PEAKING.load(Ordering::Relaxed) { target.max(960) } else { target }
+    if FOCUS_PEAKING.load(Ordering::Relaxed) { target.max(1920) } else { target }
 }
 
 fn decode_jpeg(data: &[u8], target_width: u32) -> Option<Frame> {
@@ -1114,6 +1164,18 @@ mod peaking_tests {
         let mut blurred = frame(64, 32, |x, _| (20 + (x - 26).clamp(0, 12) * 17) as u8);
         focus_peaking_now(&mut blurred);
         assert_eq!(green(&blurred), 0, "a blurred edge is not marked");
+    }
+
+    #[test]
+    fn a_strong_edge_three_pixels_soft_is_not_marked() {
+        // Dark to light over three pixels at full contrast: what Canny marked although it was out of focus.
+        let mut soft = frame(64, 32, |x, _| (20 + (x - 30).clamp(0, 3) * 70) as u8);
+        focus_peaking_now(&mut soft);
+        assert_eq!(green(&soft), 0, "a strong but three-pixel-soft edge is not in focus");
+        // The same contrast as a one-pixel step is.
+        let mut sharp = frame(64, 32, |x, _| if x < 31 { 20 } else { 230 });
+        focus_peaking_now(&mut sharp);
+        assert!(green(&sharp) > 0);
     }
 
     #[test]
