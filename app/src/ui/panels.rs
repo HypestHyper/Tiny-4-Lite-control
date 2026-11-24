@@ -1556,8 +1556,63 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
     row.append(&auto);
     section.append(&row);
     section.append(&readout);
+    section.append(&zone_home_row(store));
     read_back();
     section
+}
+
+/// The tracking area's return position: where the camera goes when the person leaves the area.
+fn zone_home_row(store: &Store) -> gtk::Box {
+    use crate::backend::{angles, device as dev};
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    titles.append(&widgets::text("Return position", &["setting-label"]));
+    titles.append(&widgets::text("When the person leaves the area, the camera goes back here.", &["setting-summary"]));
+    row.append(&titles);
+    let current = widgets::text("Reading…", &["body"]);
+    current.set_xalign(0.0);
+    row.append(&current);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let here = gtk::Button::with_label("Use current position");
+    here.add_css_class("small");
+    let reset = widgets::icon_text_button("restart_alt", "Centre");
+    reset.add_css_class("small");
+    widgets::label_accessible(&reset, "Reset the return position to the centre");
+    actions.append(&here);
+    actions.append(&reset);
+    actions.append(&widgets::info_button("Return position", &[
+        "Stored in the camera, like OBSBOT Center's \"After exceeding the tracking range, the gimbal returns to the set position\". Use current position takes the pan, tilt and zoom the camera has now; Centre puts it back to straight ahead at 1×, OBSBOT's default.".into(),
+    ]));
+    row.append(&actions);
+
+    let read: Rc<dyn Fn()> = {
+        let (store, current) = (store.clone(), current.downgrade());
+        Rc::new(move || {
+            let current = current.clone();
+            store.call(Some("zone-home-read"), |d| dev::get_zone_home(d), move |r| {
+                let Some(current) = current.upgrade() else { return };
+                current.set_text(&match r {
+                    Ok((pan, tilt, zoom)) => format!("Pan {} · Tilt {} · Zoom {zoom:.2}×", angles::format(pan), angles::format(tilt)),
+                    Err(_) => "Not available right now.".to_string(),
+                });
+            });
+        })
+    };
+    let set = |button: &gtk::Button, job: fn(&str) -> Result<(), String>| {
+        let (store, read) = (store.clone(), read.clone());
+        button.connect_clicked(move |_| {
+            let (store_done, read) = (store.clone(), read.clone());
+            store.call(None, job, move |r| {
+                if let Err(e) = r { store_done.error(&format!("Could not set the return position: {e}")); }
+                read();
+            });
+        });
+    };
+    set(&here, dev::set_zone_home_here);
+    set(&reset, |d| dev::set_zone_home(d, 0.0, 0.0, 1.0));
+    let loaded = Rc::new(Cell::new(false));
+    row.connect_map(move |_| { if !loaded.replace(true) { read(); } });
+    row
 }
 
 fn axis_limits(store: &Store, axis: &'static AxisLimits, position: &Rc<Cell<Option<(f64, f64)>>>) -> gtk::Box {

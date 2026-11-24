@@ -439,6 +439,8 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                         reply
                     }
                     0x6804 => 1.0f32.to_le_bytes().to_vec(),
+                    // The tracking area's return position: pan 15°, tilt 10° up, zoom 1.2×.
+                    0x4ec4 => zone_home_payload(15.0, 10.0, 1.2).to_vec(),
                     0x3884 => {
                         let mut v = 3u32.to_le_bytes().to_vec();
                         for f in [0.0f32, 0.0, 0.0, 1.0, 0.0] { v.extend_from_slice(&f.to_le_bytes()); }
@@ -701,6 +703,48 @@ pub(crate) fn apply_tracking_area(device: &str, config: &crate::config::AppConfi
     let tilt = if config.tilt_limit { (config.tilt_limit_low, config.tilt_limit_high) } else { (-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT) };
     set_tracking_area_limits(device, pan, tilt)?;
     set_tracking_area_enabled(device, true)
+}
+
+// The return position ("after exceeding the tracking range, the gimbal returns to the set position" in OBSBOT
+// Center): 24 bytes, i32 id 0, then f32 yaw, pitch, 0, zoom, 0. Set and read as captured from the SDK on
+// 2026-11-24 (cmd 0x4e84 / 0x4ec4); the field order is the one the SDK decoded from the start-up position
+// reply (cmd 0x3884), which uses the same layout.
+const ZONE_HOME_SET: u16 = 0x4e84;
+const ZONE_HOME_GET: u16 = 0x4ec4;
+
+pub(crate) fn zone_home_payload(pan: f64, tilt: f64, zoom: f64) -> [u8; 24] {
+    let mut payload = [0u8; 24];
+    payload[4..8].copy_from_slice(&(pan.clamp(-ZONE_YAW_LIMIT, ZONE_YAW_LIMIT) as f32).to_le_bytes());
+    // 0.0 - tilt, not -tilt: level must be +0.0, as the camera sends it, not -0.0.
+    payload[8..12].copy_from_slice(&((0.0 - tilt.clamp(-ZONE_PITCH_LIMIT, ZONE_PITCH_LIMIT)) as f32).to_le_bytes());
+    payload[16..20].copy_from_slice(&(zoom.clamp(1.0, 4.0) as f32).to_le_bytes());
+    payload
+}
+
+/// (pan, tilt, zoom) in our convention from the camera's 24-byte reply.
+pub(crate) fn zone_home_from_reply(reply: &[u8]) -> Result<(f64, f64, f64), String> {
+    let float = |at: usize| -> Result<f64, String> {
+        let bytes: [u8; 4] = reply.get(at..at + 4).ok_or("The camera sent a short return position.")?.try_into().unwrap();
+        Ok(f64::from(f32::from_le_bytes(bytes)))
+    };
+    let (yaw, pitch, zoom) = (float(4)?, float(8)?, float(16)?);
+    if !yaw.is_finite() || !pitch.is_finite() || !zoom.is_finite() { return Err("The camera sent an unreadable return position.".into()); }
+    Ok((yaw, -pitch, zoom))
+}
+
+pub(crate) fn set_zone_home(device: &str, pan: f64, tilt: f64, zoom: f64) -> Result<(), String> {
+    send_camera_preset_command(device, ZONE_HOME_SET, &zone_home_payload(pan, tilt, zoom))
+}
+
+pub(crate) fn get_zone_home(device: &str) -> Result<(f64, f64, f64), String> {
+    zone_home_from_reply(&query_obsbot(device, 0x04, ZONE_HOME_GET)?)
+}
+
+/// The return position set to where the camera points now, at its current zoom.
+pub(crate) fn set_zone_home_here(device: &str) -> Result<(), String> {
+    let (pan, tilt) = get_gimbal_position(device)?;
+    let zoom = get_live_zoom_factor(device)?;
+    set_zone_home(device, pan, tilt, f64::from(zoom))
 }
 
 pub(crate) fn get_live_zoom_factor(device: &str) -> Result<f32, String> {
@@ -2141,6 +2185,16 @@ mod settle_tests {
         // The frames, byte for byte, as the SDK sent them.
         let yaw_min = obsbot_frame_with_payload(0x14, ZONE_YAW_MIN_SET, &(-30.0f32).to_le_bytes()).unwrap();
         assert_eq!(&yaw_min[..20], &[0xaa, 0x25, 0x14, 0x00, 0x0c, 0x00, 0xbb, 0x11, 0x0a, 0x04, 0x04, 0x4c, 0x04, 0x00, 0x3b, 0x97, 0x00, 0x00, 0xf0, 0xc1]);
+        // The return position written back as read (centre, zoom 1), byte for byte (sequence 0x21).
+        let home = obsbot_frame_with_payload(0x21, ZONE_HOME_SET, &zone_home_payload(0.0, 0.0, 1.0)).unwrap();
+        let captured = "aa 25 21 00 0c 00 4b ff 0a 04 84 4e 18 00 65 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 3f 00 00 00 00";
+        let expected: Vec<u8> = captured.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+        assert_eq!(&home[..expected.len()], &expected[..]);
+        // The start-up position reply the SDK decoded as yaw 27.64, pitch -22.45, zoom 1 (same layout).
+        let boot = [0x03, 0, 0, 0, 0xb8, 0x1e, 0xdd, 0x41, 0x9a, 0x99, 0xb3, 0xc1, 0, 0, 0, 0, 0, 0, 0x80, 0x3f, 0, 0, 0, 0];
+        let (pan, tilt, zoom) = zone_home_from_reply(&boot).unwrap();
+        assert!((pan - 27.64).abs() < 0.01 && (tilt - 22.45).abs() < 0.01 && zoom == 1.0);
+        assert_eq!(zone_home_from_reply(&zone_home_payload(-12.5, 20.0, 1.5)).unwrap(), (-12.5, 20.0, 1.5));
         let on = obsbot_frame_with_payload(0x1c, ZONE_ENABLED_SET, &[1]).unwrap();
         assert_eq!(&on[..17], &[0xaa, 0x25, 0x1c, 0x00, 0x0c, 0x00, 0x5a, 0xf2, 0x0a, 0x04, 0x84, 0x50, 0x01, 0x00, 0x27, 0xff, 0x01]);
     }

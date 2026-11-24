@@ -123,3 +123,38 @@ reliable than the SDK. The app now follows the SDK for both: Face exposure = `03
 Reverse dynamic zoom on = `01`. This supersedes the Face = `00` mapping in
 [02-feature-inventory.md](02-feature-inventory.md) and the 2026-11-20 capture notes. Old code:
 `app/docs/sdk-alignment-backup.md`.
+
+## Round 3: functions the headers leave out (`run.sh --hidden --toggles --moves`, firmware 6.2.8.1)
+
+Called by demangled signature from libdev v2.1.0_8. Frames: `aa KK seq 0c 00 hdrCRC 0a DD cmdLE len payloadCRC
+payload`; KK 25 write, 01 read, 05 reset, 21 default read; replies `aa 29`, or `aa 89` when the camera does not
+answer that read.
+
+| Function | Command | Payload | Result on the Tiny 2 Lite |
+|---|---|---|---|
+| `cameraGet/SetAutoSleepTimeR` | read 0xa182, set 0xa1c2 (module 02) | u32 LE seconds | read 0; set 600 `58 02 00 00` and back. Separate from the status-block sleep timer (`0b 02`) |
+| `cameraGet/SetAudioVolumeR` | read 0x80c2, set 0x8102 (02) | i16 LE | read 50; 49 and back |
+| `cameraGet/SetAudioAGCR` | read 0x8242 → `aa 89`; set = status block `17 01 xx` | u8 | read not answered; set is the auto gain we use |
+| `cameraGet/SetAudioNoiseReduceR` | read 0x82c2 (02); set = status block `0a 01 level` | read: u8 on, u32 level | read on, level 2; set off = `0a 01 00`, back = `0a 01 02` (our existing noise reduction) |
+| `cameraGet/SetAudioSourceMuteR` | read 0x89c2 → `aa 89`; set 0x8a02 (02) | u8 | mute on `01` / off `00`; no read-back |
+| `cameraGet/SetGammaModeR`, `NightModeR`, `ImageStyleModeR` | reads 0x2f42 / 0x3002 / 0x3802 → `aa 89`; sets 0x2f82 / 0x3042 / 0x3842 | u32 | reads not answered (not on the Lite, probably); the sets wrote 0 |
+| `cameraGetAutoCompensationR`, `cameraGetWhiteBalanceAreaR` | the SDK sent an `aa 41` frame, `aa 89` reply; returned −1 | — | not on the Lite |
+| `cameraGet/SetWhiteBalanceComponentR` | no traffic | — | not on the Lite |
+| `cameraGetFieldView` / `cameraSetFieldView` | read 0xab02 → `aa 89`; set = status block `21 10` + 4 × u32 | — | read not answered; the set wrote four zeros |
+| `cameraGetUvcModeR` | read 0xc442 (02) | u32 | 0 |
+| `cameraGet/SetVirtualTrackEnabledR` | read 0xaec2 → `aa 89`; set 0xae82 | u8 | not answered |
+| `sysMgGet/SetLedEnabledR` | module 0x12: read 0x758d → `aa 89`; set 0x75cd | u8 | read not answered |
+| `sysMgGet/SetLedBrightnessR` | read module 0x12 cmd 0x754d; set = status block `1a 01 xx` | u8 | read 3 (matches our LED brightness levels) |
+| `aiGet/SetLimitedZoneTrackInitPosR` (return position) | read 0x4ec4, default read KK 21, set 0x4e84 (04) | 24 bytes: i32 id, f32 yaw, f32 pitch, f32 0, f32 zoom, f32 0 | read and default both 0 / 0 / zoom 1; written back byte for byte. Field order from the start-up position reply (0x3884), which the SDK decodes the same way |
+| `aiSetHandZone{Yaw,Pitch}{Min,Max}R` / `aiRstHandZone…R` | set 0x2044 / 0x20c4 / 0x2144 / 0x21c4; reset (KK 05) 0x2604 / 0x25c4 / 0x2684 / 0x2644 | f32 | hand-tracking area; reset to default after |
+| `aiSetGestureZoomR` / `TargetSelectR` / `DynamicZoomR` / `DynamicZoomMirrorR` | 0x3144 / 0x30c4 / 0x3344 / 0x33c4 | u8 | on/off; left off |
+| `aiSetHandTrackGimbalEnabledR` | 0x26c4 | u8 | on/off |
+| `aiSetZoneTrackGimbalEnabledR` | 0x0844 | u8 | off then on |
+| `cameraSetUserFocusPos(x, y)` | 0x3582 (02) | f32 x, f32 y, 8 zero bytes, u32 100 | tap-to-focus at (0.5, 0.5) |
+| `aiSetCameraZoomRatioR(2.0, -1)` | 0x6884 (04) | i32 −1, f32 2.0 | zoom read 2.5 s later was still 1.0 |
+| `aiSetSelectTargetByPos(x, y, 0)` | 0x0404 (04) | f32 x, f32 y, u8 | click-to-track at (0.5, 0.5) |
+| `aiTrgLimitedZoneTrackInitPosR` (round 2) | KK 05, 0x4f44 | 12 bytes left over from the previous command | the camera goes to the return position |
+
+Effects on the camera to check: gamma, night mode and image style were written as 0 and the field of view block
+as zeros because their reads were not answered; the status light was written off (0x75cd `00`) after its read
+failed.

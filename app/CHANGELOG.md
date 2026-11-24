@@ -40,7 +40,9 @@
 
 - **Keep AI tracking inside these limits** (Gimbal limits card): the camera's own limited-zone tracking,
   using the same pan and tilt limits as the stick, re-sent whenever they change and when the camera
-  reconnects; plus **Auto-track new targets** (OBSBOT Center's name for it), and a read-out of the area the camera holds.
+  reconnects; plus **Auto-track new targets** (OBSBOT Center's name for it), a read-out of the area the camera holds,
+  and the **Return position** the camera goes back to when the person leaves the area (use the current position,
+  or centre).
 - HDR switch, with a 3-second rest between changes (OBSBOT's guidance).
 - Fine steps on every slider: the value sits in a pill with up and down arrows; hold an arrow to repeat.
 - Cards fold away with an arrow in all three tabs; folded cards stay folded.
