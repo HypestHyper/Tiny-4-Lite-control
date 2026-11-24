@@ -173,6 +173,9 @@ pub struct StudioConfig {
     pub lut_favourites: Vec<String>,
     /// The strength last set for each LUT, brought back when it is picked again.
     pub lut_strengths: BTreeMap<String, u8>,
+    /// A picture the Studio camera shows while the camera is asleep (a copy in the app's settings folder),
+    /// instead of the camera's dark frames.
+    pub sleep_picture: Option<PathBuf>,
 }
 
 impl StudioConfig {
@@ -191,7 +194,7 @@ impl StudioConfig {
 }
 
 impl Default for StudioConfig {
-    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new(), lut_strengths: BTreeMap::new() } }
+    fn default() -> StudioConfig { StudioConfig { enabled: false, limit_fps: true, lut: None, lut_on: false, lut_strength: 100, lut_gpu: true, lut_favourites: Vec::new(), lut_strengths: BTreeMap::new(), sleep_picture: None } }
 }
 
 /// One shortcut button: an app preset by name, a position in the camera's memory (0–2), or nothing.

@@ -541,8 +541,12 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             }
             if camera.is_some() { last_device = camera.clone(); }
             let studio_config = current_config().studio;
+            // With a sleep picture chosen and an app on the Studio camera, ask whether the camera is asleep
+            // (status byte 2), so the picture replaces its dark frames.
+            let asleep = studio_config.enabled && studio_config.sleep_picture.is_some() && studio.watched() && !backend::ui_test_mode()
+                && camera.as_deref().and_then(|device| backend::xu_status(device).ok()).is_some_and(|s| s[2] == 1);
             status.studio = (studio_config.enabled || status.studio.is_some())
-                .then(|| studio.step(&studio_config, if backend::ui_test_mode() { None } else { camera.as_deref() }));
+                .then(|| studio.step(&studio_config, if backend::ui_test_mode() { None } else { camera.as_deref() }, asleep));
             status.camera = camera;
             write_status(&status);
             if once && restored_once { break; }

@@ -16,6 +16,9 @@
 
 ### Changed
 
+- The zoom gesture, dynamic zoom, reverse dynamic zoom and the gesture zoom amount are read from the camera
+  (no more Unknown); presets save them from the camera too.
+
 - **Tracking area** is its own card with its own pan and tilt ends (OBSBOT's default: 100° each way, 30° up and
   down), separate from the gimbal limits; presets save the ends too.
 - **Tracking speed: Standard / Sport** again (OBSBOT's SDK calls them Standard and Motion; its third mode,
@@ -53,6 +56,10 @@
 - Gesture pictures traced from the reference drawings.
 
 ### Added
+
+- **Hand to follow** (Right / Left) under Tracking mode, shown while Hand tracking is on; read from the camera.
+- **Picture while the camera sleeps** on the Studio camera card: shown on the Studio camera instead of the
+  camera's dark picture while the camera is asleep.
 
 - **Hand** tracking mode again, with its own tracking area kept to the gimbal limits.
 - Click on the preview to focus there or to follow that person (a button on the preview picks which). While

@@ -900,6 +900,79 @@ fn lut_controls(store: &Store, config: &config::StudioConfig) -> gtk::Box {
 /// The Studio camera: a second, virtual camera, run by the background service, as the frame for filters
 /// on the camera's picture (none yet: it passes the picture through). Its switch, the 30 fps limit, what it
 /// needs, and what it is doing and costing right now.
+/// A picture the Studio camera shows while the camera is asleep, instead of its dark frames.
+fn sleep_picture_row(store: &Store, config: &config::StudioConfig) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let (titles, info) = widgets::titles_with_info("Picture while the camera sleeps",
+        "Shown on the Studio camera instead of a dark picture. While an app uses the Studio camera and the camera is put to sleep, the background service shows this picture, fitted to the app's picture size, until the camera wakes. Apps using the camera itself still get the camera's own dark picture.");
+    let name = widgets::text("", &["small", "dim"]);
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    titles.append(&name);
+    let choose = gtk::Button::with_label("Choose…");
+    choose.add_css_class("small");
+    choose.set_valign(gtk::Align::Center);
+    let remove = widgets::icon_button("delete", "Remove the sleep picture", true);
+    remove.add_css_class("flat-icon");
+    // A small view of the picture chosen.
+    let thumb = gtk::Picture::new();
+    thumb.set_content_fit(gtk::ContentFit::Cover);
+    thumb.set_size_request(64, 36);
+    thumb.set_valign(gtk::Align::Center);
+    thumb.add_css_class("sleep-thumb");
+    thumb.set_overflow(gtk::Overflow::Hidden);
+    let show: Rc<dyn Fn()> = {
+        let (name, remove, thumb) = (name.clone(), remove.clone(), thumb.clone());
+        Rc::new(move || {
+            let picture = current_config().studio.sleep_picture.filter(|p| p.exists());
+            name.set_visible(picture.is_none());
+            name.set_text("None: the camera's dark picture");
+            thumb.set_visible(picture.is_some());
+            // Read again each time: the copy keeps its name when another picture replaces it.
+            thumb.set_paintable(picture.as_ref().and_then(|p| gtk::gdk::Texture::from_filename(p).ok()).as_ref());
+            remove.set_visible(picture.is_some());
+        })
+    };
+    show();
+    let _ = config;
+    {
+        let (store, show) = (store.clone(), show.clone());
+        choose.connect_clicked(move |button| {
+            let window = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            #[allow(deprecated)]
+            let dialog = gtk::FileChooserNative::new(Some("Choose a sleep picture"), window.as_ref(), gtk::FileChooserAction::Open, Some("Choose"), Some("Cancel"));
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Pictures"));
+            for pattern in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.PNG", "*.JPG", "*.JPEG"] { filter.add_pattern(pattern); }
+            #[allow(deprecated)]
+            dialog.add_filter(&filter);
+            let (store, show) = (store.clone(), show.clone());
+            #[allow(deprecated)]
+            dialog.connect_response(move |dialog, response| {
+                if response != gtk::ResponseType::Accept { return; }
+                let Some(path) = dialog.file().and_then(|f| f.path()) else { return };
+                match crate::studio::import_sleep_picture(&path) {
+                    Ok(copy) => { update_config(|c| c.studio.sleep_picture = Some(copy)); show(); store.toast("Sleep picture set"); }
+                    Err(error) => store.error(&error),
+                }
+            });
+            #[allow(deprecated)]
+            dialog.show();
+            unsafe { button.set_data("sleep-picture-dialog", dialog); }
+        });
+    }
+    {
+        let (store, show) = (store.clone(), show.clone());
+        remove.connect_clicked(move |_| { update_config(|c| c.studio.sleep_picture = None); show(); store.toast("Sleep picture removed"); });
+    }
+    row.append(&titles);
+    row.append(&thumb);
+    row.append(&choose);
+    row.append(&remove);
+    if let Some(info) = info { row.append(&info); }
+    row
+}
+
 pub fn studio_card(store: &Store) -> gtk::Box {
     let (card, body) = card("Studio camera", "blur_on",
         "Adds a second camera, \u{201c}Tiny 2 Lite Studio\u{201d}, that apps can choose. It only uses the camera while an app has it open.");
@@ -912,6 +985,7 @@ pub fn studio_card(store: &Store) -> gtk::Box {
         "A camera set to 60 fps gives the Studio camera 30: half the work, and plenty for calls.",
         config.limit_fps, |on| update_config(|c| c.studio.limit_fps = on)));
     body.append(&lut_controls(store, &config));
+    body.append(&sleep_picture_row(store, &config));
 
     // What it needs, with a way to set it up.
     let needs = gtk::Box::new(gtk::Orientation::Horizontal, 10);

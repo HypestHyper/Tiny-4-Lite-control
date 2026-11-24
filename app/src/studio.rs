@@ -114,6 +114,29 @@ pub fn placeholder_args(loopback: &str, format: &Format) -> Vec<String> {
     args
 }
 
+/// While the camera is asleep: the chosen picture, scaled to fit and centred on a dark background at the
+/// size the Studio camera has, five times a second, instead of the camera's dark frames.
+pub fn picture_args(loopback: &str, width: u32, height: u32, picture: &Path) -> Vec<String> {
+    let mut args = base_args();
+    args.extend([
+        "-re".into(), "-loop".into(), "1".into(), "-framerate".into(), "5".into(), "-i".into(), picture.to_string_lossy().to_string(),
+        "-vf".into(), format!("scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x101418,format={OUTPUT_FORMAT}"),
+        "-f".into(), "v4l2".into(), loopback.into(),
+    ]);
+    args
+}
+
+/// Where the sleep picture is kept: a copy in the app's settings folder, so moving the original does no harm.
+pub fn import_sleep_picture(source: &Path) -> Result<PathBuf, String> {
+    let extension = source.extension().and_then(|e| e.to_str()).map(str::to_lowercase).unwrap_or_else(|| "png".into());
+    if !["png", "jpg", "jpeg", "webp", "bmp"].contains(&extension.as_str()) { return Err("Choose a PNG, JPEG, WebP or BMP picture.".into()); }
+    let folder = crate::config::config_path().parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let target = folder.join(format!("sleep-picture.{extension}"));
+    std::fs::copy(source, &target).map_err(|e| format!("Could not copy the picture: {e}"))?;
+    Ok(target)
+}
+
 /// Ask the service to let go of the camera now (the preview went back to the camera itself), instead of
 /// after the usual pause.
 pub fn request_release() {
@@ -253,7 +276,8 @@ impl Studio {
     }
 
     /// Look around once and start, stop or switch what runs. Called every round of the service.
-    pub fn step(&mut self, config: &crate::config::StudioConfig, camera: Option<&str>) -> Report {
+    /// `asleep`: the camera reports it is asleep; with a sleep picture chosen, that is shown instead.
+    pub fn step(&mut self, config: &crate::config::StudioConfig, camera: Option<&str>, asleep: bool) -> Report {
         let loopback = loopback_node();
         if !config.enabled {
             self.watched = false;
@@ -341,8 +365,15 @@ impl Studio {
                 // An app holding the Studio camera fixes its size: keep to it (scaling if the camera's mode
                 // changed since), until the app lets go.
                 let held = if watched { crate::video::current_mode(&loopback).map(|m| (m.width, m.height)).filter(|(w, h)| *w > 0 && *h > 0) } else { None };
-                let args = if want == Want::Pipeline { pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path())), held) }
-                    else { placeholder_args(&loopback, &format) };
+                let picture = config.sleep_picture.as_deref().filter(|p| asleep && p.exists());
+                let args = match (want, picture) {
+                    (Want::Pipeline, Some(picture)) => {
+                        let (w, h) = held.unwrap_or((format.width, format.height));
+                        picture_args(&loopback, w, h, picture)
+                    }
+                    (Want::Pipeline, None) => pipeline_args(camera, &loopback, &format, max_fps, lut.as_ref().map(|(r, p)| (*r, p.as_path())), held),
+                    _ => placeholder_args(&loopback, &format),
+                };
                 (want, args)
             }),
         };
@@ -401,7 +432,10 @@ impl Studio {
                     }
                     self.cpu_sample = Some((Instant::now(), ticks));
                 }
-                if running.want == Want::Pipeline {
+                if running.want == Want::Pipeline && running.key.contains("-loop 1") {
+                    report.state = "running".into();
+                    report.detail = "The camera is asleep: showing your sleep picture.".into();
+                } else if running.want == Want::Pipeline {
                     report.state = "running".into();
                     report.detail = match running.lut {
                         Some(route) => format!("Applying the LUT on the {}.", route.name()),
@@ -544,6 +578,14 @@ mod tests {
         assert_eq!(decide(true, true, true, true, false, None), Want::Pipeline);
         assert_eq!(decide(true, true, true, false, true, Some(Duration::from_secs(2))), Want::Pipeline);
         assert_eq!(decide(true, true, true, false, true, Some(Duration::from_secs(6))), Want::Placeholder);
+    }
+
+    #[test]
+    fn the_sleep_picture_fits_the_studio_camera_and_loops() {
+        let args = picture_args("/dev/video42", 1920, 1080, Path::new("/home/me/.config/tiny4lite-control/sleep-picture.png")).join(" ");
+        assert!(args.contains("-loop 1") && args.contains("-i /home/me/.config/tiny4lite-control/sleep-picture.png"), "{args}");
+        assert!(args.contains("scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:"), "{args}");
+        assert!(args.ends_with("-f v4l2 /dev/video42"), "{args}");
     }
 
     #[test]

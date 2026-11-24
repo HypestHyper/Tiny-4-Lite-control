@@ -158,3 +158,18 @@ answer that read.
 Effects on the camera to check: gamma, night mode and image style were written as 0 and the field of view block
 as zeros because their reads were not answered; the status light was written off (0x75cd `00`) after its read
 failed.
+
+## Round 4 (`run.sh --round4 --moves`, then `--round4 --sleep-images`; firmware 6.2.8.1, 2026-11-25)
+
+| What | Command | Payload | Result |
+|---|---|---|---|
+| Return position, set (`aiSetLimitedZoneTrackInitPosR`) | write 04 `0x4e84` | 24 bytes: i32 id, f32 yaw, f32 pitch, f32 0, f32 zoom, f32 0 | set yaw 20, pitch −10, zoom 1.5; read back exactly (04 `0x4ec4`); restored. The field order is now confirmed by a change, not only by the start-up position's layout |
+| Go to the return position (`aiTrgLimitedZoneTrackInitPosR`) | reset (KK 05) 04 `0x4f44` | (leftover bytes) | the camera turned to pitch −10.01, yaw 20.12 and zoomed to 1.5 |
+| Hand side (`aiSetHandTrackModeR`) | write 04 `0x2244` | u8: 0 right, 1 left | AI status byte 2 followed it |
+| Hand-tracking area, read (`aiGetHandTrackStateR`) | read 04 `0x2004` | reply: f32 yaw min, yaw max, pitch min, pitch max, i32 view (−1), … | ±120 / ±90 (the full range this app sends while the tracking area is off) |
+| Gesture zoom amount (`aiSetGestureZoomFactorR`) | write 04 `0x3244` | f32 | 2.0 then 2.5; AI status byte 7 = tenths (0x14, 0x19) |
+| AI status (`aiGetAiStatusR`) | read 04 `0x0104` | reply 12 bytes | byte 2 hand (0 right, 1 left), 3 target gesture, 4 zoom gesture, 5 dynamic zoom, 6 reverse dynamic zoom, 7 gesture zoom ×10, 9 tracking speed (2 = Sport); each found by flipping one switch at a time |
+| Sleep picture thumbnails (`startFileDownloadAsync`) | none over USB | — | no download traffic and no callback: the camera's sleep pictures are not reachable this way on Linux. The app shows its own sleep picture on the Studio camera instead |
+
+The return position the user's camera held before the test (yaw −12.49, pitch 0.92, zoom 1.26) was set by this
+app's Use current position, so the app's command works.

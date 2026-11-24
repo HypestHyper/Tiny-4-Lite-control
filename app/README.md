@@ -135,6 +135,10 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Zoom read-back.** The zoom slider is what the app sends. The **Zoom** read-out under the camera model is the camera's live zoom (0x6804), read about every two seconds with the position, so a zoom gesture or tracking shows there without moving the slider.
 
+**Hand side and gestures.** **Hand to follow** (Right / Left) appears under Tracking mode while it is Hand (command 0x2244). The camera's AI status (0x0104) reports the hand side, every gesture switch and the gesture zoom amount, so those show what the camera has, not what was last sent.
+
+**Sleep picture.** The Studio camera card can hold a picture (copied into the settings folder). While an app uses the Studio camera and the camera says it is asleep (status byte 2), the background service shows that picture instead of the camera's dark frames, fitted to the app's picture size, and goes back to the camera when it wakes. The camera's own sleep pictures cannot be reached from Linux (the SDK's download sent nothing over USB).
+
 **Microphone volume and the camera's own sleep timer.** Volume (0 to 100, read from the camera) is on the Microphone card; **Camera's own sleep timer** (Off to 1 h, read from the camera) on the Power card. Both come from the SDK's undeclared functions.
 
 **Presets** also carry noise reduction, auto gain, listen while asleep, volume, HDR, the camera's sleep timer, the tracking area on or off, Auto-track new targets and the return position, plus the microphone switch, pickup distance and pop filter as last sent. The gimbal limits themselves stay the same for every preset.

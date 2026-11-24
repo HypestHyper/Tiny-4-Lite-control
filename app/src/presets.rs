@@ -115,6 +115,14 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if status[16] <= 1 { settings.insert("obsbot:mic_during_sleep".into(), i64::from(status[16])); }
         if let Some(on) = hdr_state_from_status(&status) { settings.insert("obsbot:hdr".into(), i64::from(on)); }
     }
+    // Hand side and the gestures, from the camera's AI status (ahead of the last-sent values below).
+    if let Ok(ai) = get_ai_status(device) {
+        if ai[2] <= 1 { settings.insert("obsbot:hand_side".into(), i64::from(ai[2])); }
+        for (name, index) in [("zoom_l_pose", 4), ("dynamic_zoom", 5), ("dynamic_zoom_direction", 6)] {
+            if ai[index] <= 1 { settings.insert(format!("obsbot:gesture:{name}"), i64::from(ai[index])); }
+        }
+        if (10..=40).contains(&ai[7]) { settings.insert("obsbot:gesture_zoom_ratio_milli".into(), i64::from(ai[7]) * 100); }
+    }
     if let Ok(volume) = get_mic_volume(device) { settings.insert("obsbot:mic_volume".into(), i64::from(volume)); }
     if let Ok(seconds) = get_camera_sleep_time(device) { settings.insert("obsbot:camera_sleep".into(), i64::from(seconds)); }
     // The tracking area: on or off (this app's setting; its limits are the gimbal limits, which stay the
@@ -143,7 +151,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
     if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
     if let Some(ratio) = saved.gesture_zoom_ratio {
-        settings.insert("obsbot:gesture_zoom_ratio_milli".into(), (ratio * 1000.0).round() as i64);
+        settings.entry("obsbot:gesture_zoom_ratio_milli".into()).or_insert((ratio * 1000.0).round() as i64);
     }
     // The other three gestures have no read-back: record what this app last sent.
     for (name, enabled) in saved.gesture_states {
@@ -233,6 +241,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         } else if key == "app:white_balance_by" {
             // Presets saved before red and blue were taken out: nothing to do, the temperature is used.
             continue;
+        } else if key == "obsbot:hand_side" {
+            set_hand_side(device, *value == 1)
         } else if key == "obsbot:noise_reduction" {
             u8::try_from(*value).ok().filter(|v| *v <= 3).ok_or_else(|| "Unknown noise reduction.".to_string())
                 .and_then(|level| set_noise_reduction(device, level))

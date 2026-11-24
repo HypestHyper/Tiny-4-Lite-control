@@ -166,6 +166,10 @@ pub enum Kind {
 #[derive(Clone, Copy, Debug)]
 pub enum Cond { Is(i64), IsNot(i64), OneOf(&'static [i64]) }
 pub const ON: Cond = Cond::Is(1);
+
+fn cond_holds(cond: Cond, value: i64) -> bool {
+    match cond { Cond::Is(v) => value == v, Cond::IsNot(v) => value != v, Cond::OneOf(values) => values.contains(&value) }
+}
 pub const OFF: Cond = Cond::Is(0);
 /// Manual white balance by colour temperature (0) or by red and blue gains (1).
 /// Zoom can be set by hand while tracking is off (0) or Normal (1). The other modes frame the picture themselves.
@@ -223,6 +227,8 @@ pub struct Snapshot {
     /// Microphone volume and the camera's own sleep time, from the SDK's undeclared reads.
     pub mic_volume: Option<i16>,
     pub camera_sleep: Option<u32>,
+    /// The AI status block (hand side, gestures, gesture zoom), module 04 command 0x0104.
+    pub ai_status: Option<Vec<u8>>,
     pub config: AppConfig,
     pub error: Option<String>,
 }
@@ -255,6 +261,7 @@ impl Snapshot {
         snapshot.focus_priority = retry(|| get_face_focus(device));
         snapshot.mic_volume = retry(|| get_mic_volume(device));
         snapshot.camera_sleep = retry(|| get_camera_sleep_time(device));
+        snapshot.ai_status = retry(|| get_ai_status(device));
         snapshot
     }
 
@@ -302,13 +309,15 @@ pub struct Setting {
     pub cooldown: Option<std::time::Duration>,
     /// For a switch: asks the user to confirm before any change is sent.
     pub confirm: Option<Confirm>,
+    /// Shown only while another setting has this value (the hand side, only with Hand tracking).
+    pub shown_when: Option<(&'static str, Cond)>,
 }
 
 impl Setting {
     fn new(id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind, source: Source) -> Setting {
         Setting {
             id, group, label, summary, info: "", kind, deps: Vec::new(), quick: true,
-            readback: Readback::Camera, experimental: false, source, cooldown: None, confirm: None,
+            readback: Readback::Camera, experimental: false, source, cooldown: None, confirm: None, shown_when: None,
         }
     }
     fn v4l2(name: &'static str, id: &'static str, group: Group, label: &'static str, summary: &'static str, kind: Kind) -> Setting {
@@ -327,6 +336,7 @@ impl Setting {
     fn not_quick(mut self) -> Setting { self.quick = false; self }
     fn cooldown(mut self, wait: std::time::Duration) -> Setting { self.cooldown = Some(wait); self }
     fn confirm(mut self, confirm: Confirm) -> Setting { self.confirm = Some(confirm); self }
+    fn only_when(mut self, on: &'static str, cond: Cond) -> Setting { self.shown_when = Some((on, cond)); self }
 
     // Reading
 
@@ -364,10 +374,15 @@ impl Setting {
     /// Whether the camera offers this setting at all. Standard controls are
     /// discovered; vendor commands are assumed present on this model.
     pub fn present(&self, snapshot: &Snapshot) -> bool {
-        match &self.source {
+        let there = match &self.source {
             Source::V4l2(name) => snapshot.control(name).is_some(),
             Source::Custom { .. } => true,
-        }
+        };
+        // A setting that only means something with another one set a certain way is hidden otherwise, and while
+        // that one is not known.
+        there && self.shown_when.is_none_or(|(on, cond)| {
+            find(on).and_then(|other| other.reading(snapshot)).is_some_and(|(value, _)| cond_holds(cond, value.as_i64()))
+        })
     }
 
     pub fn driver_control<'a>(&self, snapshot: &'a Snapshot) -> Option<&'a Control> {
@@ -682,6 +697,13 @@ fn build() -> Vec<Setting> {
                 set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
             .info("How the camera frames the person it follows. Tracking moves the gimbal by itself. Target selection is a separate hand-gesture setting."),
+        Setting::custom("obsbot:hand_side", Tracking, "Hand to follow",
+            "Which hand Hand tracking follows.",
+            Kind::Choice(vec![opt(0, "Right", "Your right hand"), opt(1, "Left", "Your left hand")]),
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(2).copied()).filter(|b| *b <= 1).map(|b| Value::Int(i64::from(b)))),
+            |d, v| sent(set_hand_side(d, v.as_i64() == 1)))
+            .only_when("obsbot:ai_tracking_mode", Cond::Is(7))
+            .info("Shown while Tracking mode is Hand. Read from the camera."),
         Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
             "How quickly the camera follows you.",
             Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),
@@ -701,28 +723,27 @@ fn build() -> Vec<Setting> {
             .info("Lets you choose who to follow with a hand gesture. It is a gesture setting, not a tracking mode."),
         Setting::custom("obsbot:gesture_zoom", Gestures, "Zoom gesture",
             "Zoom in and out with an L-shaped hand pose.", Kind::Toggle,
-            |s| gesture_saved(s, "zoom_l_pose"),
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(4).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "zoom_l_pose") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_ZOOM, v.as_bool())))
-            .last_sent()
-            .info("The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
+            .info("Read from the camera (its AI status)."),
         Setting::custom("obsbot:gesture_zoom_ratio", Gestures, "Gesture zoom amount",
             "How far the zoom gesture zooms in.",
             slider(1.0, 4.0, 0.01, Fmt::Ratio),
-            |s| from_saved(s.config.gesture_zoom_ratio.map(|r| Value::Float(f64::from(r)))),
+            // The camera reports it in tenths (0x19 is 2.5×).
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(7).copied()).filter(|b| (10..=40).contains(b)).map(|b| Value::Float(f64::from(b) / 10.0)))
+                .or_else(|| if s.ai_status.is_none() { from_saved(s.config.gesture_zoom_ratio.map(|r| Value::Float(f64::from(r)))) } else { None }),
             |d, v| sent(set_gesture_zoom_ratio(d, v.as_f64() as f32)))
-            .last_sent().not_quick(),
+            .not_quick(),
         Setting::custom("obsbot:gesture_dynamic_zoom", Gestures, "Dynamic zoom",
             "Zoom by moving your hand towards or away from the camera.", Kind::Toggle,
-            |s| gesture_saved(s, "dynamic_zoom"),
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(5).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "dynamic_zoom") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_DYNAMIC, v.as_bool())))
-            .last_sent()
-            .info("The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
+            .info("Read from the camera (its AI status)."),
         Setting::custom("obsbot:gesture_dynamic_zoom_direction", Gestures, "Reverse dynamic zoom",
             "Swap which hand movement zooms in.", Kind::Toggle,
-            |s| gesture_saved(s, "dynamic_zoom_direction"),
+            |s| from_camera(s.ai_status.as_ref().and_then(|a| a.get(6).copied()).filter(|b| *b <= 1).map(|b| Value::Bool(b == 1))).or_else(|| if s.ai_status.is_none() { gesture_saved(s, "dynamic_zoom_direction") } else { None }),
             |d, v| sent(set_gesture(d, GESTURE_DIRECTION, v.as_bool())))
-            .last_sent()
-            .info("Swaps which hand movement zooms in. The camera can't report this setting, so the switch shows what you last chose here, or Unknown if you haven't chosen yet."),
+            .info("Swaps which hand movement zooms in. Read from the camera (its AI status)."),
 
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
@@ -1241,9 +1262,29 @@ mod tests {
         assert_eq!(find("obsbot:mirror_image").unwrap().reading(&snap), Some((Value::Bool(true), Origin::Saved)));
         assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
         assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
-        for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:radio_distance",
-                   "obsbot:gesture_zoom", "obsbot:gesture_dynamic_zoom", "obsbot:gesture_dynamic_zoom_direction"] {
+        for id in ["obsbot:mirror_image", "obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:radio_distance"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
+    }
+
+    /// The gestures, their zoom amount and the hand side come from the camera's AI status (capture of
+    /// 2026-11-25); the hand side shows only with Hand tracking.
+    #[test]
+    fn gestures_and_hand_side_are_read_from_the_ai_status() {
+        let mut snap = Snapshot { ai_status: Some(vec![0, 0, 1, 1, 1, 0, 1, 0x19, 0, 2, 0, 0]), ..Snapshot::default() };
+        let read = |id: &str, snap: &Snapshot| find(id).unwrap().reading(snap);
+        assert_eq!(read("obsbot:gesture_zoom", &snap), Some((Value::Bool(true), Origin::Camera)));
+        assert_eq!(read("obsbot:gesture_dynamic_zoom", &snap), Some((Value::Bool(false), Origin::Camera)));
+        assert_eq!(read("obsbot:gesture_dynamic_zoom_direction", &snap), Some((Value::Bool(true), Origin::Camera)));
+        assert_eq!(read("obsbot:gesture_zoom_ratio", &snap), Some((Value::Float(2.5), Origin::Camera)));
+        assert_eq!(read("obsbot:hand_side", &snap), Some((Value::Int(1), Origin::Camera)));
+        let side = find("obsbot:hand_side").unwrap();
+        let mut status = [0u8; 60];
+        status[0x18] = 0x02;
+        snap.status = Some(status);
+        assert!(!side.present(&snap), "hidden with Normal tracking");
+        status[0x18] = 0x03;
+        snap.status = Some(status);
+        assert!(side.present(&snap), "shown with Hand tracking");
     }
 }

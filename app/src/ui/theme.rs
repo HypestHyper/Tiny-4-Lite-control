@@ -351,6 +351,8 @@ window.t4.csd { border-radius: §18§; }
 .t4 windowcontrols button:hover { background: alpha(@t_on_surface, 0.10); color: @t_on_surface; }
 .t4 windowcontrols button.close:hover { background: @t_error_hover; color: #ffffff; }
 
+.sleep-thumb { border-radius: §8§; }
+
 /* Header */
 .header { min-height: §64§; padding: 0 §20§; background: @t_surface_dim; }
 .logo-tile { background: @t_primary_container; border-radius: §14§; min-width: §40§; min-height: §40§; color: @t_on_primary_container; }

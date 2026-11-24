@@ -443,6 +443,8 @@ pub(crate) fn xu_query(device: &str, selector: u8, request: u8, data: &mut [u8])
                     // The tracking area's return position: pan 15°, tilt 10° up, zoom 1.2×.
                     0x4ec4 => zone_home_payload(15.0, 10.0, 1.2).to_vec(),
                     0x80c2 => 50i16.to_le_bytes().to_vec(),
+                    // The AI status: right hand, zoom gesture on, gesture zoom 2.5×, Sport.
+                    0x0104 => vec![0, 0, 0, 0, 1, 0, 0, 0x19, 0, 2, 0, 0],
                     0xa182 => 600u32.to_le_bytes().to_vec(),
                     0x3884 => {
                         let mut v = 3u32.to_le_bytes().to_vec();
@@ -1296,6 +1298,21 @@ pub(crate) fn select_target_payload(x: f32, y: f32) -> [u8; 9] {
 
 pub(crate) fn select_target_at(device: &str, x: f32, y: f32) -> Result<(), String> {
     send_obsbot_command(device, 0x04, SELECT_TARGET_SET, &select_target_payload(x, y))
+}
+
+/// The AI status (module 04, command 0x0104), as captured from the SDK on a Tiny 2 Lite (2026-11-25): byte 2 the
+/// hand followed (0 right, 1 left), 3 target gesture, 4 zoom gesture, 5 dynamic zoom, 6 reverse dynamic zoom,
+/// 7 the gesture zoom amount in tenths (0x19 = 2.5×), 9 tracking speed.
+pub(crate) fn get_ai_status(device: &str) -> Result<Vec<u8>, String> {
+    let reply = query_obsbot(device, 0x04, 0x0104)?;
+    if reply.len() < 10 { return Err(format!("The AI status reply is {} bytes; expected 12.", reply.len())); }
+    Ok(reply)
+}
+
+/// Which hand Hand tracking follows (aiSetHandTrackModeR): 0 right, 1 left; command 0x2244 (capture of 2026-11-25).
+const HAND_SIDE_SET: u16 = 0x2244;
+pub(crate) fn set_hand_side(device: &str, left: bool) -> Result<(), String> {
+    send_camera_preset_command(device, HAND_SIDE_SET, &[u8::from(left)])
 }
 
 /// Follow the person at a point of the picture. With tracking off, Normal tracking is turned on first, since
@@ -2341,6 +2358,9 @@ mod settle_tests {
         let (pan, tilt, zoom) = zone_home_from_reply(&boot).unwrap();
         assert!((pan - 27.64).abs() < 0.01 && (tilt - 22.45).abs() < 0.01 && zoom == 1.0);
         assert_eq!(zone_home_from_reply(&zone_home_payload(-12.5, 20.0, 1.5)).unwrap(), (-12.5, 20.0, 1.5));
+        // Hand side, as the SDK sent it for Left: 04 2244, payload 01.
+        let left = obsbot_frame_with_payload(0x30, HAND_SIDE_SET, &[1]).unwrap();
+        assert_eq!(&left[8..17], &[0x0a, 0x04, 0x44, 0x22, 0x01, 0x00, 0x27, 0xff, 0x01]);
         // The hand-tracking area's yaw min, as the SDK sent it (sequence 0x22, -30°).
         let hand = obsbot_frame_with_payload(0x22, HAND_YAW_MIN_SET, &(-30.0f32).to_le_bytes()).unwrap();
         assert_eq!(&hand[..20], &[0xaa, 0x25, 0x22, 0x00, 0x0c, 0x00, 0x6a, 0x1c, 0x0a, 0x04, 0x44, 0x20, 0x04, 0x00, 0x3b, 0x97, 0x00, 0x00, 0xf0, 0xc1]);
