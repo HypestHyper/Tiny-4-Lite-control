@@ -306,9 +306,14 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.preset.worded { padding: 0 §8§; font-size: ¶11¶; border-radius: §12§; }
 .t4 button.preset.empty { border-style: dashed; color: @t_on_surface_variant; opacity: 0.7; }
 .t4 button.preset.memory { border-color: @t_tertiary; }
-.t4 .quick-chooser button.flat-item { background: transparent; border-radius: §8§; padding: §6§ §10§; min-height: 0; }
+.t4 .quick-chooser > contents { border-radius: §20§; padding: §6§; }
+.t4 .quick-chooser button.flat-item { background: transparent; color: @t_on_surface; border-radius: §12§; padding: §8§ §14§; min-height: §40§; font-weight: 500; box-shadow: none; transition: background 150ms ease, border-radius 200ms cubic-bezier(0.2, 0, 0, 1); }
 .t4 .quick-chooser button.flat-item:hover { background: alpha(@t_on_surface, 0.08); }
-.t4 .quick-chooser button.flat-item.chosen { background: alpha(@t_primary, 0.16); color: @t_primary; }
+.t4 .quick-chooser button.flat-item:active { background: alpha(@t_on_surface, 0.12); border-radius: §20§; }
+.t4 .quick-chooser button.flat-item.chosen { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: §20§; }
+.t4 .quick-chooser button.flat-item.chosen label { color: @t_on_secondary_container; }
+.t4 .quick-chooser .chooser-title { margin: §4§ §8§ §6§; }
+.t4 .quick-chooser .chooser-note { margin: §8§ §8§ §2§; }
 .t4 .quick-chooser .chooser-head { margin-top: §6§; }
 .t4 button.fold .icon { font-size: §22§; }
 .t4 button.look-bubble { border-radius: 999px; padding: §6§ §14§ §6§ §10§; min-height: §28§; background: @t_surface_highest; }

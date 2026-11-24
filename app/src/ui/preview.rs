@@ -227,39 +227,59 @@ impl PreviewHub {
         show_click_mode(&button);
         CLICK_BUTTONS.with(|buttons| buttons.borrow_mut().push(button.downgrade()));
         let popover = gtk::Popover::new();
+        popover.add_css_class("quick-chooser");
         popover.set_parent(&button);
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         list.set_margin_top(6); list.set_margin_bottom(6); list.set_margin_start(6); list.set_margin_end(6);
-        list.append(&widgets::text("A click on the picture", &["setting-label"]));
-        let mut first: Option<gtk::CheckButton> = None;
-        let mut choices = Vec::new();
-        for (mode, label) in [(CLICK_OFF, "Does nothing"), (CLICK_FOCUS, "Focuses there"), (CLICK_TRACK, "Follows that person")] {
-            let choice = gtk::CheckButton::with_label(label);
-            if let Some(first) = &first { choice.set_group(Some(first)); } else { first = Some(choice.clone()); }
-            let pop = popover.downgrade();
-            choice.connect_toggled(move |c| {
-                if c.is_active() { set_click_mode(mode); if let Some(pop) = pop.upgrade() { pop.popdown(); } }
-            });
-            list.append(&choice);
-            choices.push((mode, choice));
+        list.set_size_request(240, -1);
+        list.append(&widgets::line("A click on the picture", &["setting-label", "chooser-title"]));
+        // Menu items in the M3 Expressive way: an icon, a label, and the chosen one in a filled pill with a tick.
+        let mut items: Vec<(u8, gtk::Button, gtk::Label)> = Vec::new();
+        for (mode, glyph, label) in [(CLICK_OFF, "block", "Does nothing"), (CLICK_FOCUS, "center_focus_strong", "Focuses there"), (CLICK_TRACK, "person_search", "Follows that person")] {
+            let item = gtk::Button::new();
+            item.add_css_class("flat-item");
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            content.append(&widgets::icon(glyph));
+            let text = gtk::Label::new(Some(label));
+            text.set_xalign(0.0);
+            text.set_hexpand(true);
+            content.append(&text);
+            let tick = widgets::icon("check");
+            content.append(&tick);
+            item.set_child(Some(&content));
+            widgets::label_accessible(&item, label);
+            items.push((mode, item, tick));
         }
-        let note = widgets::text("While another app uses the camera, this works only if that app uses the Studio camera.", &["small", "dim"]);
+        let items = Rc::new(items);
+        let mark: Rc<dyn Fn()> = {
+            let items = items.clone();
+            Rc::new(move || for (mode, item, tick) in items.iter() {
+                let on = *mode == click_mode();
+                if on { item.add_css_class("chosen"); } else { item.remove_css_class("chosen"); }
+                tick.set_opacity(if on { 1.0 } else { 0.0 });
+            })
+        };
+        for (mode, item, _) in items.iter() {
+            let (mode, pop, mark) = (*mode, popover.downgrade(), mark.clone());
+            item.connect_clicked(move |_| {
+                set_click_mode(mode);
+                mark();
+                if let Some(pop) = pop.upgrade() { pop.popdown(); }
+            });
+            list.append(item);
+        }
+        let note = widgets::text("Autofocus must be on to focus. While another app uses the camera, this works only if that app uses the Studio camera.", &["small", "dim", "chooser-note"]);
         note.set_wrap(true);
-        note.set_max_width_chars(30);
+        note.set_max_width_chars(32);
         note.set_xalign(0.0);
         list.append(&note);
-        list.append(&widgets::info_button("Clicking on the picture", &[
-            "Focuses there: the camera focuses on that spot (OBSBOT's tap to focus). Autofocus must be on.".into(),
-            "Follows that person: the camera tracks whoever is there. If tracking is off, Normal tracking is turned on first.".into(),
-            "Only one program can read the camera at a time. If another app (a call, OBS) opens the camera itself, this preview has no picture to click on. Choose Tiny 2 Lite Studio in that app instead: this app then holds the camera, and the preview and clicking keep working.".into(),
-        ]));
         popover.set_child(Some(&list));
         let owned = popover.clone();
         button.connect_destroy(move |_| owned.unparent());
-        button.connect_clicked(move |_| {
-            for (mode, choice) in &choices { if *mode == click_mode() { choice.set_active(true); } }
-            popover.popup();
-        });
+        // The tooltip would sit over the open menu: off while it is open.
+        let weak = button.downgrade();
+        popover.connect_closed(move |_| if let Some(b) = weak.upgrade() { b.set_has_tooltip(true); });
+        button.connect_clicked(move |b| { b.set_has_tooltip(false); mark(); popover.popup(); });
         button
     }
 

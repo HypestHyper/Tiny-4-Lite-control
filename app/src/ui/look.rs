@@ -30,7 +30,10 @@ pub fn bubble(store: &Store, place: Place) -> gtk::Button {
     }
     {
         let (popover, store) = (popover.clone(), store.clone());
-        button.connect_clicked(move |_| {
+        let weak = button.downgrade();
+        popover.connect_closed(move |_| if let Some(b) = weak.upgrade() { b.set_has_tooltip(true); });
+        button.connect_clicked(move |b| {
+            b.set_has_tooltip(false);
             popover.set_child(Some(&contents(&popover, &store)));
             popover.popup();
         });

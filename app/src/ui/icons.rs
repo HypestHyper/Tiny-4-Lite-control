@@ -5,6 +5,7 @@ pub fn glyph(name: &str) -> Option<char> {
     let code = match name {
         "ads_click" => 0xe762,
         "bedtime" => 0xf159,
+        "block" => 0xf08c,
         "blur_on" => 0xe3a5,
         "bookmarks" => 0xe98b,
         "center_focus_strong" => 0xe3b4,
@@ -64,6 +65,7 @@ pub fn glyph(name: &str) -> Option<char> {
 pub const NAMES: &[&str] = &[
     "ads_click",
     "bedtime",
+    "block",
     "blur_on",
     "bookmarks",
     "center_focus_strong",

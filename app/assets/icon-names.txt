@@ -2,6 +2,7 @@
 # Material Symbols Rounded icons used by the UI, one per line.
 ads_click
 bedtime
+block
 blur_on
 bookmarks
 center_focus_strong
