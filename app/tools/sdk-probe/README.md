@@ -12,7 +12,15 @@ headers to the repository.
 bash run.sh                       # reads, and changes that are written back exactly
 bash run.sh --toggles             # also on/off settings whose state cannot be read (final states listed)
 bash run.sh --toggles --moves     # also pans, zoom, presets, AI modes, sleep and wake (each undone)
+bash run.sh --hidden              # only the library's functions the headers leave out (see inventory.py)
+bash run.sh --hidden --toggles --moves
 ```
+
+`--hidden` calls functions the SDK library exports but its headers do not declare (audio volume, noise
+reduction, gamma, night mode, status light, auto-sleep time, hand-tracking area, the zone-tracking return
+position and others). It finds each by its exact signature with `nm` and calls only those that take plain
+numbers; anything taking an undocumented structure, or whose argument order is unknown, is skipped.
+`python3 inventory.py` lists everything in the SDK, by device.
 
 It needs cmake, a C++ compiler, tshark, python3 and lsusb, and sudo for the USB capture. It stops this app's
 background service during the run and starts it again afterwards; close the app's windows first. The output

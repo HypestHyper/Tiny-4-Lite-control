@@ -1527,7 +1527,7 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
     // Auto-select: read from the camera when the card opens.
     let auto = gtk::Switch::new();
     auto.set_valign(gtk::Align::Center);
-    widgets::label_accessible(&auto, "Pick a target inside the area automatically");
+    widgets::label_accessible(&auto, "Auto-track new targets");
     let reading = Rc::new(Cell::new(true));
     {
         let (auto, reading) = (auto.downgrade(), reading.clone());
@@ -1543,15 +1543,15 @@ fn tracking_area_section(store: &Store) -> gtk::Box {
             let on = switch.is_active();
             let store_done = store.clone();
             store.call(Some("tracking-area-auto"), move |device| dev::set_tracking_area_auto_select(device, on), move |result| {
-                if let Err(error) = result { store_done.error(&format!("Could not change automatic target selection: {error}")); }
+                if let Err(error) = result { store_done.error(&format!("Could not change auto-tracking of new targets: {error}")); }
             });
         });
     }
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
     titles.set_hexpand(true);
-    titles.append(&widgets::text("Pick a target inside the area automatically", &["setting-label"]));
-    titles.append(&widgets::text("When someone is inside the tracking area, the camera picks them to follow by itself.", &["setting-summary"]));
+    titles.append(&widgets::text("Auto-track new targets", &["setting-label"]));
+    titles.append(&widgets::text("After the person being followed leaves the area, the camera always picks them up again when they come back. On: it also starts following someone new who walks in. Off: it waits for the original person.", &["setting-summary"]));
     row.append(&titles);
     row.append(&auto);
     section.append(&row);

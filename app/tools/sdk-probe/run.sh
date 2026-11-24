@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the OBSBOT SDK probe while recording the camera's USB traffic, and write one report.
 #
-#   bash run.sh [--toggles] [--moves] [path/to/libdev_v2.1.0_8]
+#   bash run.sh [--hidden] [--toggles] [--moves] [path/to/libdev_v2.1.0_8]
 #
 # It builds the probe against your local copy of the SDK, stops this app's background service for the
 # duration (it would add its own traffic), records USB with tshark (asks for your password once), runs the
@@ -13,7 +13,7 @@ flags=()
 sdk="$HOME/obsbot-sdk/libdev_v2.1.0_8"
 for arg in "$@"; do
     case "$arg" in
-        --toggles|--moves|--with-moves) flags+=("$arg") ;;
+        --toggles|--moves|--with-moves|--hidden) flags+=("$arg") ;;
         *) sdk="$arg" ;;
     esac
 done
@@ -23,6 +23,7 @@ mkdir -p "$out"
 need() { command -v "$1" >/dev/null || { echo "Missing: $1 ($2)"; exit 1; }; }
 need cmake "install cmake"; need c++ "install a C++ compiler (gcc)"; need tshark "install wireshark-cli"
 need python3 "install python"; need lsusb "install usbutils"; need sudo "needed for USB capture"
+need nm "install binutils"
 [ -d "$sdk/include/dev" ] || { echo "SDK not found at $sdk (pass its path)"; exit 1; }
 
 echo "== Building the probe"

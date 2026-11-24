@@ -10,11 +10,23 @@
 //   --toggles   on/off settings whose state cannot be read: each ends in a stated state, listed at the end.
 //   --moves     anything that moves the camera or changes what it is doing (pans, zoom, presets, AI modes,
 //               sleep and wake). Each move is undone; AI tracking ends on "no tracking".
+//   --hidden    instead of all the above: the functions in the SDK library that its headers leave out (found by
+//               tools/sdk-probe/inventory.py) and that take plain numbers, called by their exact signature. Reads,
+//               then each setting written back with the value read (numbers and on/off are changed for a moment
+//               and restored). With --toggles also: hand-tracking area set then reset to default, the hidden
+//               gesture switches (on, then off), the focus point at the centre. With --moves also: zoom by the
+//               hidden zoom command, and select the target at the picture's centre. Functions whose parameters
+//               are undocumented structures, or whose argument order is unknown (Euler angles), are not called.
 // Never: factory reset; adding, deleting, renaming or updating presets or zone presets; setting or resetting the
 // start-up position or the zone start position; background images; the boot AI mode; privacy mode; firmware.
 
 #include "dev/devs.hpp"
 #include "dev/dev.hpp"
+
+#include <cxxabi.h>
+#include <dlfcn.h>
+#include <link.h>
+#include <map>
 
 #include <chrono>
 #include <cstdio>
@@ -55,13 +67,192 @@ static void range(const std::string &name, Device::UvcParamRange &r) {
     std::printf("  range min %ld max %ld step %ld default %ld\n", r.min_, r.max_, r.step_, r.default_);
 }
 
+// ════════════ Functions the headers leave out ════════════
+// The library exports them; we find each by its demangled signature (as inventory.py prints it) and call it
+// with plain types. Enumerations are passed as int, which is how the compiler passes them.
+static std::map<std::string, void *> hidden_symbols;
+static void load_hidden_symbols() {
+    std::string lib;
+    dl_iterate_phdr([](dl_phdr_info *info, size_t, void *out) {
+        if (info->dlpi_name && std::strstr(info->dlpi_name, "libdev.so")) { *static_cast<std::string *>(out) = info->dlpi_name; return 1; }
+        return 0;
+    }, &lib);
+    if (lib.empty()) { std::printf("HIDDEN: cannot locate libdev\n"); return; }
+    std::string cmd = "nm -D --defined-only '" + lib + "'";
+    FILE *nm = popen(cmd.c_str(), "r");
+    if (!nm) { std::printf("HIDDEN: nm not available (install binutils)\n"); return; }
+    char line[4096];
+    while (std::fgets(line, sizeof line, nm)) {
+        char *name = std::strrchr(line, ' ');
+        if (!name) continue;
+        std::string mangled(name + 1);
+        while (!mangled.empty() && (mangled.back() == '\n' || mangled.back() == '\r')) mangled.pop_back();
+        int ok = 0;
+        char *plain = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &ok);
+        if (ok == 0 && plain) {
+            if (void *at = dlsym(RTLD_DEFAULT, mangled.c_str())) hidden_symbols[plain] = at;
+        }
+        std::free(plain);
+    }
+    pclose(nm);
+    std::printf("HIDDEN: %zu symbols from %s\n", hidden_symbols.size(), lib.c_str());
+}
+
+template <class... A> static int hidden(Device *dev, const char *signature, A... args) {
+    auto it = hidden_symbols.find(signature);
+    if (it == hidden_symbols.end()) { std::printf("  not in this library: %s\n", signature); return -999; }
+    return reinterpret_cast<int32_t (*)(Device *, A...)>(it->second)(dev, args...);
+}
+
+static void run_hidden(Device *d, bool toggles, bool moves) {
+    load_hidden_symbols();
+
+    // Device sleep after inactivity (the R-command; cameraSetSuspendTimeU is the status-block one).
+    unsigned int sleep_time = 0;
+    if (step("hidden_get_auto_sleep_time", [&] { int r = hidden(d, "Device::cameraGetAutoSleepTimeR(unsigned int&)", &sleep_time); std::printf("  auto sleep %u\n", sleep_time); return r; }) == 0) {
+        unsigned int other = sleep_time == 600 ? 300 : 600;
+        step("hidden_set_auto_sleep_time_" + std::to_string(other), [&] { return hidden(d, "Device::cameraSetAutoSleepTimeR(unsigned int)", other); });
+        step("hidden_set_auto_sleep_time_back", [&] { return hidden(d, "Device::cameraSetAutoSleepTimeR(unsigned int)", sleep_time); });
+    }
+
+    // Audio.
+    short volume = 0;
+    if (step("hidden_get_audio_volume", [&] { int r = hidden(d, "Device::cameraGetAudioVolumeR(short&)", &volume); std::printf("  volume %d\n", volume); return r; }) == 0) {
+        short other = volume > 0 ? volume - 1 : volume + 1;
+        step("hidden_set_audio_volume_" + std::to_string(other), [&] { return hidden(d, "Device::cameraSetAudioVolumeR(short)", other); });
+        step("hidden_set_audio_volume_back", [&] { return hidden(d, "Device::cameraSetAudioVolumeR(short)", volume); });
+    }
+    bool agc = false;
+    if (step("hidden_get_audio_agc", [&] { int r = hidden(d, "Device::cameraGetAudioAGCR(bool&)", &agc); std::printf("  agc %d\n", agc); return r; }) == 0) {
+        step("hidden_set_audio_agc_flip", [&] { return hidden(d, "Device::cameraSetAudioAGCR(bool)", !agc); });
+        step("hidden_set_audio_agc_back", [&] { return hidden(d, "Device::cameraSetAudioAGCR(bool)", agc); });
+    }
+    bool nr_on = false; int nr_level = 0;
+    if (step("hidden_get_audio_noise_reduce", [&] { int r = hidden(d, "Device::cameraGetAudioNoiseReduceR(bool&, int&)", &nr_on, &nr_level); std::printf("  noise reduction %d level %d\n", nr_on, nr_level); return r; }) == 0) {
+        step("hidden_set_audio_noise_reduce_flip", [&] { return hidden(d, "Device::cameraSetAudioNoiseReduceR(bool, int)", !nr_on, nr_level); });
+        step("hidden_set_audio_noise_reduce_back", [&] { return hidden(d, "Device::cameraSetAudioNoiseReduceR(bool, int)", nr_on, nr_level); });
+    }
+    bool muted = false;
+    if (step("hidden_get_audio_mute", [&] { int r = hidden(d, "Device::cameraGetAudioSourceMuteR(bool&)", &muted); std::printf("  mute %d\n", muted); return r; }) == 0) {
+        step("hidden_set_audio_mute_flip", [&] { return hidden(d, "Device::cameraSetAudioSourceMuteR(bool)", !muted); });
+        step("hidden_set_audio_mute_back", [&] { return hidden(d, "Device::cameraSetAudioSourceMuteR(bool)", muted); });
+    }
+
+    // Picture modes whose values are enumerations we do not know: read, and written back unchanged.
+    struct Enum { const char *name, *get, *set; };
+    Enum enums[] = {
+        {"gamma_mode", "Device::cameraGetGammaModeR(Device::DevGammaMode&)", "Device::cameraSetGammaModeR(Device::DevGammaMode)"},
+        {"night_mode", "Device::cameraGetNightModeR(Device::DevNightMode&)", "Device::cameraSetNightModeR(Device::DevNightMode)"},
+        {"image_style", "Device::cameraGetImageStyleModeR(Device::DevImageStyleMode&)", "Device::cameraSetImageStyleModeR(Device::DevImageStyleMode)"},
+    };
+    for (auto &e : enums) {
+        int value = 0;
+        if (step(std::string("hidden_get_") + e.name, [&] { int r = hidden(d, e.get, &value); std::printf("  %s %d\n", e.name, value); return r; }) == 0)
+            step(std::string("hidden_set_") + e.name + "_same", [&] { return hidden(d, e.set, value); });
+    }
+    bool comp = false;
+    if (step("hidden_get_auto_compensation", [&] { int r = hidden(d, "Device::cameraGetAutoCompensationR(bool&)", &comp); std::printf("  auto compensation %d\n", comp); return r; }) == 0) {
+        step("hidden_set_auto_compensation_flip", [&] { return hidden(d, "Device::cameraSetAutoCompensationR(bool)", !comp); });
+        step("hidden_set_auto_compensation_back", [&] { return hidden(d, "Device::cameraSetAutoCompensationR(bool)", comp); });
+    }
+    int wb_a = 0, wb_b = 0; bool wb_c = false;
+    if (step("hidden_get_white_balance_component", [&] { int r = hidden(d, "Device::cameraGetWhiteBalanceComponentR(int&, int&, bool&)", &wb_a, &wb_b, &wb_c); std::printf("  component %d %d %d\n", wb_a, wb_b, wb_c); return r; }) == 0)
+        step("hidden_set_white_balance_component_same", [&] { return hidden(d, "Device::cameraSetWhiteBalanceComponentR(int, int, bool)", wb_a, wb_b, wb_c); });
+    float area[4] = {0, 0, 0, 0};
+    if (step("hidden_get_white_balance_area", [&] { int r = hidden(d, "Device::cameraGetWhiteBalanceAreaR(float&, float&, float&, float&)", &area[0], &area[1], &area[2], &area[3]); std::printf("  area %.3f %.3f %.3f %.3f\n", area[0], area[1], area[2], area[3]); return r; }) == 0)
+        step("hidden_set_white_balance_area_same", [&] { return hidden(d, "Device::cameraSetWhiteBalanceAreaR(float, float, float, float)", area[0], area[1], area[2], area[3]); });
+    int view[4] = {0, 0, 0, 0};
+    if (step("hidden_get_field_view", [&] { int r = hidden(d, "Device::cameraGetFieldView(int&, int&, int&, int&)", &view[0], &view[1], &view[2], &view[3]); std::printf("  field view %d %d %d %d\n", view[0], view[1], view[2], view[3]); return r; }) == 0)
+        step("hidden_set_field_view_same", [&] { return hidden(d, "Device::cameraSetFieldView(unsigned int, unsigned int, unsigned int, unsigned int)", unsigned(view[0]), unsigned(view[1]), unsigned(view[2]), unsigned(view[3])); });
+    step("hidden_get_uvc_mode", [&] { unsigned char m = 0; int r = hidden(d, "Device::cameraGetUvcModeR(unsigned char&)", &m); std::printf("  uvc mode %d\n", m); return r; });
+    bool vt = false;
+    if (step("hidden_get_virtual_track", [&] { int r = hidden(d, "Device::cameraGetVirtualTrackEnabledR(bool&)", &vt); std::printf("  virtual track %d\n", vt); return r; }) == 0)
+        step("hidden_set_virtual_track_same", [&] { return hidden(d, "Device::cameraSetVirtualTrackEnabledR(bool)", vt); });
+
+    // Status light.
+    bool led = false;
+    if (step("hidden_get_led_enabled", [&] { int r = hidden(d, "Device::sysMgGetLedEnabledR(bool&)", &led); std::printf("  led %d\n", led); return r; }) == 0) {
+        step("hidden_set_led_flip", [&] { return hidden(d, "Device::sysMgSetLedEnabledR(bool)", !led); });
+        step("hidden_set_led_back", [&] { return hidden(d, "Device::sysMgSetLedEnabledR(bool)", led); });
+    }
+    unsigned char bright = 0;
+    if (step("hidden_get_led_brightness", [&] { int r = hidden(d, "Device::sysMgGetLedBrightnessR(unsigned char&)", &bright); std::printf("  led brightness %d\n", bright); return r; }) == 0) {
+        unsigned char other = bright > 10 ? bright - 10 : bright + 10;
+        step("hidden_set_led_brightness_" + std::to_string(other), [&] { return hidden(d, "Device::sysMgSetLedBrightnessR(unsigned char)", other); });
+        step("hidden_set_led_brightness_back", [&] { return hidden(d, "Device::sysMgSetLedBrightnessR(unsigned char)", bright); });
+    }
+
+    // Zone tracking's return position ("After exceeding the tracking range, the gimbal returns to the set
+    // position" in OBSBOT Center): read, the default, and written back with the value read.
+    Device::PresetPosInfo home{};
+    step("get_limited_zone_init_pos_default", [&] { Device::PresetPosInfo p{}; int r = d->aiGetLimitedZoneTrackInitPosR(&p, -1); std::printf("  default init id %d pitch %.2f yaw %.2f roll %.2f zoom %.2f\n", p.id, p.pitch, p.yaw, p.roll, p.zoom); return r; });
+    if (step("get_limited_zone_init_pos", [&] { int r = d->aiGetLimitedZoneTrackInitPosR(&home, 0); std::printf("  init id %d pitch %.2f yaw %.2f roll %.2f zoom %.2f\n", home.id, home.pitch, home.yaw, home.roll, home.zoom); hexdump("PresetPosInfo", &home, sizeof home); return r; }) == 0)
+        step("set_limited_zone_init_pos_same", [&] { return d->aiSetLimitedZoneTrackInitPosR(&home); });
+
+    if (toggles) {
+        struct Zone { const char *name, *set, *reset; float value; };
+        Zone zones[] = {
+            {"yaw_min", "Device::aiSetHandZoneYawMinR(float)", "Device::aiRstHandZoneYawMinR()", -30.0f},
+            {"yaw_max", "Device::aiSetHandZoneYawMaxR(float)", "Device::aiRstHandZoneYawMaxR()", 30.0f},
+            {"pitch_min", "Device::aiSetHandZonePitchMinR(float)", "Device::aiRstHandZonePitchMinR()", -10.0f},
+            {"pitch_max", "Device::aiSetHandZonePitchMaxR(float)", "Device::aiRstHandZonePitchMaxR()", 10.0f},
+        };
+        for (auto &z : zones) {
+            step(std::string("hidden_set_hand_zone_") + z.name, [&] { return hidden(d, z.set, z.value); });
+            step(std::string("hidden_reset_hand_zone_") + z.name, [&] { return hidden(d, z.reset); });
+        }
+        finally("Hand-tracking area: OBSBOT's default");
+        const char *switches[][2] = {
+            {"gesture_zoom", "Device::aiSetGestureZoomR(bool)"},
+            {"gesture_target_select", "Device::aiSetGestureTargetSelectR(bool)"},
+            {"gesture_dynamic_zoom", "Device::aiSetGestureDynamicZoomR(bool)"},
+            {"dynamic_zoom_mirror", "Device::aiSetDynamicZoomMirrorR(bool)"},
+            {"hand_track_gimbal", "Device::aiSetHandTrackGimbalEnabledR(bool)"},
+        };
+        for (auto &s : switches) {
+            step(std::string("hidden_set_") + s[0] + "_on", [&] { return hidden(d, s[1], true); });
+            step(std::string("hidden_set_") + s[0] + "_off", [&] { return hidden(d, s[1], false); });
+        }
+        finally("Gestures (zoom, target selection, dynamic zoom, reverse dynamic zoom): off");
+        step("zone_track_gimbal_off", [&] { return d->aiSetZoneTrackGimbalEnabledR(false); });
+        step("zone_track_gimbal_on", [&] { return d->aiSetZoneTrackGimbalEnabledR(true); });
+        step("hidden_focus_point_centre", [&] { return hidden(d, "Device::cameraSetUserFocusPos(float, float)", 0.5f, 0.5f); });
+        finally("Focus point: centre of the picture");
+    }
+
+    if (moves) {
+        float zoom = 1.0f;
+        d->cameraGetZoomAbsoluteR(zoom);
+        step("hidden_zoom_ratio_2", [&] { return hidden(d, "Device::aiSetCameraZoomRatioR(float, int)", 2.0f, -1); });
+        pause(2500);
+        step("hidden_zoom_ratio_read", [&] { float z = 0; int r = d->cameraGetZoomAbsoluteR(z); std::printf("  zoom now %.3f\n", z); return r; });
+        step("hidden_zoom_back", [&] { return d->cameraSetZoomAbsoluteR(zoom); });
+        pause(2500);
+        step("hidden_select_target_centre", [&] { return hidden(d, "Device::aiSetSelectTargetByPos(float, float, int)", 0.5f, 0.5f, 0); }, 2000);
+        step("hidden_ai_mode_none", [&] { return d->cameraSetAiModeU(Device::AiWorkModeNone, 0); }, 2000);
+        finally("AI tracking: no tracking; zoom as before");
+    }
+}
+
+static void finish() {
+    pause(1500);
+    std::printf("PROBE END %.6f\n", now());
+    if (!final_states.empty()) {
+        std::printf("FINAL STATES (set these back in the app if they differ from what you had):\n");
+        for (auto &s : final_states) std::printf("  - %s\n", s.c_str());
+    }
+    std::fflush(stdout);
+    Devices::get().close();
+}
+
 int main(int argc, char **argv) {
-    bool toggles = false, moves = false;
+    bool toggles = false, moves = false, hidden_only = false;
     for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--hidden") == 0) hidden_only = true;
         if (std::strcmp(argv[i], "--toggles") == 0) toggles = true;
         if (std::strcmp(argv[i], "--moves") == 0 || std::strcmp(argv[i], "--with-moves") == 0) moves = true;
     }
-    std::printf("PROBE START %.6f toggles=%d moves=%d\n", now(), toggles, moves);
+    std::printf("PROBE START %.6f toggles=%d moves=%d hidden=%d\n", now(), toggles, moves, hidden_only);
     std::fflush(stdout);
 
     Devices::get().setEnableMdnsScan(false);
@@ -80,6 +271,12 @@ int main(int argc, char **argv) {
     std::printf("CONNECTED %.6f\n", now());
     std::fflush(stdout);
     pause(3000);  // let the SDK's own start-up traffic finish
+
+    if (hidden_only) {
+        run_hidden(dev.get(), toggles, moves);
+        finish();
+        return 0;
+    }
 
     // ════════════ Reads ════════════
     Device::CameraStatus status{};
@@ -311,13 +508,6 @@ int main(int argc, char **argv) {
         finally("Camera awake, at the position it started from");
     }
 
-    pause(1500);
-    std::printf("PROBE END %.6f\n", now());
-    if (!final_states.empty()) {
-        std::printf("FINAL STATES (set these back in the app if they differ from what you had):\n");
-        for (auto &s : final_states) std::printf("  - %s\n", s.c_str());
-    }
-    std::fflush(stdout);
-    Devices::get().close();
+    finish();
     return 0;
 }
