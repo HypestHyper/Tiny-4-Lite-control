@@ -113,6 +113,7 @@ pub fn group_card(store: &Store, group: Group, settings: &[&'static Setting], de
         }
         content.append(row.widget());
         keep.borrow_mut().push(row);
+        if setting.id == "obsbot:mic_enabled" { content.append(&widgets::mic_meter(store)); }
     }
     (card, settings.len() * 2 + 2)
 }

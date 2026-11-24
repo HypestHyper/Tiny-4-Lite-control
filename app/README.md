@@ -348,6 +348,14 @@ The icon font is a subset of Material Symbols Rounded. After adding an icon name
 `assets/icon-names.txt`, run `python3 tools/subset-fonts.py` (needs `pip install fonttools`; it downloads
 the full font). A unit test fails if the UI asks for an icon that is not in the font.
 
+## Microphone
+
+The **Microphone** switch reads the computer's sound cards: the camera's (USB vendor 3564) is there while its
+microphone is on and goes away while it is off. After a change the app waits up to five seconds for the card to
+follow. While the microphone is on and the switch is on screen, a level meter under it shows how loud it is: it
+records through PipeWire or PulseAudio (`parec`, so other apps keep the microphone) or ALSA (`arecord`), measures
+the peak 25 times a second, and keeps nothing.
+
 ## Backups and updates
 
 The **Settings** tab keeps a copy of the settings file (settings and presets, not LUT files or the sleep

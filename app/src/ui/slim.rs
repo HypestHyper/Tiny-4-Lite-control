@@ -262,6 +262,7 @@ fn rebuild(state: &Rc<SlimState>) {
         // fractional scaling, which looked uneven).
         let row = SettingRow::new(&state.ctx.store, setting, Density::Slim);
         list.append(row.widget());
+        if setting.id == "obsbot:mic_enabled" { list.append(&widgets::mic_meter(&state.ctx.store)); }
         keep.borrow_mut().push(row);
         count += 1;
     }

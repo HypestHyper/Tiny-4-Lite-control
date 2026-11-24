@@ -1098,3 +1098,62 @@ mod summary_tests {
         assert_eq!(short_summary(one), (String::new(), true));
     }
 }
+
+
+/// A level meter for the camera's microphone, under its switch: shown while the microphone is on, and measuring
+/// only while it is shown (the sound is measured here and not kept).
+pub fn mic_meter(store: &Store) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("mic-meter");
+    let glyph = icon("mic");
+    glyph.add_css_class("small-icon");
+    let bar = gtk::LevelBar::for_interval(0.0, 1.0);
+    bar.set_mode(gtk::LevelBarMode::Continuous);
+    bar.set_hexpand(true);
+    bar.set_valign(gtk::Align::Center);
+    // Its own colours (below), not the theme's low/high/full steps.
+    for name in ["low", "high", "full"] { bar.remove_offset_value(Some(name)); }
+    label_accessible(&bar, "Microphone level");
+    row.append(&glyph);
+    row.append(&bar);
+    row.set_visible(false);
+
+    let meter: Rc<RefCell<Option<crate::backend::audio::Meter>>> = Rc::default();
+    let on = Rc::new(Cell::new(false));
+    // Run it while it can be seen and the microphone is on.
+    let sync: Rc<dyn Fn()> = {
+        let (row, meter, on) = (row.downgrade(), meter.clone(), on.clone());
+        Rc::new(move || {
+            let Some(row) = row.upgrade() else { return };
+            row.set_visible(on.get());
+            let wanted = on.get() && row.is_mapped();
+            if wanted && meter.borrow().is_none() { *meter.borrow_mut() = crate::backend::audio::start_meter(); }
+            if !wanted { meter.borrow_mut().take(); }
+        })
+    };
+    {
+        let (on, sync) = (on.clone(), sync.clone());
+        let setting = crate::backend::registry::find("obsbot:mic_enabled");
+        let show = move |snapshot: &Snapshot| -> bool {
+            let now = setting.and_then(|s| s.reading(snapshot)).is_some_and(|(v, _)| v.as_bool());
+            if on.replace(now) != now { sync(); }
+            true
+        };
+        show(&store.snapshot());
+        store.subscribe(show);
+    }
+    { let sync = sync.clone(); row.connect_map(move |_| sync()); }
+    { let meter = meter.clone(); row.connect_unmap(move |_| { meter.borrow_mut().take(); }); }
+    // Draw the newest level, falling back slowly like a real meter.
+    {
+        let (bar, meter, row_weak) = (bar.downgrade(), meter.clone(), row.downgrade());
+        glib::timeout_add_local(Duration::from_millis(40), move || {
+            let (Some(bar), Some(_)) = (bar.upgrade(), row_weak.upgrade()) else { return glib::ControlFlow::Break };
+            let fresh = meter.borrow().as_ref().map(|m| m.levels.try_iter().fold(0.0f64, f64::max));
+            let shown = bar.value();
+            bar.set_value(match fresh { Some(level) if level >= shown => level, Some(_) => (shown - 0.04).max(0.0), None => 0.0 });
+            glib::ControlFlow::Continue
+        });
+    }
+    row
+}

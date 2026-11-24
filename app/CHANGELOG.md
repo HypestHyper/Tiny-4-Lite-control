@@ -80,6 +80,10 @@
 
 ### Added
 
+- The Microphone switch shows whether the camera's microphone is really on, from the computer's sound cards (the
+  camera's card goes away while its microphone is off), and a level meter under it while it is on. The meter only
+  runs while it is on screen; the sound is measured on the computer and not kept.
+
 - **Auto zoom** on the AI tracking card (OBSBOT's AI auto zoom; the camera does not report it, so it shows what you
   last chose).
 - Mirror image and Pickup distance are read from the camera (no more Unknown).

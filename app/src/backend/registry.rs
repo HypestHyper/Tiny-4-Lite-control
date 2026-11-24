@@ -229,6 +229,8 @@ pub struct Snapshot {
     pub camera_sleep: Option<u32>,
     /// The AI status block (hand side, gestures, gesture zoom), module 04 command 0x0104.
     pub ai_status: Option<Vec<u8>>,
+    /// Whether the computer has the camera's microphone (its sound card goes when the microphone is off).
+    pub mic_present: Option<bool>,
     pub config: AppConfig,
     pub error: Option<String>,
 }
@@ -262,6 +264,8 @@ impl Snapshot {
         snapshot.mic_volume = retry(|| get_mic_volume(device));
         snapshot.camera_sleep = retry(|| get_camera_sleep_time(device));
         snapshot.ai_status = retry(|| get_ai_status(device));
+        // Only meaningful while the camera is there and answering.
+        if snapshot.status.is_some() { snapshot.mic_present = Some(super::audio::camera_card().is_some()); }
         snapshot
     }
 
@@ -765,9 +769,19 @@ fn build() -> Vec<Setting> {
         // ── Microphone ──
         Setting::custom("obsbot:mic_enabled", Microphone, "Microphone",
             "On: the microphones work. Off: they are muted.", Kind::Toggle,
-            |s| from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))),
-            |d, v| sent(set_microphone_disabled(d, !v.as_bool())))
-            .last_sent()
+            // Read from the computer: the camera's sound card is there while its microphone is on.
+            |s| from_camera(s.mic_present.map(Value::Bool))
+                .or_else(|| if s.mic_present.is_none() { from_saved(flag(s.config.audio_microphone_disabled.map(|disabled| !disabled))) } else { None }),
+            |d, v| {
+                let on = v.as_bool();
+                set_microphone_disabled(d, !on)?;
+                // The sound card comes or goes a moment later; wait for it, so the switch shows the result.
+                for _ in 0..25 {
+                    if super::audio::camera_card().is_some() == on { return Ok(Some(Value::Bool(on))); }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                Ok(None)
+            })
             .confirm(Confirm {
                 title: "Restart the camera's audio?",
                 body: "Turning the microphone on or off restarts the camera's audio. Apps using the microphone or the camera can drop out for a moment.",
@@ -1287,7 +1301,10 @@ mod tests {
         assert_eq!(find("obsbot:radio_distance").unwrap().reading(&read), Some((Value::Int(2), Origin::Camera)));
         assert_eq!(find("obsbot:pop_filter").unwrap().reading(&snap), Some((Value::Bool(false), Origin::Saved)));
         assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&snap), None);
-        for id in ["obsbot:pop_filter", "obsbot:mic_enabled", "obsbot:ai_auto_zoom"] {
+        // The microphone is read from the computer's sound cards when the camera answers.
+        let present = Snapshot { mic_present: Some(false), ..Snapshot::default() };
+        assert_eq!(find("obsbot:mic_enabled").unwrap().reading(&present), Some((Value::Bool(false), Origin::Camera)));
+        for id in ["obsbot:pop_filter", "obsbot:ai_auto_zoom"] {
             assert_eq!(find(id).unwrap().readback, Readback::LastSent, "{id}");
         }
     }

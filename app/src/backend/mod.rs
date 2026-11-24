@@ -1,4 +1,5 @@
 pub mod angles;
+pub mod audio;
 pub mod device;
 pub mod registry;
 pub mod state;

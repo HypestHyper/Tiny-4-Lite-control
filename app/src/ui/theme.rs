@@ -352,6 +352,12 @@ window.t4.csd { border-radius: §18§; }
 .t4 windowcontrols button.close:hover { background: @t_error_hover; color: #ffffff; }
 
 .sleep-thumb { border-radius: §8§; }
+/* The microphone level under its switch: a thin bar in the accent colour. */
+.mic-meter { padding: 0 0 §6§ 0; }
+.mic-meter .small-icon { font-size: §16§; color: @t_on_surface_variant; }
+.t4 .mic-meter levelbar trough { min-height: §6§; border-radius: 999px; background: @t_surface_highest; border: none; padding: 0; }
+.t4 .mic-meter levelbar block.filled { min-height: §6§; border-radius: 999px; background: @t_primary; border: none; }
+.t4 .mic-meter levelbar block.empty { background: transparent; border: none; }
 /* A newer version: a small dot on the Settings tab, and a tinted line on the Updates card. */
 .news-dot { min-width: §8§; min-height: §8§; border-radius: 999px; background: @t_primary; margin-top: §2§; }
 .update-news { background: @t_secondary_container; color: @t_on_secondary_container; border-radius: §12§; padding: §8§ §12§; }
