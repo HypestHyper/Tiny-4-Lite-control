@@ -2,6 +2,9 @@ use crate::*;
 use std::collections::BTreeMap;
 
 const MOVEMENT_CONTROLS: &[&str] = &["pan_speed", "tilt_speed", "zoom_continuous"];
+/// Red and blue gains are never saved or written: writing either switches the camera away from the colour
+/// temperature (presets saved before still have them; they are skipped).
+const NOT_SAVED: &[&str] = &["red_balance", "blue_balance"];
 
 fn ai_mode_id(status: &[u8; 60]) -> Option<i64> {
     match (status[0x18], status[0x1c]) {
@@ -58,7 +61,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     let output = run_v4l2(device, "--list-ctrls-menus")?;
     let mut settings = BTreeMap::new();
     for control in parse_controls(&output) {
-        if !control.disabled && !MOVEMENT_CONTROLS.contains(&control.name.as_str()) && control.kind != "button" {
+        if !control.disabled && !MOVEMENT_CONTROLS.contains(&control.name.as_str()) && !NOT_SAVED.contains(&control.name.as_str()) && control.kind != "button" {
             settings.insert(format!("v4l2:{}", control.name), control.value);
         }
     }
@@ -134,8 +137,6 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
     if let Some(disabled) = saved.audio_microphone_disabled { settings.insert("obsbot:mic_enabled".into(), i64::from(!disabled)); }
     if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
     if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
-    // Which way manual white balance is done; applied last, so the camera ends on that one.
-    settings.insert("app:white_balance_by".into(), i64::from(saved.white_balance_by_gains));
     if let Some(ratio) = saved.gesture_zoom_ratio {
         settings.insert("obsbot:gesture_zoom_ratio_milli".into(), (ratio * 1000.0).round() as i64);
     }
@@ -155,6 +156,7 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
 pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, String> {
     let mut controls: Vec<(String, i64)> = preset.settings.iter()
         .filter_map(|(key, value)| key.strip_prefix("v4l2:").map(|name| (name.to_string(), *value)))
+        .filter(|(name, _)| !NOT_SAVED.contains(&name.as_str()))
         .collect();
     let priority = |name: &str| match name {
         "white_balance_automatic" | "focus_automatic_continuous" | "auto_exposure" => 0,
@@ -224,9 +226,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 _ => Err("Unknown Auto Exposure priority in preset.".into()),
             }
         } else if key == "app:white_balance_by" {
-            // Only matters with auto white balance off; the camera ignores both while it is on.
-            let auto_wb = preset.settings.get("v4l2:white_balance_automatic").copied().unwrap_or(1);
-            if auto_wb == 0 { set_white_balance_by_gains(device, *value == 1) } else { crate::backend::update_config(|c| c.white_balance_by_gains = *value == 1); Ok(()) }
+            // Presets saved before red and blue were taken out: nothing to do, the temperature is used.
+            continue;
         } else if key == "obsbot:noise_reduction" {
             u8::try_from(*value).ok().filter(|v| *v <= 3).ok_or_else(|| "Unknown noise reduction.".to_string())
                 .and_then(|level| set_noise_reduction(device, level))

@@ -1648,7 +1648,7 @@ pub(crate) fn set_vertical_tracking(device: &str, mode: u8) -> Result<(), String
 }
 
 pub(crate) fn vertical_tracking_name(mode: u8) -> &'static str {
-    match mode { 1 => "headroom", 2 => "motion", _ => "standard" }
+    match mode { 1 => "headroom", 2 => "sport", _ => "standard" }
 }
 
 /// The saved name, including the old "sport" (which is Motion).

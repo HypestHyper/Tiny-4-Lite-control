@@ -100,21 +100,17 @@ fn every_setting_can_be_read_and_set_from_the_terminal() {
 #[test]
 fn a_blocked_setting_explains_what_to_change_and_exits_3() {
     let run = Run::new("blocked");
-    let out = run.run(&["set", "red-balance", "1000"]);
+    let out = run.run(&["set", "colour-temperature", "4000"]);
     assert_eq!(out.status.code(), Some(3));
     assert!(text(&out.stderr).contains("Turn off Auto white balance"), "{}", text(&out.stderr));
-    // With manual white balance by temperature, red is still unavailable, and says why.
-    let by_temperature = run.command("manual", &["set", "red-balance", "1000"]);
-    assert_eq!(by_temperature.status.code(), Some(3));
-    assert!(text(&by_temperature.stderr).contains("Choose Red & blue"), "{}", text(&by_temperature.stderr));
-    // It works once white balance is done by red and blue.
-    let choose = run.command("manual", &["set", "manual-white-balance-by", "Red & blue"]);
-    assert_eq!(choose.status.code(), Some(0), "{}", text(&choose.stderr));
-    let manual = run.command("manual", &["set", "red-balance", "1000"]);
+    // It works once auto white balance is off.
+    let manual = run.command("manual", &["set", "colour-temperature", "4000"]);
     assert_eq!(manual.status.code(), Some(0), "{}", text(&manual.stderr));
     // --force sends it anyway.
-    let forced = run.run(&["set", "red-balance", "1000", "--force"]);
+    let forced = run.run(&["set", "colour-temperature", "4000", "--force"]);
     assert_eq!(forced.status.code(), Some(0));
+    // Red and blue gains are not offered any more.
+    assert_ne!(run.run(&["set", "red-balance", "1000"]).status.code(), Some(0));
 }
 
 #[test]

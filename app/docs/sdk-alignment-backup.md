@@ -97,3 +97,38 @@ pub(crate) fn gesture_command(group: [u8; 6], enabled: bool) -> [u8; 6] {
 }
 
 ```
+
+
+## Red and blue balance (removed 2026-11-24, at the user's request)
+
+The camera uses whichever of the colour temperature and the red/blue gains was written last, and writing red or
+blue alone turned the picture green. Only the colour temperature is offered now; red_balance and blue_balance are
+in `IGNORED_V4L2` and presets neither save nor write them. The settings as they were (registry.rs), with the
+helper `set_white_balance_by_gains` still in device.rs:
+
+```rust
+        Setting::custom("app:white_balance_by", WhiteBalance, "Manual white balance by",
+            "The camera uses one or the other, not both.",
+            Kind::Choice(vec![opt(0, "Temperature", "Set the colour of your light; the camera works out the red and blue"), opt(1, "Red & blue", "Set the red and blue gains yourself")]),
+            |s| from_saved(Some(Value::Int(i64::from(s.config.white_balance_by_gains)))),
+            |d, v| set_white_balance_by_gains(d, v.as_i64() == 1).map(|()| Some(v)))
+            .needs(awb, OFF, "Turn off Auto white balance to set white balance by hand.")
+            .info("Measured on the camera: it uses whichever of Colour temperature and Red/Blue balance was changed last. Changing red or blue switches it to raw red and blue gains, where the middle (1024) is no correction at all, which looks green; changing the temperature switches back. So the app keeps to the one you choose here, and switching sends that one's values again."),
+        Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
+            "Less red (towards cyan) or more red. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            .needs(awb, OFF, "Turn off Auto white balance to adjust red.")
+            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
+            .info("A raw gain on the red channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain. It is steep above the middle: measured, from 1024 to 1536 red nearly doubles."),
+        Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
+            "Less blue (towards yellow) or more blue. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
+            .needs(awb, OFF, "Turn off Auto white balance to adjust blue.")
+            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
+            .info("A raw gain on the blue channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain; under warm light, blue needs raising well above it."),
+
+```
+
+## Tracking speed names (2026-11-24)
+
+Shown as "Vertical tracking: Standard / Headroom / Motion" (the SDK's names) for one build; back to
+**Tracking speed: Standard / Sport** at the user's request. The wire values are unchanged (0 Standard, 2 Sport,
+which the SDK calls Motion); Headroom (1) behaves like Standard on the user's camera and is not offered.

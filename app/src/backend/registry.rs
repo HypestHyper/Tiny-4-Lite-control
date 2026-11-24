@@ -168,7 +168,6 @@ pub enum Cond { Is(i64), IsNot(i64), OneOf(&'static [i64]) }
 pub const ON: Cond = Cond::Is(1);
 pub const OFF: Cond = Cond::Is(0);
 /// Manual white balance by colour temperature (0) or by red and blue gains (1).
-pub const WB_BY: &str = "app:white_balance_by";
 /// Zoom can be set by hand while tracking is off (0) or Normal (1). The other modes frame the picture themselves.
 pub const ZOOM_TRACKING: Cond = Cond::OneOf(&[0, 1]);
 
@@ -606,29 +605,10 @@ fn build() -> Vec<Setting> {
         // ── White balance ──
         Setting::v4l2("white_balance_automatic", awb, WhiteBalance, "Auto white balance",
             "Let the camera correct for the colour of your lighting.", Kind::Toggle),
-        Setting::custom("app:white_balance_by", WhiteBalance, "Manual white balance by",
-            "The camera uses one or the other, not both.",
-            Kind::Choice(vec![opt(0, "Temperature", "Set the colour of your light; the camera works out the red and blue"), opt(1, "Red & blue", "Set the red and blue gains yourself")]),
-            |s| from_saved(Some(Value::Int(i64::from(s.config.white_balance_by_gains)))),
-            |d, v| set_white_balance_by_gains(d, v.as_i64() == 1).map(|()| Some(v)))
-            .needs(awb, OFF, "Turn off Auto white balance to set white balance by hand.")
-            .info("Measured on the camera: it uses whichever of Colour temperature and Red/Blue balance was changed last. Changing red or blue switches it to raw red and blue gains, where the middle (1024) is no correction at all, which looks green; changing the temperature switches back. So the app keeps to the one you choose here, and switching sends that one's values again."),
         Setting::v4l2("white_balance_temperature", "v4l2:white_balance_temperature", WhiteBalance, "Colour temperature",
             "Match it to your light: lower makes the picture bluer, higher makes it redder.", slider(2000.0, 10000.0, 100.0, Fmt::Kelvin))
             .needs(awb, OFF, "Turn off Auto white balance to set the colour temperature.")
-            .needs(WB_BY, Cond::Is(0), "Choose Temperature under Manual white balance by.")
-            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero). The camera uses either this or Red and Blue balance: see Manual white balance by."),
-        Setting::v4l2("red_balance", "v4l2:red_balance", WhiteBalance, "Red balance",
-            "Less red (towards cyan) or more red. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
-            .needs(awb, OFF, "Turn off Auto white balance to adjust red.")
-            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
-            .info("A raw gain on the red channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain. It is steep above the middle: measured, from 1024 to 1536 red nearly doubles."),
-        Setting::v4l2("blue_balance", "v4l2:blue_balance", WhiteBalance, "Blue balance",
-            "Less blue (towards yellow) or more blue. The middle leaves it as it is.", ticked(0.0, 2048.0, 1.0, Fmt::Plain, vec![(1024.0, "●")]))
-            .needs(awb, OFF, "Turn off Auto white balance to adjust blue.")
-            .needs(WB_BY, Cond::Is(1), "Choose Red & blue under Manual white balance by.")
-            .info("A raw gain on the blue channel, used instead of Colour temperature (the camera uses one or the other). 1024 is no gain; under warm light, blue needs raising well above it."),
-
+            .info("Set it to the colour of your lighting and white looks white: warm bulbs about 2700 K, daylight about 5500 to 6500 K. Too high for warm light leaves the picture orange (measured: at 5000 K under warm bulbs the blue channel is at zero)."),
         // ── Focus ──
         Setting::v4l2("focus_automatic_continuous", af, Focus, "Autofocus",
             "Keep the picture sharp as things move.", Kind::Toggle),
@@ -702,13 +682,15 @@ fn build() -> Vec<Setting> {
                 set_ai_mode(d, (entry.1, entry.2)).map(|()| Some(v))
             })
             .info("How the camera frames the person it follows. Tracking moves the gimbal by itself. Target selection is a separate hand-gesture setting."),
-        Setting::custom("obsbot:tracking_speed", Tracking, "Vertical tracking",
-            "How the camera follows you up and down.",
-            Kind::Choice(vec![opt(0, "Standard", "Keeps you framed as usual"), opt(1, "Headroom", "Leaves more space above your head"), opt(2, "Motion", "Follows quick movement more closely")]),
+        Setting::custom("obsbot:tracking_speed", Tracking, "Tracking speed",
+            "How quickly the camera follows you.",
+            Kind::Choice(vec![opt(0, "Standard", "The usual speed"), opt(2, "Sport", "Keeps up with quick movement")]),
+            // The camera's values: 0 Standard, 2 Sport. 1 is a third mode OBSBOT's SDK calls Headroom, which looks
+            // like Standard on a Tiny 2 Lite; it is not offered, and shows as nothing chosen.
             |s| from_camera(s.byte(0x24).and_then(vertical_tracking_from_status).map(|m| Value::Int(i64::from(m))))
                 .or_else(|| if s.status.is_none() { from_saved(s.config.tracking_speed.as_deref().and_then(vertical_tracking_from_name).map(|m| Value::Int(i64::from(m)))) } else { None }),
-            |d, v| sent(set_vertical_tracking(d, v.as_i64().clamp(0, 2) as u8)))
-            .info("OBSBOT's SDK calls this vertical tracking (Standard, Headroom, Motion). This app called it tracking speed, with Sport for what the SDK calls Motion."),
+            |d, v| sent(set_vertical_tracking(d, if v.as_i64() >= 2 { 2 } else { 0 })))
+            .info("Standard follows at the usual speed; Sport keeps up with quick movement. OBSBOT's SDK names these modes Standard and Motion (with a third, Headroom, that behaves like Standard on a Tiny 2 Lite)."),
 
         // ── Gestures ──
         Setting::custom("obsbot:gesture_target", Gestures, "Target selection",
@@ -840,6 +822,9 @@ const IGNORED_V4L2: &[&str] = &[
     "pan_absolute", "tilt_absolute", "pan_speed", "tilt_speed", "zoom_continuous",
     // The same hardware control as Exposure compensation (UVC Backlight Compensation, 0 to 18).
     "backlight_compensation",
+    // Raw red and blue gains: the camera switches to them from the colour temperature when either is written,
+    // which turned the picture green. Only the colour temperature is offered (old code: docs/sdk-alignment-backup.md).
+    "red_balance", "blue_balance",
 ];
 
 /// Settings for driver controls that have no entry above, so a new firmware
@@ -938,7 +923,7 @@ mod tests {
     #[test]
     fn centred_sliders_reset_to_their_middle() {
         let snap = mock_snapshot();
-        for id in ["v4l2:hue", "v4l2:red_balance", "v4l2:blue_balance", "obsbot:exposure_compensation"] {
+        for id in ["v4l2:hue", "obsbot:exposure_compensation"] {
             let setting = find(id).unwrap();
             let spec = setting.slider(&snap).unwrap_or_else(|| panic!("{id} is not a slider"));
             let middle = (spec.min + spec.max) / 2.0;
@@ -1046,18 +1031,14 @@ mod tests {
 
     #[test]
     fn manual_white_balance_needs_auto_white_balance_off() {
-        let on = snapshot(vec![control("white_balance_automatic", 1, false), control("red_balance", 1043, true)]);
-        let setting = find("v4l2:red_balance").unwrap();
-        assert_eq!(setting.blockers(&on).first(), Some(&"Turn off Auto white balance to adjust red.".to_string()));
-        // With it off, red and blue work when white balance is done by red & blue, and the temperature does not
-        // (the camera uses whichever was written last).
-        let mut off = snapshot(vec![control("white_balance_automatic", 0, false), control("red_balance", 1043, false), control("white_balance_temperature", 5000, false)]);
-        off.config.white_balance_by_gains = true;
+        let on = snapshot(vec![control("white_balance_automatic", 1, false), control("white_balance_temperature", 5000, true)]);
+        let setting = find("v4l2:white_balance_temperature").unwrap();
+        assert_eq!(setting.blockers(&on).first(), Some(&"Turn off Auto white balance to set the colour temperature.".to_string()));
+        let off = snapshot(vec![control("white_balance_automatic", 0, false), control("white_balance_temperature", 5000, false)]);
         assert!(setting.blockers(&off).is_empty());
-        assert_eq!(find("v4l2:white_balance_temperature").unwrap().blockers(&off), vec!["Choose Temperature under Manual white balance by.".to_string()]);
-        off.config.white_balance_by_gains = false;
-        assert_eq!(setting.blockers(&off), vec!["Choose Red & blue under Manual white balance by.".to_string()]);
-        assert!(find("v4l2:white_balance_temperature").unwrap().blockers(&off).is_empty());
+        // Red and blue gains are not offered, and are not listed among the driver's other controls either.
+        assert!(find("v4l2:red_balance").is_none() && find("v4l2:blue_balance").is_none());
+        assert!(IGNORED_V4L2.contains(&"red_balance") && IGNORED_V4L2.contains(&"blue_balance"));
     }
 
     #[test]

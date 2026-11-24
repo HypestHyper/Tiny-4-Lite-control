@@ -272,7 +272,10 @@ pub fn info_button(title: &str, paragraphs: &[String]) -> gtk::Button {
     button.set_child(Some(&icon("info")));
     popover.set_parent(&button);
     let target = popover.clone();
-    button.connect_clicked(move |_| target.popup());
+    // No tooltip while the pop-up is open: a tooltip over an open pop-up can bring down a GTK app on Wayland.
+    let weak = button.downgrade();
+    popover.connect_closed(move |_| if let Some(b) = weak.upgrade() { b.set_has_tooltip(true); });
+    button.connect_clicked(move |b| { b.set_has_tooltip(false); target.popup(); });
     button.connect_destroy(move |_| popover.unparent());
     button.add_css_class("round");
     button.add_css_class("small");
