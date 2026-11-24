@@ -446,7 +446,7 @@ pub fn startup_pose_card(store: &Store) -> gtk::Box {
 
 pub fn capture_mode_card(store: &Store, hub: &PreviewHub) -> gtk::Box {
     let (card, body) = card("Capture mode", "videocam",
-        "The size, frame rate and format the camera sends to apps.");
+        "The size, frame rate and format the camera sends to apps. An app can ask for its own (a browser often picks 1080p at 60 fps) and the camera keeps it after the app closes. With the background service running, the mode chosen here goes back as soon as no app is using the camera, and the Studio camera always starts in it. To give an app 4K, choose the Studio camera in that app.");
     let loaded = Rc::new(Cell::new(false));
     // One list of every mode the camera offers, so a size and a frame rate that do not go together can
     // never be chosen.

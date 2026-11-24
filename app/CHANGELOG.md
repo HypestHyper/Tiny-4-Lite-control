@@ -21,6 +21,10 @@
   the position shown under the camera model, and quick clicks add up from the previous step's target. If the
   position is not known, they say so instead of guessing.
 
+- The capture mode no longer stays at what another app chose (1080p at 60 fps from a browser, say). Apps set their
+  own when they open the camera and the camera keeps it; the background service now puts the mode chosen in this
+  app back as soon as nothing is using the camera, before the Studio camera starts reading it.
+
 ### Changed
 
 - Auto zoom is removed from the AI tracking card: it did nothing on the camera. Presets that have it still load.

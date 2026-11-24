@@ -263,6 +263,9 @@ impl Studio {
     /// the sleep timer, even in the moment before the Studio camera starts reading it.
     pub fn watched(&self) -> bool { self.watched }
 
+    /// Whether the Studio camera is reading the camera right now (not a placeholder picture).
+    pub fn reading_camera(&self) -> bool { self.running.as_ref().is_some_and(|r| r.want == Want::Pipeline) }
+
     fn our_pids(&self) -> Vec<u32> { self.running.as_ref().map(|r| vec![r.child.id()]).unwrap_or_default() }
 
     /// The camera's format. Read again whenever the Studio camera is not streaming from it (the mode may have

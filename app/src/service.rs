@@ -352,6 +352,9 @@ fn apply_pending_mode(device: &str, status: &mut Status) {
     status.last_event_at = now_unix();
 }
 
+/// How often the camera's capture mode is compared with the chosen one while nothing is using it.
+const MODE_CHECK_EVERY: Duration = Duration::from_secs(5);
+
 /// The exit code that asks systemd to start the service again (it restarts on failure): the app's file was
 /// replaced by a new version.
 pub const RESTART_FOR_UPDATE: i32 = 75;
@@ -416,6 +419,9 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
     let resumed_at: std::sync::Arc<std::sync::Mutex<Option<Instant>>> = Default::default();
     let mut restored_once = false;
     let mut last_device: Option<String> = None;
+    // When the camera's mode was last compared with the chosen one, and the last thing that said.
+    let mut mode_checked_at: Option<Instant> = None;
+    let mut mode_note: Option<String> = None;
     let mut slice = 0u32;
     // The AppImage this runs from. Overwriting it in place (a new download saved over the old one) breaks the
     // running copy: the next code it has not loaded yet comes from the new file and the service dies with a
@@ -537,6 +543,35 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
             if let Some(device) = camera.as_deref() {
                 if current_config().pending_video_mode.is_some() && (backend::ui_test_mode() || backend::usage::streaming_holders(device).is_empty()) {
                     apply_pending_mode(device, &mut status);
+                }
+            }
+            // Apps choose their own size and frame rate when they open the camera, and the camera keeps the
+            // last one asked for. Once it is free again, the mode chosen in this app goes back, so the next app
+            // that does not ask for one (and the Studio camera) gets it.
+            if let Some(device) = camera.as_deref() {
+                let due = mode_checked_at.is_none_or(|at| at.elapsed() >= MODE_CHECK_EVERY);
+                if due && current_config().video_mode.is_some() && current_config().pending_video_mode.is_none()
+                    && !studio.reading_camera()
+                    && (backend::ui_test_mode() || backend::usage::streaming_holders(device).is_empty())
+                {
+                    mode_checked_at = Some(Instant::now());
+                    // One quick read first; the full check (which lists every mode) only when they differ.
+                    let saved = current_config().video_mode;
+                    let differs = crate::video::current_mode(device).is_none_or(|m| saved.as_ref().is_some_and(|s|
+                        (s.width, s.height, s.pixel_format.as_str(), s.frame_rate_milli) != (m.width, m.height, m.pixel_format.as_str(), m.frame_rate_milli)));
+                    let note = if differs { backend::apply_saved_video_mode(device) } else { None };
+                    if let Some(message) = &note {
+                        if mode_note.as_ref() != Some(message) {
+                            let message = if message.starts_with("Restored") {
+                                format!("The camera was free again, so its capture mode was put back. {message}")
+                            } else { message.clone() };
+                            log(&message);
+                            status.last_event = message;
+                            status.last_event_at = now_unix();
+                        }
+                    }
+                    // A restore that worked is worth hearing about each time; a failure only once.
+                    mode_note = note.filter(|m| !m.starts_with("Restored"));
                 }
             }
             if camera.is_some() { last_device = camera.clone(); }

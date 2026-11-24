@@ -111,6 +111,13 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Set up…** on the card opens a terminal that installs `ffmpeg` and `v4l2loopback` (with the kernel headers DKMS needs on Arch, CachyOS, Debian, Ubuntu and Void; Fedora's from RPM Fusion; openSUSE's KMP; Gentoo's ebuild), writes `/etc/modprobe.d/tiny4lite-denoise.conf` and `/etc/modules-load.d/tiny4lite-denoise.conf` so the virtual camera comes back at every start, and loads it. On NixOS it prints the configuration lines instead; Alpine has no package for the module. With Secure Boot on, an unsigned module may not load. If OBS's virtual camera already uses `v4l2loopback`, loading it with this app's settings replaces OBS's camera until OBS is restarted. `tiny4lite-control studio status` shows what runs, and `studio setup` is the terminal setup; `requirements` lists what the Studio camera needs. While the Studio camera is in use, show it in the preview (Camera / Studio) rather than the camera, which cannot stream to two programs at once. The sleep timer counts an app watching either camera as using the camera.
 
+**Capture mode stays as you chose it.** The camera has no lasting mode of its own: each app asks for the size and
+frame rate it wants when it opens the camera (browsers often pick 1080p at 60 fps), and the camera keeps the last one
+asked for. The background service compares the camera's mode with the one chosen in this app every few seconds
+while nothing is using it, and puts yours back, so the next app that does not ask, and the Studio camera, get it. An
+app that asks for its own mode still gets it while it runs; to give it 4K whatever it asks for, use the Studio
+camera in that app.
+
 **Capture mode.** One list of every mode the camera offers (for example "3840 × 2160 (4K) · 30 fps · MJPG"), largest first, so a size and a frame rate that do not go together cannot be chosen.
 
 **Crashes.** If the app crashes, the message and where it happened are written to `~/.local/state/tiny4lite-control/crash.log` (and to the terminal, if there is one).
