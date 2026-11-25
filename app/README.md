@@ -21,7 +21,7 @@ follows the window width.
 
 ## Icon
 
-`assets/tiny4lite-control.svg` is the app icon: the camera from the front as a plain outline on a rounded tile, its proportions measured from a front photo of the Tiny 2 Lite (the head with its tilt motor on the right, the arm, and a two-step base centred under the camera), with the red ring round the edge of the face as on the camera. `assets/tiny4lite-control-128.png` is it rendered for the top-left of the main window. `assets/tiny4lite-control-symbolic.svg` is the one-colour version for panels and trays. Install both into the icon theme (`share/icons/hicolor/scalable/apps/` and `share/icons/hicolor/symbolic/apps/`), as the AppImage does; the window asks for the icon by the name `tiny4lite-control`.
+`assets/tiny4lite-control.svg` is the app icon: the camera from the front as a plain outline on a rounded tile, its proportions measured from a front photo of the Tiny 2 Lite (the head with its tilt motor on the right, the arm, and a two-step base centred under the camera), with the lens in the middle of the head, the red ring round the edge of the face and the two microphone holes on the base, as on the camera. `assets/tiny4lite-control-128.png` is it rendered for the top-left of the main window. `assets/tiny4lite-control-symbolic.svg` is the one-colour version for panels and trays. Install both into the icon theme (`share/icons/hicolor/scalable/apps/` and `share/icons/hicolor/symbolic/apps/`), as the AppImage does; the window asks for the icon by the name `tiny4lite-control`.
 
 ## Installing the app
 

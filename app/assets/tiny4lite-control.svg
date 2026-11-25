@@ -15,9 +15,12 @@
     <path d="M161 137 V113 M179 113 V137"/>
     <path d="M161 47 H175 Q185 47 185 57 V103 Q185 113 175 113 H161"/>
     <rect x="71" y="41" width="90" height="76" rx="26"/>
-    <circle cx="112" cy="79" r="6"/>
+    <circle cx="116" cy="79" r="6"/>
   </g>
+  <!-- The two microphone holes on the front of the base -->
+  <circle cx="110" cy="182" r="4.5" fill="#eef2f6"/>
+  <circle cx="146" cy="182" r="4.5" fill="#eef2f6"/>
   <!-- The red ring round the edge of the face, as on the camera, and the lens ring -->
   <rect x="78" y="48" width="76" height="62" rx="19.5" fill="none" stroke="#ff4b4b" stroke-width="5"/>
-  <circle cx="112" cy="79" r="17" fill="none" stroke="#eef2f6" stroke-opacity="0.5" stroke-width="4"/>
+  <circle cx="116" cy="79" r="17" fill="none" stroke="#eef2f6" stroke-opacity="0.5" stroke-width="4"/>
 </svg>
