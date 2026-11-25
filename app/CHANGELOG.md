@@ -56,8 +56,6 @@ First release. The notes below are the changes since the test builds.
 
 ### Changed
 
-- New app icon: the lens centred on the head and the two microphone holes on the base. An installed copy updates
-  its menu entry and icons when a newer version starts, also when the AppImage was replaced under the same name.
 
 - Quick controls: slider rows are slimmer (thinner track and handle, a smaller value pill with closer arrows,
   smaller reset and info buttons), the column starts at the top, and both windows open at the size they were closed at.
