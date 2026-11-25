@@ -7,7 +7,7 @@
     <path d="M161 47 H175 Q185 47 185 57 V103 Q185 113 175 113 H161" stroke-width="15"/>
     <rect x="71" y="41" width="90" height="76" rx="26" stroke-width="15"/>
     <circle cx="116" cy="79" r="13" stroke-width="13"/>
-    <circle cx="108" cy="182" r="8" fill="currentColor" stroke="none"/>
-    <circle cx="148" cy="182" r="8" fill="currentColor" stroke="none"/>
+    <circle cx="99" cy="180.5" r="6" fill="currentColor" stroke="none"/>
+    <circle cx="157" cy="180.5" r="6" fill="currentColor" stroke="none"/>
   </g>
 </svg>
