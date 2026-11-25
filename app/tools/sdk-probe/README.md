@@ -1,7 +1,7 @@
 # SDK probe
 
 Records which USB commands OBSBOT's SDK sends for each of its functions, so they can be implemented in this
-app from our own captures (the evidence rules in `Assistant/AGENTS.md` still apply: a captured command is
+app from our own captures (a captured command is
 evidence, the SDK's header is only a map).
 
 Nothing of OBSBOT's is in this folder: `probe.cpp`, `report.py` and `run.sh` are ours, and the build points at

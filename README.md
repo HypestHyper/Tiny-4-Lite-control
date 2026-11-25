@@ -10,7 +10,7 @@
   <img alt="Material 3 Expressive" src="https://img.shields.io/badge/style-Material%203%20Expressive-8f7ae0">
 </p>
 <p align="center">
-  <a href="#installation">Install</a> · <a href="#features">Features</a> · <a href="#window-rules">Window rules</a> ·
+  <a href="#installation">Install</a> · <a href="#features">Features</a> · <a href="#windows">Windows</a> ·
   <a href="#command-line">Command line</a> · <a href="app/CHANGELOG.md">Changelog</a>
 </p>
 
@@ -85,9 +85,10 @@ runit, s6, dinit and others. `tiny4lite-control service status` says whether it 
 microphone meter needs `parec` (PipeWire or PulseAudio) or `arecord`. `tiny4lite-control requirements`
 checks what is there. To build from source, see [app/README.md](app/README.md#building).
 
-## Window rules
+## Windows
 
-Each window has its own class (the `app_id` on Wayland, `WM_CLASS` on X11) and title:
+Each window has its own class (the `app_id` on Wayland, `WM_CLASS` on X11) and title, for window rules in
+your compositor:
 
 | Window | Class | Title |
 | --- | --- | --- |
@@ -95,27 +96,12 @@ Each window has its own class (the `app_id` on Wayland, `WM_CLASS` on X11) and t
 | Quick controls | `io.github.hypesthyper.Tiny4LiteControl.Slim` | `Tiny 2 Lite Control - Quick controls` |
 | Preview | `io.github.hypesthyper.Tiny4LiteControl.Preview` | `Tiny 2 Lite Control - Preview` |
 
-Open them with `tiny4lite-control`, `--slim` and `--preview`. For example, a floating quick-controls panel
-and a pinned preview:
-
-```ini
-# Hyprland before 0.55 (hyprland.conf); 0.55 and later match the same class in hyprland.lua
-windowrulev2 = float, class:^(io\.github\.hypesthyper\.Tiny4LiteControl\.Slim)$
-windowrulev2 = float, class:^(io\.github\.hypesthyper\.Tiny4LiteControl\.Preview)$
-windowrulev2 = pin, class:^(io\.github\.hypesthyper\.Tiny4LiteControl\.Preview)$
-```
-
-```kdl
-// niri
-window-rule {
-    match app-id=r#"^io\.github\.hypesthyper\.Tiny4LiteControl\.(Slim|Preview)$"#
-    open-floating true
-}
-```
+To open each one from a terminal or a keybinding:
 
 ```sh
-# sway
-for_window [app_id="io.github.hypesthyper.Tiny4LiteControl.Preview"] floating enable, sticky enable
+tiny4lite-control             # main window
+tiny4lite-control --slim      # quick controls
+tiny4lite-control --preview   # preview
 ```
 
 The window's own buttons can be hidden under *Settings → Appearance* if your compositor draws its own.
@@ -149,5 +135,4 @@ MIT, see [LICENSE](LICENSE). Not affiliated with OBSBOT. The protocol work build
 [Domatix/obsbot-control](https://github.com/Domatix/obsbot-control),
 [lxman/obsbot-mcp](https://github.com/lxman/obsbot-mcp) and
 [OpenFoxes/Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux); fonts, icons and other sources are listed
-in [app/README.md](app/README.md#credits-and-sources). The research notes behind the app are in
-[Assistant/](Assistant/INDEX.md).
+in [app/README.md](app/README.md#credits-and-sources).

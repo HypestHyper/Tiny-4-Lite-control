@@ -2,7 +2,7 @@
 
 Policy (2026-11-24): where this app and OBSBOT's SDK (libdev v2.1.0_8, captured with `tools/sdk-probe`) send
 different bytes for the same feature, the SDK's version is taken as true. Every replaced implementation is kept
-here, so it can be restored. Evidence: `Assistant/reference/16-2026-11-24-sdk-probe-captures.md`.
+here, so it can be restored.
 
 The last commit before these changes: `c21d688` (branch `claude/upbeat-rubin-gnae3f`). To see or restore a
 file as it was: `git show c21d688:app/src/backend/device.rs`.

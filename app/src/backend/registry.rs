@@ -1180,7 +1180,7 @@ mod tests {
         assert_eq!(find("obsbot:ai_tracking_mode").unwrap().read(&snap), Some(Value::Int(2)));
     }
 
-    // ── Facts established by hardware read-back (see Assistant/reference 14, 15 and the autofocus notes) ──
+    // ── Facts established by hardware read-back ──
 
     fn with_config(configure: impl FnOnce(&mut AppConfig)) -> Snapshot {
         let mut snapshot = Snapshot::default();

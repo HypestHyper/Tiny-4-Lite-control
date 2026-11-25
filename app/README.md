@@ -5,8 +5,7 @@ It talks to the camera through standard V4L2 controls and OBSBOT's vendor UVC ex
 
 > This is the developer documentation. The [project README](../README.md) covers installing and using
 > the app. The interface is tested against a synthetic camera (see *Testing*) and the camera commands
-> against a real Tiny 2 Lite and OBSBOT's SDK; follow the hardware-safety notes in `Assistant/AGENTS.md`
-> before trying commands that move the gimbal.
+> against a real Tiny 2 Lite and OBSBOT's SDK.
 
 ## Windows
 
@@ -132,7 +131,7 @@ camera in that app.
 
 **Shutter speed.** The standard V4L2 control `exposure_time_absolute` (in 0.1 ms, 1/10000 s to 1/4 s), used while Exposure mode is Manual. The slider moves through the usual stops (1/10000 … 1/1000, 1/500 … 1/60, 1/50, 1/40, 1/30 … 1/4) evenly, rather than 2500 equal steps of which the useful ones would fill the first eighth; the command line still takes any value (`set shutter-speed 1/60`). A frame cannot be exposed longer than it lasts, so the slider ends there for the capture mode in use: 1/60 s at 60 fps, 1/30 s at 30 fps (longer times change nothing on the camera).
 
-**Tracking area.** The Tracking area card (Device tab) has its own pan and tilt ends, OBSBOT's default ±100° and ±30° unless changed, separate from the gimbal limits; **Keep AI tracking inside this area** sends them to the camera's own limited-zone tracking (commands captured from OBSBOT's SDK; see `Assistant/reference/16-2026-11-24-sdk-probe-captures.md`). The camera's pitch is "down positive", so the tilt limits are negated and swapped on the way; pan goes to yaw unchanged, clamped to the camera's ±120° (pitch ±90°). An axis whose limit is off lets tracking use the camera's full range. The camera does not report whether the area is on, so the app re-sends it when the limits change and the background service when the camera reconnects. The card shows the area the camera holds, read back after each change. *Unverified on the camera:* the direction of each axis (a quick check: a narrow area on one side, then walk across).
+**Tracking area.** The Tracking area card (Device tab) has its own pan and tilt ends, OBSBOT's default ±100° and ±30° unless changed, separate from the gimbal limits; **Keep AI tracking inside this area** sends them to the camera's own limited-zone tracking (commands captured from OBSBOT's SDK). The camera's pitch is "down positive", so the tilt limits are negated and swapped on the way; pan goes to yaw unchanged, clamped to the camera's ±120° (pitch ±90°). An axis whose limit is off lets tracking use the camera's full range. The camera does not report whether the area is on, so the app re-sends it when the limits change and the background service when the camera reconnects. The card shows the area the camera holds, read back after each change. *Unverified on the camera:* the direction of each axis (a quick check: a narrow area on one side, then walk across).
 
 **Hand tracking and the hand-tracking area.** Tracking mode **Hand** (03/00) is offered again: the camera reported it back when OBSBOT's SDK set it on a Tiny 2 Lite. With the tracking area on, the hand-tracking area gets the same limits (its own four commands, from the SDK's undeclared functions); off, it is set to the full range. The camera does not answer reads of the hand area, so only the person-tracking area is shown.
 
@@ -414,9 +413,6 @@ Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manua
 ## More documentation
 
 * [docs/controls-and-protocol.md](docs/controls-and-protocol.md): control, protocol and configuration notes from the test bench, with the evidence behind them.
-* [../Assistant/APP-IMPLEMENTATION-STATUS.md](../Assistant/APP-IMPLEMENTATION-STATUS.md): implementation status; section 0 describes this rebuild.
-* [../Assistant/reference/](../Assistant/reference/): dated hardware evidence.
-* [../CLAUDE_HANDOFF.md](../CLAUDE_HANDOFF.md): the state-handling contract the UI follows, and how it was met.
 
 ## What is not verified yet
 
@@ -434,13 +430,13 @@ Optional variables for the synthetic camera: `TINY4LITE_UI_TEST_STATE=auto|manua
 
 ## Credits and sources
 
-**OBSBOT protocol and controls.** The app was written for this project, guided by the research in [`../Assistant/`](../Assistant/INDEX.md), which draws on these open-source projects:
+**OBSBOT protocol and controls.** The app was written for this project and draws on these open-source projects:
 
 * [Domatix/obsbot-control](https://github.com/Domatix/obsbot-control), especially [`docs/PROTOCOL.md`](https://github.com/Domatix/obsbot-control/blob/main/docs/PROTOCOL.md): the main reference for the Tiny 2 Lite's extension-unit protocol;
 * [lxman/obsbot-mcp](https://github.com/lxman/obsbot-mcp): the broadest command reference (command encoding in `src/codec/commands.ts`);
 * [OpenFoxes/Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux): a direct extension-unit implementation in Rust, with a GUI and command line.
 
-Every protocol detail the app uses was checked against a real camera or is marked as unverified (see [`../Assistant/AGENTS.md`](../Assistant/AGENTS.md)). The research also lists further projects consulted: [cgevans/tiny2](https://github.com/cgevans/tiny2), [aaronsb/obsbot-camera-control](https://github.com/aaronsb/obsbot-camera-control), [ananthb/libobsbot](https://github.com/ananthb/libobsbot), [samliddicott/meet4k](https://github.com/samliddicott/meet4k) and [taxfromdk/obsbot_tiny_reversing](https://github.com/taxfromdk/obsbot_tiny_reversing).
+Every protocol detail the app uses was checked against a real camera or OBSBOT's SDK, or is marked as unverified. Further projects consulted: [cgevans/tiny2](https://github.com/cgevans/tiny2), [aaronsb/obsbot-camera-control](https://github.com/aaronsb/obsbot-camera-control), [ananthb/libobsbot](https://github.com/ananthb/libobsbot), [samliddicott/meet4k](https://github.com/samliddicott/meet4k) and [taxfromdk/obsbot_tiny_reversing](https://github.com/taxfromdk/obsbot_tiny_reversing).
 
 **Focus peaking.** The sharpness measure compares each edge with a re-blurred copy, the idea of the no-reference blur metric of F. Crété-Roffet, T. Dolmière, P. Ladret and M. Nicolas, "The Blur Effect: Perception and Estimation with a New No-Reference Perceptual Blur Metric", *SPIE Electronic Imaging* 2007, applied per pixel. Earlier versions used the Canny detector from [imageproc](https://github.com/image-rs/imageproc); background on peaking from Paul Bourke's [Focus Peaking: An Algorithm](https://paulbourke.net/miscellaneous/focuspeaking/), [darktable's focus peaking](https://docs.darktable.org/usermanual/development/en/module-reference/utility-modules/shared/focus-peaking/) and [Magic Lantern's focus assist](https://magiclantern.fandom.com/wiki/Focus_Assist?oldid=8854). No code was copied from any of them.
 

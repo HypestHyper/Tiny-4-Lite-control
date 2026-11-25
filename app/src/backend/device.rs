@@ -2348,7 +2348,7 @@ mod settle_tests {
         assert_eq!(calls, 1);
     }
 
-    /// Frames captured from OBSBOT's SDK on a Tiny 2 Lite (Assistant/reference/16-2026-11-24-sdk-probe-captures.md):
+    /// Frames captured from OBSBOT's SDK on a Tiny 2 Lite (2026-11-24):
     /// our frame builder must reproduce each one exactly (sequence, command and payload as captured).
     #[test]
     fn sdk_probe_frames_are_reproduced_exactly() {

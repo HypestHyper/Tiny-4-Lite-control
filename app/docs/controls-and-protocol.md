@@ -5,7 +5,6 @@
 > evidence behind it. The window layout they describe has been replaced: see [../README.md](../README.md).
 > The protocol code that these notes call `main.rs` now lives in `src/backend/device.rs`, and the list of
 > settings (labels, dependencies, which are camera-confirmed) is `src/backend/registry.rs`.
-> Where this file and `Assistant/reference/` disagree, the newer dated evidence note wins.
 
 
 A Rust/GTK4 Linux hardware-control test bench for the OBSBOT Tiny 2 Lite
@@ -346,13 +345,6 @@ revision as build-verified.
   operations remain unimplemented or unverified.
 - Do not add undocumented writes or firmware-specific fallbacks without
   capture evidence and explicit hardware validation.
-
-## Project documentation
-
-- [Implementation status and protocol evidence](../Assistant/APP-IMPLEMENTATION-STATUS.md)
-- [Feature inventory](../Assistant/reference/02-feature-inventory.md)
-- [Project index](../Assistant/INDEX.md)
-- [Agent and hardware-safety rules](../Assistant/AGENTS.md)
 
 ## Centre
 
