@@ -29,6 +29,9 @@ First release. The notes below are the changes since the test builds.
 
 ### Changed
 
+- New app icon: the lens centred on the head and the two microphone holes on the base. An installed copy updates
+  its menu entry and icons when a newer version starts, also when the AppImage was replaced under the same name.
+
 - Auto zoom is removed from the AI tracking card: it did nothing on the camera. Presets that have it still load.
 - The gimbal-limits button sits in the gap between the camera model and the stick; the microphone button in
   Camera controls has a microphone-with-gear icon.
@@ -52,6 +55,9 @@ First release. The notes below are the changes since the test builds.
   between 29 and 30.
 
 ### Changed
+
+- New app icon: the lens centred on the head and the two microphone holes on the base. An installed copy updates
+  its menu entry and icons when a newer version starts, also when the AppImage was replaced under the same name.
 
 - Quick controls: slider rows are slimmer (thinner track and handle, a smaller value pill with closer arrows,
   smaller reset and info buttons), the column starts at the top, and both windows open at the size they were closed at.

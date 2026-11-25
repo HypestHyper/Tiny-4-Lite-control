@@ -75,6 +75,25 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("Could not write {}: {e}", path.display()))
 }
 
+/// Bring the menu entry and icons up to this version's, when this is the installed copy. Replacing the AppImage
+/// under the same name does not run `install` again, so a new icon would otherwise never reach the menu.
+pub fn refresh_files() {
+    if !installed() { return; }
+    let Some(from) = running_from() else { return };
+    if from.canonicalize().ok() != installed_target() { return; }
+    let entry = desktop_entry(&bin_path());
+    let [icon, symbolic] = icon_paths();
+    let mut changed = false;
+    for (path, text) in [(desktop_path(), entry.as_str()), (icon, ICON), (symbolic, ICON_SYMBOLIC)] {
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(text) && write_file(&path, text).is_ok() { changed = true; }
+    }
+    if changed {
+        let quiet = |program: &str, args: &[&str]| { let _ = Command::new(program).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status(); };
+        if let Some(dir) = desktop_path().parent().and_then(Path::to_str) { quiet("update-desktop-database", &[dir]); }
+        quiet("gtk-update-icon-cache", &["-q", "-t", &data_home().join("icons/hicolor").to_string_lossy()]);
+    }
+}
+
 /// Copy the running app to `~/.local/bin`, add the app-menu entry and icons, and move the background
 /// service (if it is set up) onto the installed copy. Installing over an older copy updates it.
 pub fn install() -> Result<String, String> {

@@ -64,6 +64,8 @@ impl Ctx {
             full: RefCell::default(), slim: RefCell::default(), popup: RefCell::default(), scan_timer: RefCell::default(),
         });
         ctx.watch_unplug();
+        // A new version put over the installed one brings its menu entry and icon along.
+        if !backend::ui_test_mode() { std::thread::spawn(crate::install::refresh_files); }
         // The camera is controlled through v4l2-ctl, so say so plainly if it is not there.
         if !backend::ui_test_mode() && !crate::setup::program_found("v4l2-ctl") {
             ctx.store.error("v4l2-ctl is not installed, so the camera cannot be controlled. Install it from the Settings tab, under Background service.");
