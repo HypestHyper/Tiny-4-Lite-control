@@ -469,7 +469,7 @@ int main(int argc, char **argv) {
     Device::CameraStatus status{};
     step("get_camera_status", [&] { int r = dev->cameraGetCameraStatusU(status); hexdump("CameraStatus", &status, sizeof status); return r; });
     const unsigned char *raw = reinterpret_cast<const unsigned char *>(&status);
-    // Bytes this project has verified in the status reply (Assistant/reference): 0x01 target selection gesture,
+    // Bytes this project has verified in the status reply: 0x01 target selection gesture,
     // 0x06 HDR, 0x07 face exposure priority, 0x18/0x1c AI mode and sub-mode.
     const bool target_gesture = raw[0x01] == 1, hdr = raw[0x06] == 1, face_ae = raw[0x07] == 1;
     std::printf("  status: target gesture %d, HDR %d, face exposure %d, AI mode %d/%d\n", target_gesture, hdr, face_ae, raw[0x18], raw[0x1c]);
