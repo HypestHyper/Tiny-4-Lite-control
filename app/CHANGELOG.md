@@ -56,7 +56,6 @@ First release. The notes below are the changes since the test builds.
 
 ### Changed
 
-
 - Quick controls: slider rows are slimmer (thinner track and handle, a smaller value pill with closer arrows,
   smaller reset and info buttons), the column starts at the top, and both windows open at the size they were closed at.
 
