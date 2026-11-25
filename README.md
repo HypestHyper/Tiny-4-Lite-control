@@ -14,10 +14,6 @@
   <a href="#command-line">Command line</a> · <a href="app/CHANGELOG.md">Changelog</a>
 </p>
 
-<p align="center">
-  <img alt="The main window: the camera preview and gimbal controls beside the Camera tab" src="docs/screenshots/main.png" width="860">
-</p>
-
 ---
 
 > **AI disclosure:** This project was written almost entirely by an AI assistant, with direction and
@@ -25,7 +21,13 @@
 > desktop or firmware version, so review the code before relying on it.
 
 <p align="center">
-  <img alt="Quick controls, the Device tab and the Presets tab" src="docs/screenshots/windows.png" width="760">
+  <img alt="The main window: the camera preview and gimbal controls beside the Camera tab" src="docs/screenshots/main.png" width="860">
+</p>
+
+<p>
+  <a href="docs/screenshots/quick-controls.png"><img align="right" alt="Quick controls" src="docs/screenshots/quick-controls.png" width="37%"></a>
+  <a href="docs/screenshots/device.png"><img alt="The Device tab" src="docs/screenshots/device.png" width="61%"></a><br>
+  <a href="docs/screenshots/presets.png"><img alt="The Presets tab" src="docs/screenshots/presets.png" width="61%"></a>
 </p>
 
 ## Features
@@ -69,8 +71,16 @@ desktop entry (with *Quick controls* and *Preview* actions) to `~/.local/share/a
 put the new AppImage in `~/Applications` and open it. `tiny4lite-control app remove` takes it all away.
 Nothing needs root.
 
-**Start the background service** (the capture mode, restore on plug-in, and the sleep timer need it): on
-the same card press **Install…**, or from a terminal:
+**Start the background service.** It runs without a window and handles what has to happen while the app
+is closed:
+- **Capture mode:** apps choose their own resolution when they open the camera, and the camera keeps it
+  afterwards. The service puts the mode you chose back once no app is using the camera.
+- **Restore on plug-in** (off by default): applies your last settings, or a preset, when the camera is
+  plugged in or the computer starts.
+- **Sleep:** the sleep timer, and putting the camera to sleep at shutdown or suspend.
+- **Studio camera**, if you use it.
+
+Install it from the same card with **Install…**, or from a terminal:
 
 ```sh
 tiny4lite-control service install systemd --write
@@ -131,8 +141,10 @@ tiny4lite-control capture set 3840x2160 MJPG 30
 
 ## Credits and license
 
-MIT, see [LICENSE](LICENSE). Not affiliated with OBSBOT. The protocol work builds on
-[Domatix/obsbot-control](https://github.com/Domatix/obsbot-control),
-[lxman/obsbot-mcp](https://github.com/lxman/obsbot-mcp) and
-[OpenFoxes/Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux); fonts, icons and other sources are listed
+MIT, see [LICENSE](LICENSE). Not affiliated with OBSBOT. Fonts, icons and other sources are listed
 in [app/README.md](app/README.md#credits-and-sources).
+
+The protocol research looked at [Domatix/obsbot-control](https://github.com/Domatix/obsbot-control),
+[lxman/obsbot-mcp](https://github.com/lxman/obsbot-mcp) and
+[OpenFoxes/Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux). No code from them is used: the commands
+the app sends come from our own captures of the camera and of OBSBOT's SDK.

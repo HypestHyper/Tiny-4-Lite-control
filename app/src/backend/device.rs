@@ -2082,7 +2082,7 @@ mod xu_protocol_tests {
     }
 
     #[test]
-    fn sleep_frame_matches_tiny4linux_reference() {
+    fn sleep_and_wake_frames_are_unchanged() {
         let group = [0x0a, 0x02, 0xc2, 0xa0, 0x04, 0x00];
         let wake = obsbot_frame(0x00a5, group, [0, 0, 0, 0, 0, 0]);
         let sleep = obsbot_frame(0x0042, group, [0, 0, 1, 0, 0, 0]);
