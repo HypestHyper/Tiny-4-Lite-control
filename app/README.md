@@ -3,16 +3,16 @@
 A GTK 4 control panel for the OBSBOT Tiny 2 Lite (USB `3564:fef9`) on Linux, written in Rust.
 It talks to the camera through standard V4L2 controls and OBSBOT's vendor UVC extension unit.
 
-> **Status:** the interface was built and checked against a synthetic camera (see *Testing*).
-> It has **not** yet been exercised against real hardware in this form. The camera protocol code
-> is unchanged from the test bench it grew out of; follow the hardware-safety notes in
-> `Assistant/AGENTS.md` before trying commands that move the gimbal.
+> This is the developer documentation. The [project README](../README.md) covers installing and using
+> the app. The interface is tested against a synthetic camera (see *Testing*) and the camera commands
+> against a real Tiny 2 Lite and OBSBOT's SDK; follow the hardware-safety notes in `Assistant/AGENTS.md`
+> before trying commands that move the gimbal.
 
 ## Windows
 
 | Window | Opens with | Purpose |
 |---|---|---|
-| Full | default, or `--full` | Live preview and gimbal joystick beside tabbed settings (Camera, Presets, Device). |
+| Full | default, or `--full` | Live preview and gimbal joystick beside tabbed settings (Camera, Presets, Device, Settings). |
 | Slim | `--slim` | A narrow panel with only the controls you pick (the tune button chooses them), plus an optional preview and joystick. |
 | Preview | `--preview`, or the pop-out button | The preview in its own resizable window. |
 

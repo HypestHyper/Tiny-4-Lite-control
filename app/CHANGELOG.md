@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 (2026-11-25)
+
+First release. The notes below are the changes since the test builds.
 
 ### Fixed
 
