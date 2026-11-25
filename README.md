@@ -25,9 +25,9 @@
 </p>
 
 <p>
-  <a href="docs/screenshots/quick-controls.png"><img align="right" alt="Quick controls" src="docs/screenshots/quick-controls.png" width="37%"></a>
-  <a href="docs/screenshots/device.png"><img alt="The Device tab" src="docs/screenshots/device.png" width="61%"></a><br>
-  <a href="docs/screenshots/presets.png"><img alt="The Presets tab" src="docs/screenshots/presets.png" width="61%"></a>
+  <a href="docs/screenshots/quick-controls.png"><img align="right" alt="Quick controls" src="docs/screenshots/quick-controls.png" width="35%"></a>
+  <a href="docs/screenshots/device.png"><img alt="The Device tab" src="docs/screenshots/device.png" width="59%"></a><br>
+  <a href="docs/screenshots/presets.png"><img alt="The Presets tab" src="docs/screenshots/presets.png" width="59%"></a>
 </p>
 
 ## Features
