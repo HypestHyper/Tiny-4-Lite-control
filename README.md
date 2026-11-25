@@ -1,7 +1,6 @@
 <p align="center"><img alt="Tiny 2 Lite Control" src="app/assets/tiny4lite-control.svg" width="128"></p>
 <h1 align="center">Tiny 2 Lite Control</h1>
-<p align="center">A Linux control app for the OBSBOT Tiny 2 Lite webcam: pan and tilt, picture, AI tracking,
-gestures, microphone and presets, in one window or a small quick-controls panel.</p>
+<p align="center">A control app for the OBSBOT Tiny 2 Lite webcam on Linux.</p>
 <p align="center">
   <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-1f9e80">
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue">
@@ -16,7 +15,7 @@ gestures, microphone and presets, in one window or a small quick-controls panel.
 </p>
 
 <p align="center">
-  <img alt="The main window in dark mode with an orange accent: the camera preview and Camera controls (a 3D model of the camera following its pan and tilt, a joystick with preset buttons and 1° steps) beside the Camera tab with AI tracking and exposure" src="docs/screenshots/main.png" width="860">
+  <img alt="The main window: the camera preview and gimbal controls beside the Camera tab" src="docs/screenshots/main.png" width="860">
 </p>
 
 ---
@@ -26,42 +25,27 @@ gestures, microphone and presets, in one window or a small quick-controls panel.
 > desktop or firmware version, so review the code before relying on it.
 
 <p align="center">
-  <img alt="Quick controls: the gimbal with its joystick, six preset buttons and a few chosen settings" src="docs/screenshots/quick-controls.png" width="25%">
-  <img alt="The Device tab: power, gestures and the microphone with its level meter" src="docs/screenshots/device.png" width="37%">
-  <img alt="The Presets tab: the camera's three memory positions and the app's own presets" src="docs/screenshots/presets.png" width="37%">
+  <img alt="Quick controls, the Device tab and the Presets tab" src="docs/screenshots/windows.png" width="760">
 </p>
 
 ## Features
 
-**Gimbal**
-- A joystick that turns faster the further you push, 1° fine steps, and a live 3D model of the camera that
-  follows its pan, tilt and zoom.
-- Gimbal limits, a start-up position, and the camera's three memory positions with names.
+- **Gimbal:** pan and tilt with a joystick or 1° steps, zoom, field of view, limits and a start-up
+  position.
+- **Picture:** exposure, white balance, focus, HDR, brightness, contrast, saturation, sharpness and the
+  capture mode.
+- **AI tracking:** tracking modes, tracking speed, a tracking area with a return position, and hand
+  gestures.
+- **Presets:** save the current settings and apply them later. The camera's three memory positions are
+  also available.
+- **Microphone:** disable, volume, noise reduction, auto gain and pickup distance.
+- **Power:** wake and sleep, the camera's sleep timer, and sleep when idle, at shutdown or at suspend.
+- **Preview:** a live preview, also in its own window, with tap to focus or track.
+- **Studio camera:** an optional virtual camera with LUTs.
+- **Quick controls:** a small window with the controls you choose.
+- Backups, an update check, a command line, and light and dark themes.
 
-**Picture**
-- Exposure (auto, shutter, gain, compensation, face metering), white balance, focus (auto, face, manual),
-  HDR, brightness, contrast, saturation, sharpness, zoom and field of view.
-- A capture mode that stays as you chose it: apps that switch the camera to their own size get theirs while
-  they run, and yours comes back after.
-- A live preview with tap to focus or track, a pop-out window and focus peaking.
-- A Studio camera: a virtual camera with LUTs and a picture for while the camera sleeps.
-
-**AI**
-- Tracking modes (upper body, close-up, group, hand and more), tracking speed and a tracking area the camera
-  stays inside, with a position to return to.
-- Hand gestures: target selection, zoom gesture and dynamic zoom.
-
-**Everyday**
-- Presets that save everything above and apply in one click, plus six preset buttons by the joystick.
-- Microphone: disable, volume, noise reduction, auto gain, pickup distance and a level meter.
-- Power and sleep: wake and sleep, the camera's own sleep timer, and sleep when idle, at shutdown or at
-  suspend through the background service.
-- Quick controls: a narrow panel with only the controls you pick.
-- Daily backups with export and import, and an update check against the latest release.
-- System, light or dark theme with an accent colour of your choice.
-
-The camera commands follow OBSBOT's own SDK, so settings are sent the way the camera expects and read back
-from it where the camera reports them. The SDK itself is not included or needed.
+The camera commands are based on OBSBOT's SDK. The SDK is not included and is not needed.
 
 ## Installation
 
