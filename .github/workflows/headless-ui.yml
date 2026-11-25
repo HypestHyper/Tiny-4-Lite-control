@@ -2,10 +2,12 @@ name: Headless GTK UI validation
 
 on:
   push:
-    branches: [test-app-v0.1, claude/upbeat-rubin-gnae3f]
+    branches: [main, test-app-v0.1, claude/upbeat-rubin-gnae3f]
     paths:
       - "app/**"
       - ".github/workflows/headless-ui.yml"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
