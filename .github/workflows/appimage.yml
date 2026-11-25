@@ -11,6 +11,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release with this tag (for example v1.0.0), created on the commit being built. Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -65,15 +70,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Publish release
-        # A tag such as v1.0.0 publishes a GitHub release with the AppImage. Its notes are docs/release-notes/<tag>.md,
+        # A pushed tag such as v1.0.0, or a manual run with a release tag, publishes a GitHub release with the
+        # AppImage (a manual run creates the tag on the commit it built). Its notes are docs/release-notes/<tag>.md,
         # or else that version's section of app/CHANGELOG.md.
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           version="${TAG#v}"
           if [ -s "docs/release-notes/$TAG.md" ]; then cp "docs/release-notes/$TAG.md" notes.md; else
           awk -v v="$version" '$0 ~ "^## "v" " {on=1; next} on && /^## / {exit} on {print}' app/CHANGELOG.md > notes.md; fi
           test -s notes.md || echo "Tiny 2 Lite Control $version" > notes.md
-          gh release create "$TAG" Tiny4LiteControl-x86_64.AppImage --title "Tiny 2 Lite Control $version" --notes-file notes.md
+          gh release create "$TAG" Tiny4LiteControl-x86_64.AppImage --title "Tiny 2 Lite Control $version" --notes-file notes.md --target "$GITHUB_SHA"
