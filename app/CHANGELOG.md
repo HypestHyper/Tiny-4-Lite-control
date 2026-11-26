@@ -4,9 +4,11 @@
 
 ### Fixed
 
-- Applying a preset could fail with "Some settings were not applied": it sent Disable microphone every time, and
-  the camera restarts to change it, so the settings sent after it failed. It is now sent last, and only when it
-  differs from the camera's.
+- Applying a preset could fail with "Some settings were not applied": it sent Disable microphone, and the camera
+  restarts to change it, so the settings after it failed. Presets no longer save or change the microphone switch.
+- Presets never turn the microphone or the Studio camera on or off. While the microphone is off, its settings in a
+  preset are left out; while the Studio camera is off, its LUT is. The rest of the preset still applies, and a note
+  says what was left out. The LUT is saved only when the Studio camera is on and a LUT is in use.
 - A preset that does not apply fully says which settings did not, in the same words from the Presets tab and from
   the buttons beside the joystick.
 - The page no longer shrinks or shows a thick bar at the bottom when the window is about as narrow as the page:

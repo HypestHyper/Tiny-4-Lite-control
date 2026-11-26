@@ -113,7 +113,6 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if status[0x08] <= 3 { settings.insert("obsbot:noise_reduction".into(), i64::from(status[0x08])); }
         if status[25] <= 1 { settings.insert("obsbot:auto_gain".into(), i64::from(status[25])); }
         if status[16] <= 1 { settings.insert("obsbot:mic_during_sleep".into(), i64::from(status[16])); }
-        settings.insert("obsbot:mic_disabled".into(), i64::from(status[34] & 0x10 == 0));
         if let Some(on) = hdr_state_from_status(&status) { settings.insert("obsbot:hdr".into(), i64::from(on)); }
     }
     // Hand side and the gestures, from the camera's AI status (ahead of the last-sent values below).
@@ -148,7 +147,6 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
 
     let saved = current_config();
     // Settings the camera cannot report: what this app last sent.
-    if let Some(disabled) = saved.audio_microphone_disabled { settings.entry("obsbot:mic_disabled".into()).or_insert(i64::from(disabled)); }
     if let Some(distance) = saved.audio_radio_distance { settings.insert("obsbot:radio_distance".into(), i64::from(distance)); }
     if let Some(on) = saved.pop_filter_enabled { settings.insert("obsbot:pop_filter".into(), i64::from(on)); }
     if let Some(ratio) = saved.gesture_zoom_ratio {
@@ -159,10 +157,12 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         settings.entry(format!("obsbot:gesture:{name}")).or_insert(enabled as i64);
     }
 
-    // The Studio camera's look goes with it: the LUT that is on and its strength, or none.
+    // The Studio camera's LUT goes with it when one is in use; a preset never turns the Studio camera itself on
+    // or off, nor the microphone.
     let studio = saved.studio.clone();
-    let look = config::PresetLook { lut: studio.lut.filter(|_| studio.lut_on), strength: studio.lut_strength };
-    Ok(config::CameraPreset { name: name.trim().to_string(), settings, look: Some(look) })
+    let look = (studio.enabled && studio.lut_on && studio.lut.is_some())
+        .then(|| config::PresetLook { lut: studio.lut.clone(), strength: studio.lut_strength });
+    Ok(config::CameraPreset { name: name.trim().to_string(), settings, look })
 }
 
 /// Apply settings in dependency order: automatic/manual modes first, ordinary
@@ -182,6 +182,13 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     let mut applied = 0usize;
     let mut errors = Vec::new();
     let mut notes: Vec<String> = Vec::new();
+    // The microphone's own settings need the microphone on (status byte 34, bit 4). When it is off they are left
+    // as they are, and the rest of the preset still applies.
+    let microphone_off = xu_status(device).ok().is_some_and(|status| status[34] & 0x10 == 0);
+    let has_audio = preset.settings.keys().any(|key| AUDIO_KEYS.contains(&key.as_str()));
+    if microphone_off && has_audio {
+        notes.push("The microphone is off, so its settings were left as they are.".to_string());
+    }
     // Tracking would pull the camera away from a saved position, so a preset that turns tracking
     // off does it first; one that turns tracking on does it last, after the gimbal has moved.
     let tracking = preset.settings.get("obsbot:ai_tracking_mode").copied();
@@ -255,7 +262,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         } else if key == "obsbot:mic_during_sleep" {
             set_microphone_during_sleep(device, *value == 1)
         } else if key == "obsbot:mic_disabled" || key == "obsbot:mic_enabled" {
-            // Sent last, below: changing it restarts the camera, which would make everything after it fail.
+            // Older presets saved the microphone switch; presets no longer turn the microphone on or off.
+            continue;
+        } else if microphone_off && AUDIO_KEYS.contains(&key.as_str()) {
             continue;
         } else if key == "obsbot:radio_distance" {
             u8::try_from(*value).ok().filter(|v| *v <= 2).ok_or_else(|| "Unknown pickup distance.".to_string())
@@ -363,34 +372,18 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         }
     }
 
-    // The microphone last, and only when it differs from the camera's: the camera restarts to change it.
-    // ("mic_enabled" is from presets saved before the switch became "Disable microphone".)
-    let microphone = preset.settings.get("obsbot:mic_disabled").map(|v| *v == 1)
-        .or_else(|| preset.settings.get("obsbot:mic_enabled").map(|v| *v == 0));
-    if let Some(disabled) = microphone {
-        let now = xu_status(device).ok().map(|status| status[34] & 0x10 == 0);
-        if now == Some(disabled) {
-            applied += 1;
-        } else {
-            match set_microphone_disabled(device, disabled) {
-                Ok(()) => {
-                    applied += 1;
-                    notes.push("The camera restarts to change the microphone.".to_string());
-                }
-                Err(error) => errors.push(format!("obsbot:mic_disabled: {error}")),
-            }
-        }
-    }
-
-    // The Studio camera's look, if the preset has one (the service picks it up within a couple of seconds).
-    if let Some(look) = &preset.look {
-        let missing = look.lut.as_ref().is_some_and(|name| !crate::lut::list().contains(name));
-        if missing {
-            errors.push(format!("look: the LUT {} is no longer in the list", look.lut.as_deref().unwrap_or("")));
+    // The Studio camera's LUT, if the preset has one. A preset never turns the Studio camera on; when it is off,
+    // the LUT is left out and the rest still applies (the service picks a change up within a couple of seconds).
+    if let Some(look) = preset.look.as_ref().filter(|look| look.lut.is_some()) {
+        let name = look.lut.as_deref().unwrap_or("");
+        if !current_config().studio.enabled {
+            notes.push("The Studio camera is off, so its LUT was not changed.".to_string());
+        } else if !crate::lut::list().iter().any(|l| l == name) {
+            notes.push(format!("The LUT {name} is no longer in the list, so it was not changed."));
         } else {
             crate::backend::update_config(|c| {
-                if look.lut.is_some() { c.studio.lut = look.lut.clone(); }
-                c.studio.lut_on = look.lut.is_some();
+                c.studio.lut = look.lut.clone();
+                c.studio.lut_on = true;
                 c.studio.set_lut_strength(look.strength);
             });
             applied += 1;
@@ -410,6 +403,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     }
 }
 
+/// The microphone's own settings, which only apply while the microphone is on.
+const AUDIO_KEYS: [&str; 6] = ["obsbot:noise_reduction", "obsbot:auto_gain", "obsbot:mic_during_sleep", "obsbot:mic_volume",
+    "obsbot:radio_distance", "obsbot:pop_filter"];
+
 /// What a person calls a preset key: the setting's label where there is one.
 fn setting_name(key: &str) -> String {
     let named = match key {
@@ -417,7 +414,6 @@ fn setting_name(key: &str) -> String {
         "obsbot:return_pan_centi" => Some("Return position"),
         "obsbot:zone_auto_select" => Some("Auto-track new targets"),
         "obsbot:gesture_zoom_ratio_milli" => Some("Gesture zoom amount"),
-        "obsbot:mic_disabled" | "obsbot:mic_enabled" => Some("Disable microphone"),
         k if k.starts_with("video") => Some("Capture mode"),
         k if k.starts_with("look") => Some("Studio camera look"),
         _ => None,
@@ -435,7 +431,6 @@ mod tests {
 
     #[test]
     fn failed_settings_are_named_as_people_see_them() {
-        assert_eq!(setting_name("obsbot:mic_disabled"), "Disable microphone");
         assert_eq!(setting_name("obsbot:return_pan_centi"), "Return position");
         assert_eq!(setting_name("app:tracking_area"), "Tracking area");
         assert_eq!(setting_name("video mode"), "Capture mode");
