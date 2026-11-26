@@ -147,7 +147,7 @@ camera in that app.
 
 **Microphone volume and the camera's own sleep timer.** Volume (0 to 100, read from the camera) is on the Microphone card; **Camera's own sleep timer** (Off to 1 h, read from the camera) on the Power card. Both come from the SDK's undeclared functions.
 
-**Presets** also carry noise reduction, auto gain, listen while asleep, volume, HDR, the camera's sleep timer, the tracking area on or off, Auto-track new targets and the return position, plus pickup distance and pop filter as last sent. The gimbal limits themselves stay the same for every preset. Presets never turn the microphone on or off; while it is off, its settings are left out and the rest of the preset still applies.
+**Presets** also carry noise reduction, auto gain, volume, HDR, the tracking area on or off, Auto-track new targets and the return position, plus pickup distance and pop filter as last sent. The gimbal limits themselves stay the same for every preset. Presets never change the capture mode, the camera's sleep timer, Listen while asleep, or whether the microphone or the Studio camera is on. Nothing is sent to the microphone unless the camera reports it on; otherwise its settings are left out and the rest of the preset still applies.
 
 **HDR.** A switch in the Exposure card (and `tiny4lite-control set hdr on|off`). It sends the HDR command captured from OBSBOT's own app (selector `0x06`, `01 01 01` on, `01 01 00` off) and reads the state back from status byte `0x06`. Switching reconfigures the camera's sensor, so, following OBSBOT's guidance of 3 seconds between switches, the switch rests for 3 seconds after each change, and the command itself waits if it is sent again sooner. Some capture modes may not support HDR.
 

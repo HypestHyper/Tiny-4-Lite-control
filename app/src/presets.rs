@@ -34,17 +34,6 @@ fn ai_mode_payload(id: i64) -> Option<(u8, u8)> {
     }
 }
 
-fn fourcc_to_i64(value: &str) -> Option<i64> {
-    let bytes: [u8; 4] = value.as_bytes().try_into().ok()?;
-    Some(u32::from_le_bytes(bytes) as i64)
-}
-
-fn fourcc_from_i64(value: i64) -> Option<String> {
-    let bytes = u32::try_from(value).ok()?.to_le_bytes();
-    if !bytes.iter().all(|byte| byte.is_ascii_graphic()) { return None; }
-    Some(String::from_utf8(bytes.to_vec()).ok()?)
-}
-
 fn gesture_group(name: &str) -> Option<[u8; 6]> {
     match name {
         "target_selection" => Some([0x0a, 0x04, 0xc4, 0x30, 0x01, 0x00]),
@@ -66,14 +55,8 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         }
     }
 
-    if let Some(mode) = video::current_mode(device) {
-        settings.insert("video:width".into(), mode.width as i64);
-        settings.insert("video:height".into(), mode.height as i64);
-        settings.insert("video:frame_rate_milli".into(), mode.frame_rate_milli as i64);
-        if let Some(code) = fourcc_to_i64(&mode.pixel_format) {
-            settings.insert("video:pixel_format".into(), code);
-        }
-    }
+    // Not saved: the capture mode, the camera's sleep timer, Listen while asleep and the microphone switch. Presets
+    // are for the picture and the camera's aim; those stay as they are set.
 
     // The position comes from the camera's live pose, not the V4L2 value, which can be the last
     // command sent. Pan and tilt agree in sign with it (checked on a real camera: +1 step is +1°).
@@ -112,7 +95,6 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         // Microphone and HDR, as the status block reports them (the same bytes the settings read).
         if status[0x08] <= 3 { settings.insert("obsbot:noise_reduction".into(), i64::from(status[0x08])); }
         if status[25] <= 1 { settings.insert("obsbot:auto_gain".into(), i64::from(status[25])); }
-        if status[16] <= 1 { settings.insert("obsbot:mic_during_sleep".into(), i64::from(status[16])); }
         if let Some(on) = hdr_state_from_status(&status) { settings.insert("obsbot:hdr".into(), i64::from(on)); }
     }
     // Hand side and the gestures, from the camera's AI status (ahead of the last-sent values below).
@@ -124,7 +106,6 @@ pub fn capture(device: &str, name: String) -> Result<config::CameraPreset, Strin
         if (10..=40).contains(&ai[7]) { settings.insert("obsbot:gesture_zoom_ratio_milli".into(), i64::from(ai[7]) * 100); }
     }
     if let Ok(volume) = get_mic_volume(device) { settings.insert("obsbot:mic_volume".into(), i64::from(volume)); }
-    if let Ok(seconds) = get_camera_sleep_time(device) { settings.insert("obsbot:camera_sleep".into(), i64::from(seconds)); }
     // The tracking area: on or off (this app's setting; its limits are the gimbal limits, which stay the
     // same for every preset), whether new people are picked up, and where the camera returns to.
     let zone = current_config();
@@ -184,7 +165,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     let mut notes: Vec<String> = Vec::new();
     // The microphone's own settings need the microphone on (status byte 34, bit 4). When it is off they are left
     // as they are, and the rest of the preset still applies.
-    let microphone_off = xu_status(device).ok().is_some_and(|status| status[34] & 0x10 == 0);
+    // Nothing is sent to the microphone unless the camera says it is on; if it cannot say, nothing is sent either.
+    let microphone_off = !xu_status(device).ok().is_some_and(|status| status[34] & 0x10 != 0);
     let has_audio = preset.settings.keys().any(|key| AUDIO_KEYS.contains(&key.as_str()));
     if microphone_off && has_audio {
         notes.push("The microphone is off, so its settings were left as they are.".to_string());
@@ -259,10 +241,8 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 .and_then(|level| set_noise_reduction(device, level))
         } else if key == "obsbot:auto_gain" {
             set_auto_gain(device, *value == 1)
-        } else if key == "obsbot:mic_during_sleep" {
-            set_microphone_during_sleep(device, *value == 1)
-        } else if key == "obsbot:mic_disabled" || key == "obsbot:mic_enabled" {
-            // Older presets saved the microphone switch; presets no longer turn the microphone on or off.
+        } else if matches!(key.as_str(), "obsbot:mic_disabled" | "obsbot:mic_enabled" | "obsbot:mic_during_sleep" | "obsbot:camera_sleep") {
+            // Older presets saved these; presets no longer change them.
             continue;
         } else if microphone_off && AUDIO_KEYS.contains(&key.as_str()) {
             continue;
@@ -279,8 +259,6 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 Some(now) if now == (*value == 1) => Ok(()),
                 _ => set_hdr_enabled(device, *value == 1),
             }
-        } else if key == "obsbot:camera_sleep" {
-            set_camera_sleep_time(device, (*value).clamp(0, 65535) as u32)
         } else if key == "app:tracking_area" {
             // With the preset's own area, if it has one (sent once, here).
             let end = |key: &str| preset.settings.get(key).map(|v| *v as f64 / 100.0);
@@ -311,7 +289,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
                 _ => Err(format!("Invalid value for gesture '{name}'.")),
             }
         } else if key.starts_with("video:") || key.starts_with("v4l2:") {
-            // Video modes are handled below and standard controls were applied above.
+            // Older presets saved the capture mode, which presets no longer change; standard controls were applied above.
             continue;
         } else {
             Err(format!("Unsupported preset setting '{key}'."))
@@ -319,56 +297,6 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         match result {
             Ok(()) => applied += 1,
             Err(error) => errors.push(format!("{key}: {error}")),
-        }
-    }
-
-    let video_keys = [
-        preset.settings.get("video:width"),
-        preset.settings.get("video:height"),
-        preset.settings.get("video:frame_rate_milli"),
-        preset.settings.get("video:pixel_format"),
-    ];
-    let has_video_settings = preset.settings.keys().any(|key| key.starts_with("video:"));
-    if has_video_settings && video_keys.iter().any(Option::is_none) {
-        errors.push("video mode: preset is missing one or more capture-mode fields".into());
-    }
-    if let [Some(width), Some(height), Some(rate), Some(format)] = video_keys {
-        let mode = (|| Some(video::VideoMode {
-            width: u32::try_from(*width).ok()?,
-            height: u32::try_from(*height).ok()?,
-            frame_rate_milli: u32::try_from(*rate).ok()?,
-            pixel_format: fourcc_from_i64(*format)?,
-        }))();
-        match mode {
-            // Already in that mode: nothing to change (and nothing to fail while a stream is running).
-            Some(mode) if video::current_mode(device).is_some_and(|now| now.width == mode.width && now.height == mode.height
-                && now.pixel_format == mode.pixel_format && now.frame_rate_milli.abs_diff(mode.frame_rate_milli) <= 500) => { applied += 1; }
-            // Another program is streaming, so the camera refuses a new mode: it is changed once it is free.
-            Some(mode) if !crate::backend::usage::streaming_holders(device).is_empty() => {
-                let pending = config::VideoModeConfig { width: mode.width, height: mode.height, pixel_format: mode.pixel_format.clone(), frame_rate_milli: mode.frame_rate_milli };
-                match update_config_checked(|config| config.pending_video_mode = Some(pending)) {
-                    Ok(()) => notes.push("The capture mode changes when no program is using the camera (the background service does that).".to_string()),
-                    Err(error) => errors.push(format!("video mode: the camera is in use, and the change could not be saved for later: {error}")),
-                }
-            }
-            Some(mode) => {
-                match video::set_mode(device, &mode) {
-                Ok(()) => {
-                    applied += 1;
-                    if let Err(error) = update_config_checked(|config| config.video_mode = Some(config::VideoModeConfig {
-                        width: mode.width, height: mode.height,
-                        pixel_format: mode.pixel_format.clone(),
-                        frame_rate_milli: mode.frame_rate_milli,
-                    })) {
-                        errors.push(format!("video mode applied but could not be saved: {error}"));
-                    }
-                }
-                    Err(error) => {
-                        errors.push(format!("video mode: {error}"));
-                    }
-                }
-            },
-            None => errors.push("video mode: invalid preset capture settings".into()),
         }
     }
 
@@ -404,7 +332,7 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
 }
 
 /// The microphone's own settings, which only apply while the microphone is on.
-const AUDIO_KEYS: [&str; 6] = ["obsbot:noise_reduction", "obsbot:auto_gain", "obsbot:mic_during_sleep", "obsbot:mic_volume",
+const AUDIO_KEYS: [&str; 5] = ["obsbot:noise_reduction", "obsbot:auto_gain", "obsbot:mic_volume",
     "obsbot:radio_distance", "obsbot:pop_filter"];
 
 /// What a person calls a preset key: the setting's label where there is one.
@@ -463,12 +391,5 @@ mod tests {
         assert!(MOVEMENT_CONTROLS.contains(&"tilt_speed"));
         assert!(!MOVEMENT_CONTROLS.contains(&"pan_absolute"));
         assert!(!MOVEMENT_CONTROLS.contains(&"tilt_absolute"));
-    }
-
-    #[test]
-    fn pixel_format_round_trips_as_a_fourcc() {
-        assert_eq!(fourcc_from_i64(fourcc_to_i64("MJPG").unwrap()).as_deref(), Some("MJPG"));
-        assert_eq!(fourcc_from_i64(fourcc_to_i64("YUYV").unwrap()).as_deref(), Some("YUYV"));
-        assert!(fourcc_to_i64("MJ").is_none());
     }
 }
