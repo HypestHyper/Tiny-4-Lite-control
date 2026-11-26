@@ -306,8 +306,8 @@ fn app_presets_card(store: &Store) -> gtk::Box {
                         let name = preset.name.clone();
                         store.clone().call(None, move |d| presets::apply(d, &preset), move |r| {
                             match r {
-                                Ok(message) => store.toast(&if message.is_empty() { format!("Applied {name}") } else { message }),
-                                Err(e) => store.error(&format!("Some settings in {name} were not applied: {e}")),
+                                Ok(message) => store.toast(&if message.is_empty() { format!("Applied {name}.") } else { message }),
+                                Err(e) => store.error(&e),
                             }
                             store.refresh_soon();
                         });

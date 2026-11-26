@@ -254,11 +254,9 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
             set_auto_gain(device, *value == 1)
         } else if key == "obsbot:mic_during_sleep" {
             set_microphone_during_sleep(device, *value == 1)
-        } else if key == "obsbot:mic_disabled" {
-            set_microphone_disabled(device, *value == 1)
-        } else if key == "obsbot:mic_enabled" {
-            // Presets saved before the switch became "Disable microphone".
-            set_microphone_disabled(device, *value == 0)
+        } else if key == "obsbot:mic_disabled" || key == "obsbot:mic_enabled" {
+            // Sent last, below: changing it restarts the camera, which would make everything after it fail.
+            continue;
         } else if key == "obsbot:radio_distance" {
             u8::try_from(*value).ok().filter(|v| *v <= 2).ok_or_else(|| "Unknown pickup distance.".to_string())
                 .and_then(|distance| set_radio_distance(device, distance))
@@ -365,6 +363,25 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
         }
     }
 
+    // The microphone last, and only when it differs from the camera's: the camera restarts to change it.
+    // ("mic_enabled" is from presets saved before the switch became "Disable microphone".)
+    let microphone = preset.settings.get("obsbot:mic_disabled").map(|v| *v == 1)
+        .or_else(|| preset.settings.get("obsbot:mic_enabled").map(|v| *v == 0));
+    if let Some(disabled) = microphone {
+        let now = xu_status(device).ok().map(|status| status[34] & 0x10 == 0);
+        if now == Some(disabled) {
+            applied += 1;
+        } else {
+            match set_microphone_disabled(device, disabled) {
+                Ok(()) => {
+                    applied += 1;
+                    notes.push("The camera restarts to change the microphone.".to_string());
+                }
+                Err(error) => errors.push(format!("obsbot:mic_disabled: {error}")),
+            }
+        }
+    }
+
     // The Studio camera's look, if the preset has one (the service picks it up within a couple of seconds).
     if let Some(look) = &preset.look {
         let missing = look.lut.as_ref().is_some_and(|name| !crate::lut::list().contains(name));
@@ -381,18 +398,50 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     }
 
     if errors.is_empty() {
-        let mut done = format!("Submitted {applied} settings from preset '{}'.", preset.name);
+        let mut done = format!("Applied {}.", preset.name);
         for note in notes { done.push(' '); done.push_str(&note); }
         Ok(done)
     } else {
-        Err(format!("Submitted {applied} settings from '{}'; {} setting(s) failed: {}",
-            preset.name, errors.len(), errors.join(" · ")))
+        // The details are for us, in the terminal; the message names what did not apply.
+        eprintln!("Preset {}: {applied} settings applied, {} failed: {}", preset.name, errors.len(), errors.join(" · "));
+        let mut names: Vec<String> = errors.iter().map(|e| setting_name(e.split(": ").next().unwrap_or(""))).collect();
+        names.dedup();
+        Err(format!("Some settings in {} were not applied: {}. Try again, or unplug and replug the camera.", preset.name, names.join(", ")))
     }
+}
+
+/// What a person calls a preset key: the setting's label where there is one.
+fn setting_name(key: &str) -> String {
+    let named = match key {
+        "app:tracking_area" => Some("Tracking area"),
+        "obsbot:return_pan_centi" => Some("Return position"),
+        "obsbot:zone_auto_select" => Some("Auto-track new targets"),
+        "obsbot:gesture_zoom_ratio_milli" => Some("Gesture zoom amount"),
+        "obsbot:mic_disabled" | "obsbot:mic_enabled" => Some("Disable microphone"),
+        k if k.starts_with("video") => Some("Capture mode"),
+        k if k.starts_with("look") => Some("Studio camera look"),
+        _ => None,
+    };
+    if let Some(name) = named { return name.to_string(); }
+    let id = if key.contains(':') { key.to_string() } else { format!("v4l2:{key}") };
+    let id = id.replace("obsbot:gesture:", "obsbot:gesture_");
+    crate::backend::registry::find(&id).map(|s| s.label.to_string())
+        .unwrap_or_else(|| key.rsplit(':').next().unwrap_or(key).replace('_', " "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_settings_are_named_as_people_see_them() {
+        assert_eq!(setting_name("obsbot:mic_disabled"), "Disable microphone");
+        assert_eq!(setting_name("obsbot:return_pan_centi"), "Return position");
+        assert_eq!(setting_name("app:tracking_area"), "Tracking area");
+        assert_eq!(setting_name("video mode"), "Capture mode");
+        assert_eq!(setting_name("obsbot:noise_reduction"), "Noise reduction");
+        assert_eq!(setting_name("brightness"), "Brightness");
+    }
 
     #[test]
     fn ai_mode_preset_ids_round_trip() {

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Applying a preset could fail with "Some settings were not applied": it sent Disable microphone every time, and
+  the camera restarts to change it, so the settings sent after it failed. It is now sent last, and only when it
+  differs from the camera's.
+- A preset that does not apply fully says which settings did not, in the same words from the Presets tab and from
+  the buttons beside the joystick.
+- The page no longer shrinks or shows a thick bar at the bottom when the window is about as narrow as the page:
+  the sideways scrollbar floats over the page instead of taking room under it.
+
 ## 1.0.0 (2026-11-25)
 
 First release. The notes below are the changes since the test builds.

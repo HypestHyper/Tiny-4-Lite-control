@@ -645,8 +645,8 @@ impl Joystick {
                         };
                         store.call_now(move |d| crate::presets::apply(d, &preset), move |result| {
                             match result {
-                                Ok(_) => done.toast(&format!("Applied {name}")),
-                                Err(error) => done.error(&format!("{name}: {error}")),
+                                Ok(message) => done.toast(&message),
+                                Err(error) => done.error(&error),
                             }
                             again.boost_polling();
                             done.refresh_soon();
