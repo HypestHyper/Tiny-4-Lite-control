@@ -529,6 +529,9 @@ window.t4.csd { border-radius: §18§; }
 .t4 button.preview-play .icon { font-size: §36§; }
 
 /* Toast */
+.toast button.toast-close { min-width: §28§; min-height: §28§; padding: 0; margin: 0 -§6§ 0 0; border-radius: 999px; background: transparent; color: @t_inverse_on_surface; }
+.toast button.toast-close:hover { background: alpha(@t_inverse_on_surface, 0.12); }
+.toast button.toast-close .icon { font-size: §18§; }
 .toast { background: @t_inverse_surface; color: @t_inverse_on_surface; border-radius: §14§; padding: §12§ §18§; box-shadow: 0 6px 20px alpha(#000000, 0.45); }
 .toast label { color: @t_inverse_on_surface; font-size: ¶14¶; }
 .toast.error { background: @t_error_container; }

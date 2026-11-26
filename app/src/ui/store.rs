@@ -15,7 +15,15 @@ pub struct Toaster {
     label: gtk::Label,
     toast: gtk::Box,
     timer: RefCell<Option<glib::SourceId>>,
+    /// How long the message showing stays, and whether the pointer is on it (which holds it open).
+    duration: Cell<Duration>,
+    hovered: Cell<bool>,
 }
+
+/// How long a message stays on screen, and how long after the pointer leaves it.
+const TOAST_TIME: Duration = Duration::from_millis(5500);
+const TOAST_ERROR_TIME: Duration = Duration::from_millis(8000);
+const TOAST_AFTER_HOVER: Duration = Duration::from_millis(2500);
 
 impl Toaster {
     /// A bottom-centre toast. Add `widget()` to the window's overlay.
@@ -25,7 +33,13 @@ impl Toaster {
         label.set_max_width_chars(60);
         let toast = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         toast.add_css_class("toast");
+        label.set_hexpand(true);
+        label.set_xalign(0.0);
         toast.append(&label);
+        let close = super::widgets::icon_button("close", "Close", true);
+        close.add_css_class("toast-close");
+        close.set_valign(gtk::Align::Center);
+        toast.append(&close);
         let revealer = gtk::Revealer::new();
         revealer.set_transition_type(gtk::RevealerTransitionType::SlideUp);
         revealer.set_transition_duration(220);
@@ -33,8 +47,49 @@ impl Toaster {
         revealer.set_valign(gtk::Align::End);
         revealer.set_margin_bottom(24);
         revealer.set_child(Some(&toast));
-        revealer.set_can_target(false);
-        Rc::new(Toaster { revealer, label, toast, timer: RefCell::new(None) })
+        let this = Rc::new(Toaster { revealer, label, toast, timer: RefCell::new(None),
+            duration: Cell::new(TOAST_TIME), hovered: Cell::new(false) });
+        // The pointer on the message holds it open; leaving it starts a short countdown again.
+        let motion = gtk::EventControllerMotion::new();
+        {
+            let weak = Rc::downgrade(&this);
+            motion.connect_enter(move |_, _, _| {
+                let Some(this) = weak.upgrade() else { return };
+                this.hovered.set(true);
+                let pending = this.timer.borrow_mut().take();
+                if let Some(id) = pending { id.remove(); }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            motion.connect_leave(move |_| {
+                let Some(this) = weak.upgrade() else { return };
+                this.hovered.set(false);
+                if this.revealer.reveals_child() { this.start_timer(TOAST_AFTER_HOVER); }
+            });
+        }
+        this.toast.add_controller(motion);
+        {
+            let weak = Rc::downgrade(&this);
+            close.connect_clicked(move |_| { if let Some(this) = weak.upgrade() { this.hide(); } });
+        }
+        this
+    }
+
+    fn hide(&self) {
+        if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
+        self.revealer.set_reveal_child(false);
+    }
+
+    fn start_timer(self: &Rc<Self>, after: Duration) {
+        if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(after, move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.timer.borrow_mut().take();
+            if !this.hovered.get() { this.revealer.set_reveal_child(false); }
+        });
+        *self.timer.borrow_mut() = Some(id);
     }
 
     pub fn widget(&self) -> &gtk::Revealer { &self.revealer }
@@ -45,13 +100,13 @@ impl Toaster {
         self.revealer.set_reveal_child(true);
         // Announce to assistive technology.
         self.label.update_property(&[gtk::accessible::Property::Label(message)]);
-        if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
-        let this = self.clone();
-        let id = glib::timeout_add_local_once(Duration::from_millis(if error { 6000 } else { 3500 }), move || {
-            this.timer.borrow_mut().take();
-            this.revealer.set_reveal_child(false);
-        });
-        *self.timer.borrow_mut() = Some(id);
+        self.duration.set(if error { TOAST_ERROR_TIME } else { TOAST_TIME });
+        // While the pointer is on it, it stays; the countdown starts when the pointer leaves.
+        if self.hovered.get() {
+            if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
+        } else {
+            self.start_timer(self.duration.get());
+        }
     }
 
     pub fn is_visible(&self) -> bool { self.revealer.is_mapped() }
