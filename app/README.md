@@ -90,7 +90,7 @@ If the model swings the wrong way when the camera pans, turn on **Reverse pan on
 
 **Shortcut buttons.** The six buttons beside the joystick (three each side) each run one preset. Right-click one (or press and hold) to choose: any app preset, any of the camera's three memory positions, or empty. Until you choose, they are your first six app presets. An empty one has a dashed outline and opens the chooser when clicked; a camera-memory one has a coloured outline. The same menu has a **Label** box: a short word, a letter or an emoji (up to 8 characters) shown on the button instead of its number.
 
-**Presets and the capture mode.** Applying a preset skips the capture mode if the camera is already in it. If another program is streaming, the capture mode is saved and the background service changes it once the camera is free; the rest of the preset is applied straight away.
+**Presets and the capture mode.** Presets do not save or change the capture mode; it stays as chosen on the Capture mode card.
 
 **Gestures.** Target selection, the zoom gesture and dynamic zoom each show the gesture in a round tonal container: an open palm with a target, an L-shaped hand with a magnifier, and two L-shaped hands with an arrow between them. They are traced from the reference drawing (`assets/gesture-reference.png`) into smooth outlines, a little thickened to read at icon size, by `tools/trace-gestures.py`. The hand takes the container's colour and the mark the accent colour.
 
