@@ -20,10 +20,16 @@ pub struct Toaster {
     hovered: Cell<bool>,
 }
 
-/// How long a message stays on screen, and how long after the pointer leaves it.
-const TOAST_TIME: Duration = Duration::from_millis(5500);
-const TOAST_ERROR_TIME: Duration = Duration::from_millis(8000);
+/// How long the pointer leaving a message gives it before it goes.
 const TOAST_AFTER_HOVER: Duration = Duration::from_millis(2500);
+
+/// How long a message stays: 3 s for a short one ("Pan target +1°"), longer the more there is to read (about
+/// 70 ms a character past 40, up to 10 s); errors at least 6 s.
+pub fn toast_time(message: &str, error: bool) -> Duration {
+    let extra = message.chars().count().saturating_sub(40) as u64 * 70;
+    let millis = (3000 + extra).min(10_000);
+    Duration::from_millis(if error { millis.max(6000) } else { millis })
+}
 
 impl Toaster {
     /// A bottom-centre toast. Add `widget()` to the window's overlay.
@@ -48,7 +54,7 @@ impl Toaster {
         revealer.set_margin_bottom(24);
         revealer.set_child(Some(&toast));
         let this = Rc::new(Toaster { revealer, label, toast, timer: RefCell::new(None),
-            duration: Cell::new(TOAST_TIME), hovered: Cell::new(false) });
+            duration: Cell::new(Duration::from_millis(3000)), hovered: Cell::new(false) });
         // The pointer on the message holds it open; leaving it starts a short countdown again.
         let motion = gtk::EventControllerMotion::new();
         {
@@ -100,7 +106,7 @@ impl Toaster {
         self.revealer.set_reveal_child(true);
         // Announce to assistive technology.
         self.label.update_property(&[gtk::accessible::Property::Label(message)]);
-        self.duration.set(if error { TOAST_ERROR_TIME } else { TOAST_TIME });
+        self.duration.set(toast_time(message, error));
         // While the pointer is on it, it stays; the countdown starts when the pointer leaves.
         if self.hovered.get() {
             if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
@@ -435,6 +441,15 @@ pub fn plain_error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_messages_go_quickly_and_longer_ones_stay_to_be_read() {
+        assert_eq!(toast_time("Pan target +1°", false), Duration::from_millis(3000));
+        let long = "Applied Desk. The microphone is off, so its settings were left as they are.";
+        assert!(toast_time(long, false) > Duration::from_millis(5000));
+        assert_eq!(toast_time(&"x".repeat(500), false), Duration::from_millis(10_000));
+        assert_eq!(toast_time("Could not turn pan.", true), Duration::from_millis(6000));
+    }
 
     #[test]
     fn people_do_not_see_development_notes() {

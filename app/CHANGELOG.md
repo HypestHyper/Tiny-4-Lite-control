@@ -13,8 +13,8 @@
   only when the Studio camera is on and a LUT is in use.
 - A preset that does not apply fully says which settings did not, in the same words from the Presets tab and from
   the buttons beside the joystick.
-- Messages at the bottom stay longer (5.5 s, errors 8 s), stay open while the pointer is on them, and have a
-  close button.
+- Messages at the bottom stay as long as they need: 3 s for a short one, longer the more there is to read (up to
+  10 s; errors at least 6 s). They stay open while the pointer is on them, and have a close button.
 - The page no longer shrinks or shows a thick bar at the bottom when the window is about as narrow as the page:
   the sideways scrollbar floats over the page instead of taking room under it.
 
