@@ -2,7 +2,7 @@
 <h1 align="center">Tiny 2 Lite Control</h1>
 <p align="center">A control app for the OBSBOT Tiny 2 Lite webcam on Linux.</p>
 <p align="center">
-  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-1f9e80">
+  <img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-1f9e80">
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="Platform Linux" src="https://img.shields.io/badge/platform-Linux-informational">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-gtk4--rs-B7410E">
