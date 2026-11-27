@@ -1,6 +1,6 @@
 [package]
 name = "tiny4lite-control"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A small GTK4 V4L2 control bench for the OBSBOT Tiny 2 Lite"
 license = "MIT"
