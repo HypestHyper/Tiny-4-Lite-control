@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Importing settings restarts the app as it says (it used to just close: the new copy handed itself to the one
+  that was quitting, and from an AppImage it started from a mount that was going away).
+- The background service could set the capture mode again every 5 seconds when the camera reported 29.97 fps
+  for a 30 fps mode; modes within half a frame a second now count as the same.
+- Closing a message with its close button while the pointer was on it could keep the next messages open.
+- The microphone's settings (volume, listen while asleep, auto gain, noise reduction, pickup distance, pop
+  filter) can only be changed while the microphone is on, and say so; nothing is sent to it while it is off.
+- Quick controls that had the microphone switch keep it under its new name.
+- The window and the background service no longer write over each other's changes to the settings file.
+- Settings the camera refuses are reported as not changed, instead of passing as done.
+- Replacing the camera connection (unplugging, the microphone restarting the camera) no longer leaves a
+  thread behind each time.
+- A camera found again by the window's own search gets its chosen capture mode back.
+- Importing a file that is not this app's settings is refused instead of resetting everything.
+- The ±1° steps read the camera's position afresh when the one on screen is more than a second old.
+- A preset that does not apply fully names each setting once.
+
 ## 1.0.1 (2026-11-26)
 
 ### Fixed

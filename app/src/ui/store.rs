@@ -84,6 +84,8 @@ impl Toaster {
 
     fn hide(&self) {
         if let Some(id) = self.timer.borrow_mut().take() { id.remove(); }
+        // The pointer may still rest where it was: a hidden message does not hold the next one open.
+        self.hovered.set(false);
         self.revealer.set_reveal_child(false);
     }
 
@@ -249,7 +251,8 @@ impl Store {
 
     /// Point the store at a (possibly different) camera and re-read it.
     pub fn set_camera(&self, camera: Camera, connection: Connection) {
-        *self.0.camera.borrow_mut() = camera;
+        let old = std::mem::replace(&mut *self.0.camera.borrow_mut(), camera);
+        old.close();
         self.0.connection.set(connection);
         if connection == Connection::Connected {
             self.refresh();

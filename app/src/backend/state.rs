@@ -14,6 +14,32 @@ fn store() -> &'static Mutex<AppConfig> {
 pub fn install_config(config: AppConfig) {
     super::angles::set_limits(&config);
     *store().lock().unwrap_or_else(|e| e.into_inner()) = config;
+    remember_file();
+}
+
+/// When the settings file was last written or read by this program. The window and the background service
+/// share it; a different time means the other one wrote it.
+fn seen() -> &'static Mutex<Option<std::time::SystemTime>> {
+    static SEEN: OnceLock<Mutex<Option<std::time::SystemTime>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(None))
+}
+
+fn file_time() -> Option<std::time::SystemTime> {
+    std::fs::metadata(config::config_path()).and_then(|m| m.modified()).ok()
+}
+
+fn remember_file() { *seen().lock().unwrap_or_else(|e| e.into_inner()) = file_time(); }
+
+/// Load the settings again if another program (the window, the background service) wrote them since this
+/// one last did, unless this one has a change waiting to be written. Returns whether it reloaded.
+pub fn reload_if_changed() -> bool {
+    if *saver().dirty.lock().unwrap_or_else(|e| e.into_inner()) { return false; }
+    let now = file_time();
+    if now.is_none() || now == *seen().lock().unwrap_or_else(|e| e.into_inner()) { return false; }
+    match config::load() {
+        Ok(loaded) => { install_config(loaded); true }
+        Err(_) => false,
+    }
 }
 
 pub fn current_config() -> AppConfig {
@@ -23,6 +49,8 @@ pub fn current_config() -> AppConfig {
 /// Persist a candidate snapshot first. If disk I/O or validation fails the
 /// in-memory configuration stays unchanged as well.
 pub fn update_config_checked(update: impl FnOnce(&mut AppConfig)) -> Result<(), String> {
+    // Start from what is on disk if the other program changed it, so its change is not written over.
+    reload_if_changed();
     let mut snapshot = current_config();
     update(&mut snapshot);
     config::save(&snapshot)?;
@@ -60,7 +88,10 @@ fn saver() -> &'static Saver {
             // Let a burst of changes finish, then write the latest state once.
             std::thread::sleep(Duration::from_millis(400));
             *saver.dirty.lock().unwrap_or_else(|e| e.into_inner()) = false;
-            if let Err(error) = config::save(&current_config()) { eprintln!("Could not save settings: {error}"); }
+            match config::save(&current_config()) {
+                Ok(()) => remember_file(),
+                Err(error) => eprintln!("Could not save settings: {error}"),
+            }
         }).expect("config saver thread can start");
         saver
     })
@@ -76,6 +107,9 @@ fn schedule_save() {
 pub fn flush_config() {
     let pending = std::mem::replace(&mut *saver().dirty.lock().unwrap_or_else(|e| e.into_inner()), false);
     if pending {
-        if let Err(error) = config::save(&current_config()) { eprintln!("Could not save settings: {error}"); }
+        match config::save(&current_config()) {
+            Ok(()) => remember_file(),
+            Err(error) => eprintln!("Could not save settings: {error}"),
+        }
     }
 }

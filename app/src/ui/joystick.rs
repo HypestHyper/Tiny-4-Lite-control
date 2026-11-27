@@ -728,7 +728,10 @@ impl Joystick {
                     // getting there.
                     let index = usize::from(control == "tilt_absolute");
                     let recent = this.0.step_target.get()[index].filter(|(_, at)| at.elapsed() < STEP_CHAIN);
-                    let shown = store.gimbal().map(|(pan, tilt)| if index == 0 { pan } else { tilt });
+                    // Only a reading from the last second: polling slows down while the camera is still, and
+                    // tracking can have moved it since. An older one is left out, so the step reads it fresh.
+                    let fresh = this.0.last_position_at.get().is_some_and(|at| at.elapsed() < Duration::from_secs(1));
+                    let shown = store.gimbal().filter(|_| fresh).map(|(pan, tilt)| if index == 0 { pan } else { tilt });
                     let from = recent.map(|(target, _)| target).or(shown);
                     let again = this.clone();
                     store.call_now(move |d| backend::step_gimbal(d, control, degrees, range.0, range.1, from), move |result| {

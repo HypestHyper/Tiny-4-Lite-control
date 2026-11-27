@@ -794,34 +794,40 @@ fn build() -> Vec<Setting> {
             "How loud the microphone is.", slider(0.0, 100.0, 1.0, Fmt::Plain),
             |s| from_camera(s.mic_volume.map(|v| Value::Int(i64::from(v)))),
             |d, v| sent(set_mic_volume(d, v.as_i64().clamp(0, 100) as i16)))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this.")
             .info("The volume of the camera's own microphone. It starts at 50."),
         Setting::custom("obsbot:mic_during_sleep", Microphone, "Listen while asleep",
             "Keep the microphone running when the camera is asleep.", Kind::Toggle,
             |s| from_camera(s.byte(16).and_then(|b| match b { 0 => Some(Value::Bool(false)), 1 => Some(Value::Bool(true)), _ => None }))
                 .or_else(|| if s.byte(16).is_none() { from_saved(flag(s.config.audio_microphone_during_sleep)) } else { None }),
-            |d, v| sent(set_microphone_during_sleep(d, v.as_bool()))),
+            |d, v| sent(set_microphone_during_sleep(d, v.as_bool())))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this."),
         Setting::custom("obsbot:auto_gain", Microphone, "Auto gain",
             "Keep your voice at a steady level.", Kind::Toggle,
             |s| from_camera(s.byte(25).filter(|b| *b <= 1).map(|b| Value::Bool(b != 0)))
                 .or_else(|| if s.byte(25).is_none() { from_saved(flag(s.config.audio_auto_gain)) } else { None }),
-            |d, v| sent(set_auto_gain(d, v.as_bool()))),
+            |d, v| sent(set_auto_gain(d, v.as_bool())))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this."),
         Setting::custom("obsbot:noise_reduction", Microphone, "Noise reduction",
             "How strongly background noise is removed.",
             Kind::Choice(vec![opt(0, "Off", ""), opt(1, "Weak", ""), opt(2, "Medium", ""), opt(3, "Strong", "")]),
             |s| from_camera(s.byte(8).filter(|b| *b <= 3).map(|b| Value::Int(i64::from(b))))
                 .or_else(|| if s.byte(8).is_none() { from_saved(number(s.config.audio_noise_reduction)) } else { None }),
-            |d, v| sent(set_noise_reduction(d, v.as_i64().clamp(0, 3) as u8))),
+            |d, v| sent(set_noise_reduction(d, v.as_i64().clamp(0, 3) as u8)))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this."),
         Setting::custom("obsbot:radio_distance", Microphone, "Pickup distance",
             "How far away the voice you want is.",
             Kind::Choice(vec![opt(0, "Close", "About arm's length"), opt(1, "Standard", ""), opt(2, "Far", "Across a room")]),
             // Byte 34 of the status, low four bits (OBSBOT's SDK: audio reception distance).
             |s| from_camera(s.byte(34).map(|b| b & 0x0f).filter(|b| *b <= 2).map(|b| Value::Int(i64::from(b))))
                 .or_else(|| if s.status.is_none() { from_saved(number(s.config.audio_radio_distance.filter(|d| *d <= 2))) } else { None }),
-            |d, v| sent(set_radio_distance(d, v.as_i64().clamp(0, 2) as u8))),
+            |d, v| sent(set_radio_distance(d, v.as_i64().clamp(0, 2) as u8)))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this."),
         Setting::custom("obsbot:pop_filter", Microphone, "Pop filter",
             "Soften plosive sounds such as “p” and “b”.", Kind::Toggle,
             |s| from_saved(flag(s.config.pop_filter_enabled)),
             |d, v| sent(set_pop_filter(d, v.as_bool())))
+            .needs("obsbot:mic_disabled", OFF, "Turn the microphone on to change this.")
             .last_sent().experimental()
             .info("Softens harsh “p” and “b” sounds."),
 

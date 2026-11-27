@@ -41,7 +41,9 @@ pub(crate) fn apply_saved_video_mode(device: &str) -> Option<String> {
         ));
     }
     let current = video::current_mode(device);
-    if current.as_ref() == Some(&mode) { return None; }
+    // The same mode, frame rate within half a frame a second (29.970 is 30), needs nothing.
+    if current.as_ref().is_some_and(|now| now.width == mode.width && now.height == mode.height
+        && now.pixel_format == mode.pixel_format && now.frame_rate_milli.abs_diff(mode.frame_rate_milli) <= 500) { return None; }
     match video::set_mode(device, &mode) {
         Ok(()) => Some(format!(
             "Restored capture mode {} × {} · {} · {:.3} fps.",
@@ -1303,6 +1305,25 @@ pub(crate) fn send_obsbot_command(device: &str, module: u8, command: u16, payloa
     let sequence = next_xu_sequence(xu_sequence_counter());
     let mut frame = obsbot_frame_to(module, sequence, command, payload)?;
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)?;
+    check_command_reply(device, command, sequence)
+}
+
+/// After a framed write, look briefly for the camera's answer to it: `aa 89` means it refused, which is
+/// reported instead of passing as done. No answer within about a third of a second counts as sent, as before.
+pub(crate) fn check_command_reply(device: &str, command: u16, sequence: u16) -> Result<(), String> {
+    for _ in 0..8 {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let mut response = [0u8; 60];
+        if xu_query(device, 0x02, UVC_GET_CUR, &mut response).is_err() { continue; }
+        if response[0] != 0xaa || u16::from_le_bytes([response[2], response[3]]) != sequence { continue; }
+        return match response[1] {
+            0x89 => {
+                eprintln!("The camera refused command 0x{command:04x} (sequence 0x{sequence:04x}).");
+                Err("The camera refused this change.".into())
+            }
+            _ => Ok(()),
+        };
+    }
     Ok(())
 }
 
@@ -1396,7 +1417,7 @@ pub(crate) fn send_camera_preset_command(device: &str, command: u16, payload: &[
     let sequence = next_xu_sequence(xu_sequence_counter());
     let mut frame = obsbot_frame_with_payload(sequence, command, payload)?;
     xu_query(device, 0x02, UVC_SET_CUR, &mut frame)?;
-    Ok(())
+    check_command_reply(device, command, sequence)
 }
 
 pub(crate) fn save_camera_preset(device: &str, slot: u8, name: &str, update: bool) -> Result<(), String> {

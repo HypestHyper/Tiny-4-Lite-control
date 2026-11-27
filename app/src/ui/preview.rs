@@ -850,10 +850,8 @@ pub fn set_peaking_strictness(value: u8) {
     update_config(|c| c.preview_peaking_strictness = value.min(100));
 }
 
-/// What strictness means: the edge strength Canny's detector needs to start an edge (its high threshold, on
-/// the Sobel gradient of the slightly blurred picture): 40 at 0, 240 at 100. Edges then continue down to
-/// half of that.
-/// (How much crisper than its blurred self an edge must be, the smallest step in grey levels.) Strictness
+/// What strictness means: how much crisper than its blurred self an edge must be (the ratio), and the smallest
+/// step in grey levels that counts as an edge at all. Strictness
 /// 0 takes edges up to about three pixels wide; 100 only the crispest, of about one pixel.
 fn peaking_threshold(strictness: u8) -> (f32, i32) {
     let s = f32::from(strictness.min(100)) / 100.0;

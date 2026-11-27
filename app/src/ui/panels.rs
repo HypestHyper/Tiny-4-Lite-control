@@ -1995,10 +1995,9 @@ pub fn backup_card(store: &Store) -> gtk::Box {
 
 /// Start the app again (after an import), in the same window mode.
 fn restart_app() {
-    if let Ok(program) = std::env::current_exe() {
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        let _ = std::process::Command::new(program).args(args).spawn();
-    }
+    // The new copy starts once this one has quit (see ui::app::run): started now, it would find this one still
+    // running and hand itself over to it, as a single-instance app does, and nothing would open.
+    super::app::request_restart();
     if let Some(app) = gtk::gio::Application::default() { app.quit(); }
 }
 

@@ -107,6 +107,13 @@ impl Camera {
 
     pub fn path(&self) -> &str { &self.path }
 
+    /// This connection is being replaced: the worker finishes what is already queued (a stop for the gimbal,
+    /// say) and then ends, instead of waiting for work forever.
+    pub fn close(&self) {
+        self.shared.queue.lock().unwrap_or_else(|e| e.into_inner()).closed = true;
+        self.shared.wake.notify_all();
+    }
+
     /// Queue a job behind everything already waiting.
     pub fn submit(&self, run: impl FnOnce(&str) + Send + 'static) {
         self.push(None, false, Box::new(run));
@@ -164,6 +171,21 @@ mod tests {
         assert!(camera.lease.lock().unwrap().is_some());
         camera.release_motion();
         assert!(camera.lease.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_closed_worker_finishes_its_queue_and_ends() {
+        let camera = Camera::spawn("/dev/null");
+        let (out_tx, out_rx) = mpsc::channel::<i32>();
+        camera.submit(move |_| { let _ = out_tx.send(1); });
+        camera.close();
+        assert_eq!(out_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+        // The worker has gone: the queue's only other owner is this handle.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while Arc::strong_count(&camera.shared) > 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(Arc::strong_count(&camera.shared), 1);
     }
 
     #[test]

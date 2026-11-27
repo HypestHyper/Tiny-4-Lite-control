@@ -64,6 +64,9 @@ impl Ctx {
             full: RefCell::default(), slim: RefCell::default(), popup: RefCell::default(), scan_timer: RefCell::default(),
         });
         ctx.watch_unplug();
+        // The background service writes the same settings file (a capture mode it applied, say): pick its
+        // changes up, so this window does not later write its older copy over them.
+        glib::timeout_add_local(Duration::from_secs(2), || { backend::reload_if_changed(); glib::ControlFlow::Continue });
         // A new version put over the installed one brings its menu entry and icon along.
         if !backend::ui_test_mode() { std::thread::spawn(crate::install::refresh_files); }
         // The camera is controlled through v4l2-ctl, so say so plainly if it is not there.
@@ -139,6 +142,11 @@ impl Ctx {
                 ctx.scan_timer.borrow_mut().take();
                 ctx.store.set_camera(Camera::spawn(&path), Connection::Connected);
                 ctx.store.toast("Camera connected");
+                // A camera that comes back starts in its own default mode: put the chosen one back.
+                let store = ctx.store.clone();
+                ctx.hub.while_stopped(|device| backend::apply_saved_video_mode(device), move |message| {
+                    if let Some(message) = message { store.toast(&message); }
+                });
                 return glib::ControlFlow::Break;
             }
             if ctx.store.connection() != connection { ctx.store.set_camera(Camera::spawn(""), connection); }
@@ -208,6 +216,20 @@ impl Ctx {
     }
 }
 
+thread_local! {
+    static RESTART: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Start the app again once it has quit (after importing settings).
+pub fn request_restart() { RESTART.with(|r| r.set(true)); }
+
+/// The program to start again: the AppImage file itself when running from one (the running program is inside
+/// its mount, which goes away when this copy exits), otherwise this program.
+fn restart_program() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).filter(|p| p.is_file())
+        .or_else(|| std::env::current_exe().ok())
+}
+
 pub fn run() {
     let app = gtk::Application::builder()
         .application_id(windowing::APP_ID)
@@ -241,4 +263,10 @@ pub fn run() {
         0
     });
     app.run();
+    if RESTART.with(|r| r.get()) {
+        if let Some(program) = restart_program() {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let _ = std::process::Command::new(program).args(args).spawn();
+        }
+    }
 }

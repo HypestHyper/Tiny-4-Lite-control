@@ -351,6 +351,14 @@ pub fn load() -> Result<AppConfig, String> {
                 return Err(format!("{} contains more than 10 camera presets; edit the file before opening it.", path.display()));
             }
             config.joystick_sensitivity_percent = config.joystick_sensitivity_percent.clamp(10, 200);
+            // Quick controls chosen before the microphone switch became "Disable microphone", and Auto zoom,
+            // which was taken out.
+            for id in config.compact_controls.iter_mut() {
+                if id == "obsbot:mic_enabled" { *id = "obsbot:mic_disabled".into(); }
+            }
+            config.compact_controls.retain(|id| id != "obsbot:ai_auto_zoom");
+            let mut seen = std::collections::HashSet::new();
+            config.compact_controls.retain(|id| seen.insert(id.clone()));
             if config.exposure_compensation_position.is_some_and(|position| position > 18) {
                 config.exposure_compensation_position = None;
             }

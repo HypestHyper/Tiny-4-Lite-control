@@ -54,6 +54,12 @@ pub fn export(path: &Path) -> Result<(), String> {
 /// Read settings from a file, checking they are this app's and that it can use them.
 pub fn read(path: &Path) -> Result<AppConfig, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+    // Every settings file this app writes starts with its version; another program's TOML would otherwise read
+    // as all defaults and wipe the settings.
+    let table: toml::Table = text.parse().map_err(|_| "This file is not a Tiny 2 Lite Control settings file.".to_string())?;
+    if !table.get("version").is_some_and(|v| v.is_integer()) {
+        return Err("This file is not a Tiny 2 Lite Control settings file.".into());
+    }
     let imported: AppConfig = toml::from_str(&text).map_err(|_| "This file is not a Tiny 2 Lite Control settings file.".to_string())?;
     if imported.version > config::CONFIG_VERSION {
         return Err("These settings come from a newer version of the app. Update the app first.".into());

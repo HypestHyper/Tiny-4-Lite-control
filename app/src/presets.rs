@@ -325,8 +325,10 @@ pub fn apply(device: &str, preset: &config::CameraPreset) -> Result<String, Stri
     } else {
         // The details are for us, in the terminal; the message names what did not apply.
         eprintln!("Preset {}: {applied} settings applied, {} failed: {}", preset.name, errors.len(), errors.join(" · "));
-        let mut names: Vec<String> = errors.iter().map(|e| setting_name(e.split(": ").next().unwrap_or(""))).collect();
-        names.dedup();
+        let mut names: Vec<String> = Vec::new();
+        for name in errors.iter().map(|e| setting_name(e.split(": ").next().unwrap_or(""))) {
+            if !names.contains(&name) { names.push(name); }
+        }
         Err(format!("Some settings in {} were not applied: {}. Try again, or unplug and replug the camera.", preset.name, names.join(", ")))
     }
 }

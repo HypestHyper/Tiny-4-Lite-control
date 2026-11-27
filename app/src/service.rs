@@ -558,7 +558,8 @@ pub fn run_service(once: bool, device_override: Option<String>) -> i32 {
                     // One quick read first; the full check (which lists every mode) only when they differ.
                     let saved = current_config().video_mode;
                     let differs = crate::video::current_mode(device).is_none_or(|m| saved.as_ref().is_some_and(|s|
-                        (s.width, s.height, s.pixel_format.as_str(), s.frame_rate_milli) != (m.width, m.height, m.pixel_format.as_str(), m.frame_rate_milli)));
+                        (s.width, s.height, s.pixel_format.as_str()) != (m.width, m.height, m.pixel_format.as_str())
+                            || s.frame_rate_milli.abs_diff(m.frame_rate_milli) > 500));
                     let note = if differs { backend::apply_saved_video_mode(device) } else { None };
                     if let Some(message) = &note {
                         if mode_note.as_ref() != Some(message) {
